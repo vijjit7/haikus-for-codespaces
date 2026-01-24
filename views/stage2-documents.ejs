@@ -89,6 +89,25 @@
                 </div>
             </div>
 
+            <!-- Document Statistics Section -->
+            <div class="document-statistics card">
+                <h2>📊 Document Summary</h2>
+                <div class="stats-container">
+                    <div class="stat-box">
+                        <div class="stat-label">Total Documents Uploaded</div>
+                        <div class="stat-value"><%= uploadedFiles.length %></div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Categorised</div>
+                        <div class="stat-value categorised"><%= uploadedFiles.filter(f => f.category).length %></div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Not Categorised</div>
+                        <div class="stat-value not-categorised"><%= uploadedFiles.filter(f => !f.category).length %></div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Bulk Upload Section -->
             <div class="bulk-upload-section card">
                 <h2>📤 Bulk Upload</h2>
@@ -324,8 +343,8 @@
                                             <td><span class="badge badge-success">✓ Uploaded</span></td>
                                             <td class="actions-cell">
                                                 <button class="btn-view" 
-                                                    onmouseover="showPreview('<%= file.filename %>', '<%= file.originalName %>', '<%= proposalId %>')" 
-                                                    onmouseout="hidePreview()"
+                                                    onmouseenter="showPreview('<%= file.filename %>', '<%= file.originalName %>', '<%= proposalId %>', event)" 
+                                                    onmouseleave="scheduleHidePreview()"
                                                     title="View document">
                                                     👁️
                                                 </button>
@@ -341,6 +360,11 @@
                                                     <option value="debtProfile" <%= file.category === 'debtProfile' ? 'selected' : '' %>>Debt Profile</option>
                                                     <option value="collateral" <%= file.category === 'collateral' ? 'selected' : '' %>>Collateral</option>
                                                 </select>
+                                                <button class="btn-delete" 
+                                                    onclick="deleteDocument('<%= file.id %>', '<%= file.originalName %>')"
+                                                    title="Delete document">
+                                                    🗑️
+                                                </button>
                                             </td>
                                         </tr>
                                     <% }); %>
@@ -349,8 +373,11 @@
                         </div>
 
                         <!-- Document Preview Popup -->
-                        <div id="documentPreview" class="document-preview-popup" style="display: none;">
+                        <div id="documentPreview" class="document-preview-popup" style="display: none;" 
+                             onmouseenter="cancelHidePreview()" 
+                             onmouseleave="hidePreview()">
                             <div class="preview-content">
+                                <button class="preview-close" onclick="hidePreview()">✕</button>
                                 <div id="previewLoader" class="preview-loader">Loading preview...</div>
                                 <iframe id="previewFrame" style="display: none;"></iframe>
                                 <img id="previewImage" style="display: none;" alt="Document preview">
@@ -851,6 +878,34 @@
             }
         }
 
+        // Delete document function
+        async function deleteDocument(fileId, fileName) {
+            if (!confirm(`Are you sure you want to delete "${fileName}"?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/stage2/${proposalId}/delete-document`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ fileId })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert('Document deleted successfully!');
+                    window.location.reload();
+                } else {
+                    alert('Delete failed: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
         // Pending documents tab functionality
         function showPendingTab(category) {
             const allPendingContent = document.querySelectorAll('.pending-category-content');
@@ -911,7 +966,15 @@
         }
 
         // Document preview functions
-        function showPreview(filename, originalName, proposalId) {
+        let hideTimeout = null;
+        
+        function showPreview(filename, originalName, proposalId, event) {
+            // Cancel any pending hide
+            if (hideTimeout) {
+                clearTimeout(hideTimeout);
+                hideTimeout = null;
+            }
+            
             const preview = document.getElementById('documentPreview');
             const loader = document.getElementById('previewLoader');
             const iframe = document.getElementById('previewFrame');
@@ -924,8 +987,46 @@
             image.style.display = 'none';
             text.style.display = 'none';
             
-            // Show preview popup
+            // Show preview popup first
             preview.style.display = 'block';
+            
+            // Position preview near the button
+            const button = event ? event.target : null;
+            if (button) {
+                const rect = button.getBoundingClientRect();
+                const previewWidth = 600;
+                const previewHeight = 500;
+                
+                preview.style.position = 'fixed';
+                
+                // Try to place on the right side of button
+                let leftPos = rect.right + 5;
+                let topPos = rect.top - 10;
+                
+                // Check if preview goes off screen to the right
+                if (leftPos + previewWidth > window.innerWidth - 10) {
+                    // Place on left side instead
+                    leftPos = rect.left - previewWidth - 5;
+                }
+                
+                // Make sure left position is not negative
+                if (leftPos < 10) {
+                    leftPos = 10;
+                }
+                
+                // Check if preview goes off screen at bottom
+                if (topPos + previewHeight > window.innerHeight - 10) {
+                    topPos = window.innerHeight - previewHeight - 10;
+                }
+                
+                // Make sure top position is not negative
+                if (topPos < 10) {
+                    topPos = 10;
+                }
+                
+                preview.style.left = leftPos + 'px';
+                preview.style.top = topPos + 'px';
+            }
             
             // Determine file type from original name
             const ext = originalName.toLowerCase().split('.').pop();
@@ -952,6 +1053,19 @@
             }
         }
 
+        function scheduleHidePreview() {
+            hideTimeout = setTimeout(function() {
+                hidePreview();
+            }, 200);
+        }
+        
+        function cancelHidePreview() {
+            if (hideTimeout) {
+                clearTimeout(hideTimeout);
+                hideTimeout = null;
+            }
+        }
+        
         function hidePreview() {
             const preview = document.getElementById('documentPreview');
             const iframe = document.getElementById('previewFrame');

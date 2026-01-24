@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
 const pdfParse = require('pdf-parse');
+const AdmZip = require('adm-zip');
 const port = process.env.PORT || 3000;
 
 // Middleware
@@ -355,7 +356,8 @@ app.get('/stage2/:proposalId', (req, res) => {
   }
   
   res.render('stage2-documents', { 
-    proposal, 
+    proposal,
+    proposalId: req.params.proposalId,
     requiredDocuments: REQUIRED_DOCUMENTS,
     uploadedFiles
   });
@@ -374,9 +376,57 @@ app.post('/stage2/:proposalId/upload', upload.array('documents', 10), async (req
     const proposal = getProposalById(proposalId);
     const existingDocuments = proposal.documents || [];
     
+    // Process files - extract zip files if any
+    const allFiles = [];
+    const proposalDir = path.join(UPLOADS_DIR, proposalId);
+    
+    for (const file of files) {
+      const fileExt = path.extname(file.originalname).toLowerCase();
+      
+      if (fileExt === '.zip') {
+        // Extract zip file
+        try {
+          const zip = new AdmZip(file.path);
+          const zipEntries = zip.getEntries();
+          
+          zipEntries.forEach(entry => {
+            if (!entry.isDirectory && !entry.entryName.startsWith('__MACOSX') && !entry.name.startsWith('.')) {
+              // Extract file
+              const extractedFileName = `${Date.now()}-${entry.name}`;
+              const extractedPath = path.join(proposalDir, extractedFileName);
+              
+              // Write extracted file
+              fs.writeFileSync(extractedPath, entry.getData());
+              
+              // Get file stats
+              const stats = fs.statSync(extractedPath);
+              
+              allFiles.push({
+                filename: extractedFileName,
+                originalname: entry.name,
+                path: extractedPath,
+                size: stats.size,
+                mimetype: entry.name.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream'
+              });
+            }
+          });
+          
+          // Delete the zip file after extraction
+          fs.unlinkSync(file.path);
+        } catch (err) {
+          console.error('Zip extraction error:', err);
+          // If extraction fails, keep the zip file as is
+          allFiles.push(file);
+        }
+      } else {
+        // Regular file
+        allFiles.push(file);
+      }
+    }
+    
     // Check for duplicate filenames
     const duplicates = [];
-    const uploadedFileNames = files.map(f => f.originalname);
+    const uploadedFileNames = allFiles.map(f => f.originalname);
     
     uploadedFileNames.forEach(fileName => {
       const isDuplicate = existingDocuments.some(doc => doc.originalName === fileName);
@@ -387,7 +437,7 @@ app.post('/stage2/:proposalId/upload', upload.array('documents', 10), async (req
     
     if (duplicates.length > 0) {
       // Delete the uploaded files since they're duplicates
-      files.forEach(file => {
+      allFiles.forEach(file => {
         if (fs.existsSync(file.path)) {
           fs.unlinkSync(file.path);
         }
@@ -402,7 +452,7 @@ app.post('/stage2/:proposalId/upload', upload.array('documents', 10), async (req
     
     // Parse PDF files and extract text
     const fileDetails = [];
-    for (const file of files) {
+    for (const file of allFiles) {
       let extractedText = '';
       if (file.mimetype === 'application/pdf') {
         try {
@@ -439,6 +489,66 @@ app.post('/stage2/:proposalId/upload', upload.array('documents', 10), async (req
     res.json({ success: true, files: fileDetails });
   } catch (error) {
     console.error('Upload error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Delete document endpoint
+app.post('/stage2/:proposalId/delete-document', (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const { fileId } = req.body;
+    
+    console.log('Delete request - ProposalId:', proposalId, 'FileId:', fileId);
+    
+    if (!fileId) {
+      return res.status(400).json({ success: false, error: 'File ID is required' });
+    }
+    
+    // Get proposal
+    const proposal = getProposalById(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ success: false, error: 'Proposal not found' });
+    }
+    
+    // Check if documents array exists
+    if (!proposal.documents || !Array.isArray(proposal.documents)) {
+      return res.status(400).json({ success: false, error: 'No documents found in proposal' });
+    }
+    
+    console.log('Current documents:', proposal.documents.length);
+    
+    // Find document in proposal
+    const docIndex = proposal.documents.findIndex(doc => doc.id === fileId || doc.filename === fileId);
+    
+    console.log('Document index:', docIndex);
+    
+    if (docIndex === -1) {
+      return res.status(404).json({ success: false, error: 'Document not found in proposal data' });
+    }
+    
+    const document = proposal.documents[docIndex];
+    
+    // Delete physical file
+    const filePath = path.join(UPLOADS_DIR, proposalId, document.filename);
+    console.log('Attempting to delete file:', filePath);
+    
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      console.log('File deleted successfully');
+    } else {
+      console.log('File not found on disk');
+    }
+    
+    // Remove from proposal documents array
+    proposal.documents.splice(docIndex, 1);
+    updateProposal(proposalId, { documents: proposal.documents });
+    
+    console.log('Document removed from proposal. Remaining:', proposal.documents.length);
+    
+    res.json({ success: true, message: 'Document deleted successfully' });
+  } catch (error) {
+    console.error('Delete error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
