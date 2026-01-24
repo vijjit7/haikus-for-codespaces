@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stage 3: Customer Profiling - Proposal #<%= proposal.id %></title>
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="/css/proposal.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Stage 3: Comprehensive Customer Profiling</h1>
+            <p class="subtitle">Proposal ID: #<%= proposal.id %> | Applicant: <%= proposal.applicantName || proposal.customerName %></p>
+        </header>
+
+        <div class="progress-tracker">
+            <div class="progress-step completed">
+                <div class="step-number">1</div>
+                <div class="step-label">Proposal</div>
+            </div>
+            <div class="progress-step completed">
+                <div class="step-number">2</div>
+                <div class="step-label">Documents</div>
+            </div>
+            <div class="progress-step active">
+                <div class="step-number">3</div>
+                <div class="step-label">Profiling</div>
+            </div>
+            <div class="progress-step">
+                <div class="step-number">4</div>
+                <div class="step-label">Banker Match</div>
+            </div>
+        </div>
+
+        <div class="profiling-container">
+            <form id="profilingForm">
+                
+                <!-- Financial Profiling -->
+                <section class="form-section">
+                    <h2>💰 Financial Profiling</h2>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="totalAssets">Total Assets (INR) <span class="required">*</span></label>
+                            <input type="number" id="totalAssets" name="financial.totalAssets" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="totalLiabilities">Total Liabilities (INR) <span class="required">*</span></label>
+                            <input type="number" id="totalLiabilities" name="financial.totalLiabilities" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="netWorth">Net Worth (INR) <span class="required">*</span></label>
+                            <input type="number" id="netWorth" name="financial.netWorth" required readonly>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="currentRatio">Current Ratio</label>
+                            <input type="number" step="0.01" id="currentRatio" name="financial.currentRatio">
+                            <small>Current Assets / Current Liabilities</small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="debtToEquityRatio">Debt to Equity Ratio</label>
+                            <input type="number" step="0.01" id="debtToEquityRatio" name="financial.debtToEquityRatio">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="profitMargin">Profit Margin (%)</label>
+                            <input type="number" step="0.01" id="profitMargin" name="financial.profitMargin">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="grossRevenue">Gross Revenue (Annual)</label>
+                            <input type="number" id="grossRevenue" name="financial.grossRevenue">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="netIncome">Net Income (Annual)</label>
+                            <input type="number" id="netIncome" name="financial.netIncome">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="ebitda">EBITDA</label>
+                            <input type="number" id="ebitda" name="financial.ebitda">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="cashFlow">Operating Cash Flow</label>
+                            <input type="number" id="cashFlow" name="financial.cashFlow">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="workingCapital">Working Capital</label>
+                            <input type="number" id="workingCapital" name="financial.workingCapital">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="financialHealth">Financial Health Score <span class="required">*</span></label>
+                            <select id="financialHealth" name="financial.healthScore" required>
+                                <option value="">Select Score</option>
+                                <option value="Excellent">Excellent (9-10)</option>
+                                <option value="Good">Good (7-8)</option>
+                                <option value="Fair">Fair (5-6)</option>
+                                <option value="Poor">Poor (3-4)</option>
+                                <option value="Critical">Critical (1-2)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group full-width">
+                            <label for="financialNotes">Financial Analysis Notes</label>
+                            <textarea id="financialNotes" name="financial.notes" rows="3"></textarea>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Banking Relationship Profiling -->
+                <section class="form-section">
+                    <h2>🏦 Banking Relationship Profiling</h2>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="primaryBank">Primary Banking Institution</label>
+                            <input type="text" id="primaryBank" name="banking.primaryBank">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="accountDuration">Relationship Duration (Years)</label>
+                            <input type="number" id="accountDuration" name="banking.relationshipDuration">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="accountType">Account Types</label>
+                            <select id="accountType" name="banking.accountTypes" multiple>
+                                <option value="Checking">Checking Account</option>
+                                <option value="Savings">Savings Account</option>
+                                <option value="Money Market">Money Market</option>
+                                <option value="Business Loan">Business Loan</option>
+                                <option value="Line of Credit">Line of Credit</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="avgMonthlyBalance">Average Monthly Balance (INR)</label>
+                            <input type="number" id="avgMonthlyBalance" name="banking.avgMonthlyBalance">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="monthlyTransactions">Monthly Transaction Volume</label>
+                            <input type="number" id="monthlyTransactions" name="banking.monthlyTransactions">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="loanHistory">Existing Loan History</label>
+                            <select id="loanHistory" name="banking.loanHistory">
+                                <option value="">Select</option>
+                                <option value="No Loans">No Previous Loans</option>
+                                <option value="Good Standing">Active Loans - Good Standing</option>
+                                <option value="Past Issues">Past Payment Issues</option>
+                                <option value="Defaults">Previous Defaults</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="paymentHistory">Payment History Rating <span class="required">*</span></label>
+                            <select id="paymentHistory" name="banking.paymentHistory" required>
+                                <option value="">Select Rating</option>
+                                <option value="Excellent">Excellent - Always on time</option>
+                                <option value="Good">Good - Occasional delays</option>
+                                <option value="Fair">Fair - Some issues</option>
+                                <option value="Poor">Poor - Frequent delays</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="internationalBanking">International Banking Experience</label>
+                            <select id="internationalBanking" name="banking.international">
+                                <option value="None">No International Transactions</option>
+                                <option value="Limited">Limited International Activity</option>
+                                <option value="Moderate">Moderate International Activity</option>
+                                <option value="Extensive">Extensive International Operations</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="bankingRelationshipScore">Banking Relationship Score <span class="required">*</span></label>
+                            <select id="bankingRelationshipScore" name="banking.relationshipScore" required>
+                                <option value="">Select Score</option>
+                                <option value="Excellent">Excellent</option>
+                                <option value="Good">Good</option>
+                                <option value="Fair">Fair</option>
+                                <option value="Poor">Poor</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group full-width">
+                            <label for="bankingNotes">Banking Relationship Notes</label>
+                            <textarea id="bankingNotes" name="banking.notes" rows="3"></textarea>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Collateral Profiling -->
+                <section class="form-section">
+                    <h2>🏢 Collateral Profiling</h2>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="realEstateOwned">Real Estate Owned <span class="required">*</span></label>
+                            <select id="realEstateOwned" name="collateral.realEstateOwned" required>
+                                <option value="">Select</option>
+                                <option value="Yes">Yes</option>
+                                <option value="No">No</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="propertyValue">Total Property Value (INR)</label>
+                            <input type="number" id="propertyValue" name="collateral.propertyValue">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="propertyType">Property Type</label>
+                            <select id="propertyType" name="collateral.propertyType">
+                                <option value="">Select Type</option>
+                                <option value="Commercial">Commercial</option>
+                                <option value="Industrial">Industrial</option>
+                                <option value="Residential">Residential</option>
+                                <option value="Land">Land</option>
+                                <option value="Mixed Use">Mixed Use</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="equipmentValue">Equipment/Machinery Value (INR)</label>
+                            <input type="number" id="equipmentValue" name="collateral.equipmentValue">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="inventoryValue">Inventory Value (INR)</label>
+                            <input type="number" id="inventoryValue" name="collateral.inventoryValue">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="receivablesValue">Accounts Receivable Value (INR)</label>
+                            <input type="number" id="receivablesValue" name="collateral.receivablesValue">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="intellectualProperty">Intellectual Property/Patents</label>
+                            <select id="intellectualProperty" name="collateral.intellectualProperty">
+                                <option value="None">None</option>
+                                <option value="Trademarks">Trademarks</option>
+                                <option value="Patents">Patents</option>
+                                <option value="Copyrights">Copyrights</option>
+                                <option value="Multiple">Multiple IP Assets</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="personalGuarantee">Personal Guarantee Available</label>
+                            <select id="personalGuarantee" name="collateral.personalGuarantee">
+                                <option value="Yes">Yes</option>
+                                <option value="No">No</option>
+                                <option value="Partial">Partial</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="totalCollateralValue">Total Collateral Value (INR) <span class="required">*</span></label>
+                            <input type="number" id="totalCollateralValue" name="collateral.totalValue" required>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="loanToValue">Loan to Value Ratio (%)</label>
+                            <input type="number" step="0.01" id="loanToValue" name="collateral.ltvRatio">
+                            <small>Requested Loan Amount / Collateral Value</small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="collateralLiquidity">Collateral Liquidity <span class="required">*</span></label>
+                            <select id="collateralLiquidity" name="collateral.liquidity" required>
+                                <option value="">Select</option>
+                                <option value="High">High - Easily Liquidated</option>
+                                <option value="Medium">Medium - Moderate Liquidity</option>
+                                <option value="Low">Low - Difficult to Liquidate</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="collateralCondition">Collateral Condition</label>
+                            <select id="collateralCondition" name="collateral.condition">
+                                <option value="">Select</option>
+                                <option value="Excellent">Excellent</option>
+                                <option value="Good">Good</option>
+                                <option value="Fair">Fair</option>
+                                <option value="Poor">Poor</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group full-width">
+                            <label for="collateralNotes">Collateral Details & Notes</label>
+                            <textarea id="collateralNotes" name="collateral.notes" rows="3"></textarea>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Risk Assessment -->
+                <section class="form-section">
+                    <h2>⚠️ Risk Assessment</h2>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="creditScore">Credit Score <span class="required">*</span></label>
+                            <input type="number" id="creditScore" name="risk.creditScore" min="300" max="850" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="riskRating">Overall Risk Rating <span class="required">*</span></label>
+                            <select id="riskRating" name="risk.overallRating" required>
+                                <option value="">Select Rating</option>
+                                <option value="Low Risk">Low Risk</option>
+                                <option value="Moderate Risk">Moderate Risk</option>
+                                <option value="High Risk">High Risk</option>
+                                <option value="Very High Risk">Very High Risk</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="industryRisk">Industry Risk Level</label>
+                            <select id="industryRisk" name="risk.industryRisk">
+                                <option value="">Select</option>
+                                <option value="Low">Low - Stable Industry</option>
+                                <option value="Medium">Medium - Moderate Volatility</option>
+                                <option value="High">High - Volatile Industry</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Risk Factors (Select all that apply)</label>
+                            <div class="checkbox-group">
+                                <label><input type="checkbox" name="risk.factors" value="Limited Credit History"> Limited Credit History</label>
+                                <label><input type="checkbox" name="risk.factors" value="High Debt Load"> High Debt Load</label>
+                                <label><input type="checkbox" name="risk.factors" value="Declining Revenue"> Declining Revenue</label>
+                                <label><input type="checkbox" name="risk.factors" value="Legal Issues"> Legal Issues/Litigation</label>
+                                <label><input type="checkbox" name="risk.factors" value="Management Changes"> Recent Management Changes</label>
+                                <label><input type="checkbox" name="risk.factors" value="Market Competition"> High Market Competition</label>
+                                <label><input type="checkbox" name="risk.factors" value="Regulatory Risk"> Regulatory Risk</label>
+                                <label><input type="checkbox" name="risk.factors" value="Concentration Risk"> Customer Concentration Risk</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group full-width">
+                            <label for="riskMitigation">Risk Mitigation Strategies</label>
+                            <textarea id="riskMitigation" name="risk.mitigation" rows="3" placeholder="Describe how identified risks can be mitigated..."></textarea>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Additional Profiling -->
+                <section class="form-section">
+                    <h2>📊 Additional Profiling Information</h2>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="managementExperience">Management Experience (Years)</label>
+                            <input type="number" id="managementExperience" name="additional.managementExperience">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="marketPosition">Market Position</label>
+                            <select id="marketPosition" name="additional.marketPosition">
+                                <option value="">Select</option>
+                                <option value="Market Leader">Market Leader</option>
+                                <option value="Strong Competitor">Strong Competitor</option>
+                                <option value="Average">Average Market Position</option>
+                                <option value="Emerging">Emerging Player</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="growthPotential">Growth Potential</label>
+                            <select id="growthPotential" name="additional.growthPotential">
+                                <option value="">Select</option>
+                                <option value="High">High Growth Potential</option>
+                                <option value="Moderate">Moderate Growth</option>
+                                <option value="Stable">Stable/Mature</option>
+                                <option value="Declining">Declining Market</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group full-width">
+                            <label for="competitiveAdvantage">Competitive Advantage</label>
+                            <textarea id="competitiveAdvantage" name="additional.competitiveAdvantage" rows="3"></textarea>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group full-width">
+                            <label for="recommendations">Analyst Recommendations</label>
+                            <textarea id="recommendations" name="additional.recommendations" rows="4" placeholder="Provide recommendations for banker selection and loan structuring..."></textarea>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Form Actions -->
+                <div class="form-actions">
+                    <a href="/stage2/<%= proposal.id %>" class="btn btn-secondary">← Back to Documents</a>
+                    <button type="button" class="btn btn-secondary" onclick="saveDraft()">Save as Draft</button>
+                    <button type="submit" class="btn btn-primary">Complete Profiling & Submit →</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="successModal" class="modal">
+        <div class="modal-content">
+            <h2>✓ Customer Profiling Complete!</h2>
+            <p>Comprehensive profiling has been saved for Proposal #<%= proposal.id %></p>
+            <p>The proposal is now ready for Stage 4: Banker Selection</p>
+            <div class="modal-actions">
+                <button class="btn btn-primary" onclick="window.location.href='/proposals'">View All Proposals</button>
+                <button class="btn btn-secondary" onclick="window.location.href='/'">Back to Dashboard</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const proposalId = '<%= proposal.id %>';
+        const form = document.getElementById('profilingForm');
+        const modal = document.getElementById('successModal');
+
+        // Auto-calculate net worth
+        const totalAssets = document.getElementById('totalAssets');
+        const totalLiabilities = document.getElementById('totalLiabilities');
+        const netWorth = document.getElementById('netWorth');
+
+        function calculateNetWorth() {
+            const assets = parseFloat(totalAssets.value) || 0;
+            const liabilities = parseFloat(totalLiabilities.value) || 0;
+            netWorth.value = assets - liabilities;
+        }
+
+        totalAssets.addEventListener('input', calculateNetWorth);
+        totalLiabilities.addEventListener('input', calculateNetWorth);
+
+        // Form submission
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(form);
+            const data = {};
+            
+            // Process form data
+            for (let [key, value] of formData.entries()) {
+                if (key.includes('.')) {
+                    const parts = key.split('.');
+                    if (!data[parts[0]]) data[parts[0]] = {};
+                    
+                    if (key === 'risk.factors') {
+                        if (!data.risk.factors) data.risk.factors = [];
+                        data.risk.factors.push(value);
+                    } else {
+                        data[parts[0]][parts[1]] = value;
+                    }
+                } else {
+                    data[key] = value;
+                }
+            }
+
+            try {
+                const response = await fetch(`/stage3/${proposalId}/submit`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    modal.style.display = 'flex';
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        });
+
+        function saveDraft() {
+            alert('Draft saved! (This feature can be enhanced to save incomplete data)');
+        }
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>

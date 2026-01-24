@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stage 2: Document Upload - Proposal #<%= proposal.id %></title>
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="/css/proposal.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Stage 2: Document Upload & Proposal Perfection</h1>
+            <p class="subtitle">Proposal ID: #<%= proposal.id %> | Applicant: <%= proposal.applicantName || proposal.customerName %></p>
+        </header>
+
+        <div class="progress-tracker">
+            <div class="progress-step completed">
+                <div class="step-number">1</div>
+                <div class="step-label">Proposal</div>
+            </div>
+            <div class="progress-step active">
+                <div class="step-number">2</div>
+                <div class="step-label">Documents</div>
+            </div>
+            <div class="progress-step">
+                <div class="step-number">3</div>
+                <div class="step-label">Profiling</div>
+            </div>
+            <div class="progress-step">
+                <div class="step-number">4</div>
+                <div class="step-label">Banker Match</div>
+            </div>
+        </div>
+
+        <div class="stage2-container">
+            <!-- Customer Summary -->
+            <div class="customer-summary card">
+                <h2>Customer Summary</h2>
+                <div class="summary-grid">
+                    <div class="summary-item">
+                        <span class="label">Applicant Name:</span>
+                        <span class="value"><%= proposal.applicantName || proposal.customerName %></span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="label">Applicant Type:</span>
+                        <span class="value"><%= proposal.applicantType || proposal.customerType %></span>
+                    </div>
+                    <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
+                        <div class="summary-item">
+                            <span class="label">Co-Applicants:</span>
+                            <span class="value">
+                                <%= proposal.coApplicants.map(ca => ca.name).join(', ') %>
+                            </span>
+                        </div>
+                    <% } %>
+                    <div class="summary-item">
+                        <span class="label">Loan Amount:</span>
+                        <span class="value">₹<%= proposal.loanAmount ? parseInt(proposal.loanAmount).toLocaleString('en-IN') : 'N/A' %></span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="label">Loan Type:</span>
+                        <span class="value"><%= proposal.typeOfLoan || 'N/A' %></span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="label">Nature:</span>
+                        <span class="value"><%= proposal.natureOfLoan || 'N/A' %></span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="label">Collateral:</span>
+                        <span class="value"><%= proposal.natureOfCollateral || 'N/A' %></span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="label">Industry:</span>
+                        <span class="value"><%= proposal.industry || 'N/A' %></span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="label">Annual Revenue:</span>
+                        <span class="value"><%= proposal.annualRevenue || 'N/A' %></span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="label">Contact:</span>
+                        <span class="value"><%= proposal.email %></span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="label">Submitted:</span>
+                        <span class="value"><%= new Date(proposal.createdAt).toLocaleDateString() %></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Document Upload Section -->
+            <div class="document-upload-section">
+                <div class="upload-area card">
+                    <h2>📄 Upload Documents</h2>
+                    <form id="uploadForm" enctype="multipart/form-data">
+                        <div class="form-group">
+                            <label for="documentType">Document Type <span class="required">*</span></label>
+                            <select id="documentType" name="documentType" required>
+                                <option value="">Select Document Type</option>
+                                <% requiredDocuments.forEach(doc => { %>
+                                    <option value="<%= doc %>"><%= doc %></option>
+                                <% }); %>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="documents">Select Files (PDF, DOC, XLS, Images)</label>
+                            <div class="file-input-wrapper">
+                                <input type="file" id="documents" name="documents" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png">
+                                <div class="file-input-display">
+                                    <span class="file-icon">📎</span>
+                                    <span class="file-text">Choose files or drag here</span>
+                                </div>
+                            </div>
+                            <small>Maximum file size: 10MB per file. Multiple files allowed.</small>
+                        </div>
+
+                        <div id="filePreview" class="file-preview"></div>
+
+                        <button type="submit" class="btn btn-primary">
+                            <span class="upload-icon">⬆️</span> Upload Documents
+                        </button>
+                    </form>
+
+                    <div id="uploadProgress" class="upload-progress" style="display: none;">
+                        <div class="progress-bar">
+                            <div class="progress-fill"></div>
+                        </div>
+                        <p class="progress-text">Uploading and processing documents...</p>
+                    </div>
+                </div>
+
+                <!-- Required Documents Checklist -->
+                <div class="checklist card">
+                    <h2>📋 Required Documents Checklist</h2>
+                    <div class="checklist-items">
+                        <% requiredDocuments.forEach(doc => { 
+                            const isUploaded = uploadedFiles.some(f => f.originalName.includes(doc.split(' ')[0]));
+                        %>
+                            <div class="checklist-item <%= isUploaded ? 'completed' : '' %>">
+                                <span class="check-icon"><%= isUploaded ? '✓' : '○' %></span>
+                                <span class="check-label"><%= doc %></span>
+                            </div>
+                        <% }); %>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Uploaded Files List -->
+            <div class="uploaded-files card">
+                <h2>📁 Uploaded Documents (<span id="fileCount"><%= uploadedFiles.length %></span>)</h2>
+                
+                <% if (uploadedFiles.length === 0) { %>
+                    <div class="empty-state-small">
+                        <p>No documents uploaded yet</p>
+                    </div>
+                <% } else { %>
+                    <div class="files-table-wrapper">
+                        <table class="files-table">
+                            <thead>
+                                <tr>
+                                    <th>File Name</th>
+                                    <th>Size</th>
+                                    <th>Uploaded</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="filesTableBody">
+                                <% uploadedFiles.forEach(file => { %>
+                                    <tr>
+                                        <td>
+                                            <span class="file-icon-small">
+                                                <%= file.originalName.endsWith('.pdf') ? '📄' : file.originalName.match(/\.(jpg|jpeg|png)$/i) ? '🖼️' : '📝' %>
+                                            </span>
+                                            <%= file.originalName %>
+                                        </td>
+                                        <td><%= file.size %></td>
+                                        <td><%= new Date(file.uploadedAt).toLocaleString() %></td>
+                                        <td><span class="badge badge-success">✓ Uploaded</span></td>
+                                    </tr>
+                                <% }); %>
+                            </tbody>
+                        </table>
+                    </div>
+                <% } %>
+            </div>
+
+            <!-- Pending Documents Section -->
+            <div class="pending-documents card">
+                <h2>⚠️ Pending Documents</h2>
+                <div id="pendingList">
+                    <% 
+                    const pendingDocs = requiredDocuments.filter(doc => 
+                        !uploadedFiles.some(f => f.originalName.includes(doc.split(' ')[0]))
+                    );
+                    if (pendingDocs.length === 0) { %>
+                        <div class="success-message">
+                            ✓ All required documents have been uploaded!
+                        </div>
+                    <% } else { %>
+                        <ul class="pending-list">
+                            <% pendingDocs.forEach(doc => { %>
+                                <li class="pending-item">
+                                    <span class="warning-icon">⚠️</span>
+                                    <%= doc %>
+                                </li>
+                            <% }); %>
+                        </ul>
+                        <p class="pending-note">Please upload all pending documents before proceeding to Stage 3.</p>
+                    <% } %>
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="form-actions">
+                <a href="/proposals" class="btn btn-secondary">← Back to Proposals</a>
+                <button type="button" class="btn btn-primary" onclick="proceedToStage3()" id="proceedBtn">
+                    Complete Stage 2 & Proceed to Profiling →
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const proposalId = '<%= proposal.id %>';
+        const fileInput = document.getElementById('documents');
+        const filePreview = document.getElementById('filePreview');
+        const uploadForm = document.getElementById('uploadForm');
+        const uploadProgress = document.getElementById('uploadProgress');
+
+        // File input preview
+        fileInput.addEventListener('change', function(e) {
+            const files = Array.from(e.target.files);
+            filePreview.innerHTML = '';
+            
+            files.forEach(file => {
+                const fileItem = document.createElement('div');
+                fileItem.className = 'file-preview-item';
+                fileItem.innerHTML = `
+                    <span class="file-icon">${file.type.includes('pdf') ? '📄' : file.type.includes('image') ? '🖼️' : '📝'}</span>
+                    <span class="file-name">${file.name}</span>
+                    <span class="file-size">${(file.size / 1024).toFixed(2)} KB</span>
+                `;
+                filePreview.appendChild(fileItem);
+            });
+        });
+
+        // Drag and drop
+        const fileInputWrapper = document.querySelector('.file-input-wrapper');
+        
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            fileInputWrapper.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            fileInputWrapper.addEventListener(eventName, () => {
+                fileInputWrapper.classList.add('drag-over');
+            });
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            fileInputWrapper.addEventListener(eventName, () => {
+                fileInputWrapper.classList.remove('drag-over');
+            });
+        });
+
+        fileInputWrapper.addEventListener('drop', function(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            fileInput.files = files;
+            fileInput.dispatchEvent(new Event('change'));
+        });
+
+        // Form submission
+        uploadForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData();
+            const files = fileInput.files;
+            const documentType = document.getElementById('documentType').value;
+            
+            if (files.length === 0) {
+                alert('Please select at least one file');
+                return;
+            }
+            
+            if (!documentType) {
+                alert('Please select document type');
+                return;
+            }
+            
+            formData.append('documentType', documentType);
+            for (let file of files) {
+                formData.append('documents', file);
+            }
+            formData.append('proposalId', proposalId);
+            
+            uploadProgress.style.display = 'block';
+            
+            try {
+                const response = await fetch(`/stage2/${proposalId}/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    uploadProgress.style.display = 'none';
+                    alert('Documents uploaded successfully!');
+                    window.location.reload();
+                } else {
+                    uploadProgress.style.display = 'none';
+                    alert('Upload failed: ' + result.error);
+                }
+            } catch (error) {
+                uploadProgress.style.display = 'none';
+                alert('Upload error: ' + error.message);
+            }
+        });
+
+        async function proceedToStage3() {
+            if (confirm('Complete Stage 2 and proceed to Customer Profiling?')) {
+                try {
+                    const response = await fetch(`/stage2/${proposalId}/complete`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        window.location.href = `/stage3/${proposalId}`;
+                    } else {
+                        alert('Error: ' + result.error);
+                    }
+                } catch (error) {
+                    alert('Error: ' + error.message);
+                }
+            }
+        }
+    </script>
+</body>
+</html>

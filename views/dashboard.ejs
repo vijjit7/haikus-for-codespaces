@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Customer Profiling & Banker Selection</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="/css/proposal.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Customer Profiling & Banker Selection System</h1>
+            <p class="subtitle">Welcome, <%= user %></p>
+        </header>
+
+        <div class="dashboard-grid">
+            <div class="card">
+                <h2>Stage 1: Customer Proposal</h2>
+                <p>Capture basic customer information and service requirements</p>
+                <a href="/stage1/new" class="btn btn-primary">Create New Proposal</a>
+            </div>
+
+            <div class="card">
+                <h2>View Proposals</h2>
+                <p>Review all submitted customer proposals</p>
+                <a href="/proposals" class="btn btn-secondary">View All Proposals</a>
+            </div>
+
+            <div class="card disabled">
+                <h2>Stage 2: Financial Analysis</h2>
+                <p>Detailed financial assessment and documentation</p>
+                <span class="badge">Coming Soon</span>
+            </div>
+
+            <div class="card disabled">
+                <h2>Stage 3: Banker Matching</h2>
+                <p>Match customers with appropriate bankers</p>
+                <span class="badge">Coming Soon</span>
+            </div>
+
+            <div class="card disabled">
+                <h2>Stage 4: Banker Database</h2>
+                <p>Maintain and manage banker information (Admin Only)</p>
+                <span class="badge">Admin Only</span>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

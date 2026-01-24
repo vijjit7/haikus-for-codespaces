@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stage 1: Customer Proposal</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="/css/proposal.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Customer Profiling & Banker Selection</h1>
+            <p class="subtitle">Stage 1: Basic Customer Proposal</p>
+        </header>
+
+        <div class="form-container">
+            <form id="proposalForm">
+                <!-- Customer Basic Information -->
+                <section class="form-section">
+                    <h2>1. Customer Basic Information</h2>
+                    
+                    <!-- Applicant Information -->
+                    <h3 class="subsection-title">Applicant Details</h3>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="applicantName">Applicant Name <span class="required">*</span></label>
+                            <input type="text" id="applicantName" name="applicantName" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="applicantType">Applicant Type <span class="required">*</span></label>
+                            <select id="applicantType" name="applicantType" required>
+                                <option value="">Select Type</option>
+                                <option value="Individual">Individual</option>
+                                <option value="Proprietorship">Proprietorship</option>
+                                <option value="Partnership">Partnership</option>
+                                <option value="LLP">LLP (Limited Liability Partnership)</option>
+                                <option value="Private Limited">Private Limited</option>
+                                <option value="Public Limited">Public Limited</option>
+                                <option value="Others">Others</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Co-Applicants Section -->
+                    <h3 class="subsection-title">Co-Applicant Details (Optional)</h3>
+                    <div id="coApplicantsContainer">
+                        <div class="co-applicant-entry" data-index="0">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="coApplicantName_0">Co-Applicant Name</label>
+                                    <input type="text" id="coApplicantName_0" name="coApplicants[0].name">
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="coApplicantType_0">Co-Applicant Type</label>
+                                    <select id="coApplicantType_0" name="coApplicants[0].type">
+                                        <option value="">Select Type</option>
+                                        <option value="Individual">Individual</option>
+                                        <option value="Proprietorship">Proprietorship</option>
+                                        <option value="Partnership">Partnership</option>
+                                        <option value="LLP">LLP</option>
+                                        <option value="Private Limited">Private Limited</option>
+                                        <option value="Public Limited">Public Limited</option>
+                                        <option value="Others">Others</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button type="button" class="btn btn-add" onclick="addCoApplicant()">
+                        + Add Another Co-Applicant
+                    </button>
+
+                    <!-- Loan Information -->
+                    <h3 class="subsection-title">Loan Information</h3>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="loanAmount">Loan Amount (INR) <span class="required">*</span></label>
+                            <input type="number" id="loanAmount" name="loanAmount" min="0" step="1000" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="natureOfLoan">Nature of Loan <span class="required">*</span></label>
+                            <select id="natureOfLoan" name="natureOfLoan" required>
+                                <option value="">Select Nature</option>
+                                <option value="Secured">Secured</option>
+                                <option value="Unsecured">Unsecured</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="typeOfLoan">Type of Loan <span class="required">*</span></label>
+                            <select id="typeOfLoan" name="typeOfLoan" required>
+                                <option value="">Select Type</option>
+                                <option value="Home Loan">Home Loan</option>
+                                <option value="Mortgage Loan">Mortgage Loan</option>
+                                <option value="Business Loan">Business Loan</option>
+                                <option value="Working Capital">Working Capital</option>
+                                <option value="Construction Finance">Construction Finance</option>
+                                <option value="Others">Others</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="natureOfCollateral">Nature of Collateral <span class="required">*</span></label>
+                            <select id="natureOfCollateral" name="natureOfCollateral" required>
+                                <option value="">Select Collateral Type</option>
+                                <option value="Residential House">Residential House</option>
+                                <option value="Commercial Property">Commercial Property</option>
+                                <option value="Residential Land">Residential Land</option>
+                                <option value="Commercial Land">Commercial Land</option>
+                                <option value="Other Non-Standard Collateral">Other Non-Standard Collateral</option>
+                            </select>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Business/Financial Information -->
+                <section class="form-section">
+                    <h2>2. Business & Financial Information</h2>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="industry">Industry/Sector <span class="required">*</span></label>
+                            <select id="industry" name="industry" required>
+                                <option value="">Select Industry</option>
+                                <option value="Agriculture">Agriculture</option>
+                                <option value="Manufacturing">Manufacturing</option>
+                                <option value="Technology">Technology</option>
+                                <option value="Healthcare">Healthcare</option>
+                                <option value="Retail">Retail</option>
+                                <option value="Real Estate">Real Estate</option>
+                                <option value="Financial Services">Financial Services</option>
+                                <option value="Construction">Construction</option>
+                                <option value="Education">Education</option>
+                                <option value="Hospitality">Hospitality</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="yearsInBusiness">Years in Business <span class="required">*</span></label>
+                            <input type="number" id="yearsInBusiness" name="yearsInBusiness" min="0" required>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="annualRevenue">Annual Revenue (USD) <span class="required">*</span></label>
+                            <select id="annualRevenue" name="annualRevenue" required>
+                                <option value="">Select Range</option>
+                                <option value="0-100K">$0 - $100,000</option>
+                                <option value="100K-500K">$100,000 - $500,000</option>
+                                <option value="500K-1M">$500,000 - $1 Million</option>
+                                <option value="1M-5M">$1 Million - $5 Million</option>
+                                <option value="5M-10M">$5 Million - $10 Million</option>
+                                <option value="10M-50M">$10 Million - $50 Million</option>
+                                <option value="50M+">$50 Million+</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="employeeCount">Number of Employees <span class="required">*</span></label>
+                            <input type="number" id="employeeCount" name="employeeCount" min="1" required>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="creditRating">Credit Rating (if available)</label>
+                            <select id="creditRating" name="creditRating">
+                                <option value="">Select Rating</option>
+                                <option value="AAA">AAA - Excellent</option>
+                                <option value="AA">AA - Very Good</option>
+                                <option value="A">A - Good</option>
+                                <option value="BBB">BBB - Fair</option>
+                                <option value="BB">BB - Below Average</option>
+                                <option value="B">B - Poor</option>
+                                <option value="Not Rated">Not Rated</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="existingBankRelations">Existing Bank Relations</label>
+                            <input type="text" id="existingBankRelations" name="existingBankRelations" placeholder="e.g., Chase, Wells Fargo">
+                        </div>
+                    </div>
+                </section>
+
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="window.location.href='/'">Cancel</button>
+                    <button type="button" class="btn btn-secondary" onclick="resetForm()">Reset</button>
+                    <button type="submit" class="btn btn-primary">Submit Proposal</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="successModal" class="modal">
+        <div class="modal-content">
+            <h2>✓ Proposal Submitted Successfully!</h2>
+            <p>Proposal ID: <span id="proposalId"></span></p>
+            <p>Your customer proposal has been submitted and is now in Stage 1.</p>
+            <div class="modal-actions">
+                <button class="btn btn-primary" onclick="window.location.href='/stage1/new'">Submit Another</button>
+                <button class="btn btn-secondary" onclick="window.location.href='/proposals'">View All Proposals</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('proposalForm');
+        const modal = document.getElementById('successModal');
+        let coApplicantCount = 1;
+
+        // Add Co-Applicant functionality
+        function addCoApplicant() {
+            const container = document.getElementById('coApplicantsContainer');
+            const newEntry = document.createElement('div');
+            newEntry.className = 'co-applicant-entry';
+            newEntry.setAttribute('data-index', coApplicantCount);
+            newEntry.innerHTML = `
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="coApplicantName_${coApplicantCount}">Co-Applicant Name</label>
+                        <input type="text" id="coApplicantName_${coApplicantCount}" name="coApplicants[${coApplicantCount}].name">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="coApplicantType_${coApplicantCount}">Co-Applicant Type</label>
+                        <select id="coApplicantType_${coApplicantCount}" name="coApplicants[${coApplicantCount}].type">
+                            <option value="">Select Type</option>
+                            <option value="Individual">Individual</option>
+                            <option value="Proprietorship">Proprietorship</option>
+                            <option value="Partnership">Partnership</option>
+                            <option value="LLP">LLP</option>
+                            <option value="Private Limited">Private Limited</option>
+                            <option value="Public Limited">Public Limited</option>
+                            <option value="Others">Others</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group" style="display: flex; align-items: flex-end;">
+                        <button type="button" class="btn btn-remove" onclick="removeCoApplicant(${coApplicantCount})">
+                            × Remove
+                        </button>
+                    </div>
+                </div>
+            `;
+            container.appendChild(newEntry);
+            coApplicantCount++;
+        }
+
+        function removeCoApplicant(index) {
+            const entry = document.querySelector(`.co-applicant-entry[data-index="${index}"]`);
+            if (entry) {
+                entry.remove();
+            }
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            // Collect form data
+            const formData = new FormData(form);
+            const data = {};
+            
+            // Handle regular inputs and co-applicants
+            for (let [key, value] of formData.entries()) {
+                if (key === 'services') {
+                    if (!data.services) data.services = [];
+                    data.services.push(value);
+                } else if (key.startsWith('coApplicants[')) {
+                    // Parse co-applicant data
+                    const match = key.match(/coApplicants\[(\d+)\]\.(\w+)/);
+                    if (match) {
+                        if (!data.coApplicants) data.coApplicants = [];
+                        const index = parseInt(match[1]);
+                        const field = match[2];
+                        
+                        if (!data.coApplicants[index]) {
+                            data.coApplicants[index] = {};
+                        }
+                        data.coApplicants[index][field] = value;
+                    }
+                } else {
+                    data[key] = value;
+                }
+            }
+
+            // Filter out empty co-applicants
+            if (data.coApplicants) {
+                data.coApplicants = data.coApplicants.filter(ca => ca && ca.name && ca.name.trim() !== '');
+            }
+
+            try {
+                const response = await fetch('/stage1/submit', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    document.getElementById('proposalId').textContent = result.proposalId;
+                    modal.style.display = 'flex';
+                } else {
+                    alert('Error submitting proposal: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error submitting proposal: ' + error.message);
+            }
+        });
+
+        function resetForm() {
+            if (confirm('Are you sure you want to reset the form? All data will be lost.')) {
+                form.reset();
+                // Reset co-applicants to just one
+                const container = document.getElementById('coApplicantsContainer');
+                const entries = container.querySelectorAll('.co-applicant-entry');
+                entries.forEach((entry, index) => {
+                    if (index > 0) entry.remove();
+                });
+                coApplicantCount = 1;
+            }
+        }
+
+        // Close modal when clicking outside
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>

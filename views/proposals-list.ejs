@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>All Proposals - Customer Profiling</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="/css/proposal.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Customer Proposals</h1>
+            <p class="subtitle">All Submitted Proposals</p>
+        </header>
+
+        <div class="actions-bar">
+            <a href="/" class="btn btn-secondary">← Back to Dashboard</a>
+            <a href="/stage1/new" class="btn btn-primary">+ New Proposal</a>
+        </div>
+
+        <div class="proposals-container">
+            <% if (proposals.length === 0) { %>
+                <div class="empty-state">
+                    <h3>No proposals yet</h3>
+                    <p>Start by creating your first customer proposal</p>
+                    <a href="/stage1/new" class="btn btn-primary">Create Proposal</a>
+                </div>
+            <% } else { %>
+                <div class="table-responsive">
+                    <table class="proposals-table">
+                        <thead>
+                            <tr>
+                                <th>Proposal ID</th>
+                                <th>Applicant Name</th>
+                                <th>Applicant Type</th>
+                                <th>Loan Amount</th>
+                                <th>Loan Type</th>
+                                <th>Nature</th>
+                                <th>Industry</th>
+                                <th>Urgency</th>
+                                <th>Status</th>
+                                <th>Submitted Date</th>
+                                <th>Associate</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <% proposals.forEach(proposal => { %>
+                                <tr>
+                                    <td><strong>#<%= proposal.id %></strong></td>
+                                    <td>
+                                        <% if (proposal.currentStage >= 2) { %>
+                                            <a href="/stage<%= proposal.currentStage %>/<%= proposal.id %>" style="color: #3498db; text-decoration: none;">
+                                                <%= proposal.applicantName || proposal.customerName || 'N/A' %>
+                                            </a>
+                                        <% } else { %>
+                                            <a href="/stage2/<%= proposal.id %>" style="color: #3498db; text-decoration: none;">
+                                                <%= proposal.applicantName || proposal.customerName || 'N/A' %>
+                                            </a>
+                                        <% } %>
+                                        <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
+                                            <br><small style="color: #7f8c8d;">+ <%= proposal.coApplicants.length %> co-applicant(s)</small>
+                                        <% } %>
+                                    </td>
+                                    <td><%= proposal.applicantType || proposal.customerType || 'N/A' %></td>
+                                    <td><%= proposal.loanAmount ? '₹' + parseInt(proposal.loanAmount).toLocaleString('en-IN') : 'N/A' %></td>
+                                    <td><%= proposal.typeOfLoan || 'N/A' %></td>
+                                    <td>
+                                        <% if (proposal.natureOfLoan) { %>
+                                            <span class="badge <%= proposal.natureOfLoan === 'Secured' ? 'badge-success' : 'badge-warning' %>">
+                                                <%= proposal.natureOfLoan %>
+                                            </span>
+                                        <% } else { %>
+                                            N/A
+                                        <% } %>
+                                    </td>
+                                    <td><%= proposal.industry || 'N/A' %></td>
+                                    <td>
+                                        <span class="badge badge-<%= (proposal.urgency || '').toLowerCase() %>">
+                                            <%= proposal.urgency || 'N/A' %>
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="status-badge status-stage<%= proposal.currentStage || 1 %>">
+                                            <%= proposal.status || 'Stage 1' %>
+                                        </span>
+                                    </td>
+                                    <td><%= new Date(proposal.createdAt).toLocaleDateString() %></td>
+                                    <td><%= proposal.associateName %></td>
+                                    <td>
+                                        <div class="action-buttons">
+                                            <button class="btn-action btn-edit" onclick="editProposal('<%= proposal.id %>')" title="Edit">
+                                                ✏️
+                                            </button>
+                                            <button class="btn-action btn-delete" onclick="deleteProposal('<%= proposal.id %>', '<%= proposal.applicantName || proposal.customerName %>')" title="Delete">
+                                                🗑️
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            <% }); %>
+                        </tbody>
+                    </table>
+                </div>
+            <% } %>
+        </div>
+    </div>
+    
+    <script>
+        function editProposal(proposalId) {
+            window.location.href = `/proposals/${proposalId}/edit`;
+        }
+        
+        async function deleteProposal(proposalId, applicantName) {
+            if (confirm(`Are you sure you want to delete the proposal for "${applicantName}"?\n\nThis action cannot be undone.`)) {
+                try {
+                    const response = await fetch(`/proposals/${proposalId}/delete`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        alert('Proposal deleted successfully!');
+                        window.location.reload();
+                    } else {
+                        alert('Error deleting proposal: ' + result.error);
+                    }
+                } catch (error) {
+                    alert('Error deleting proposal: ' + error.message);
+                }
+            }
+        }
+    </script>
+</body>
+</html>

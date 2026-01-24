@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edit Proposal #<%= proposal.id %></title>
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="/css/proposal.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Edit Customer Proposal</h1>
+            <p class="subtitle">Proposal ID: #<%= proposal.id %></p>
+        </header>
+
+        <div class="form-container">
+            <form id="editProposalForm">
+                <!-- Customer Basic Information -->
+                <section class="form-section">
+                    <h2>1. Customer Basic Information</h2>
+                    
+                    <!-- Applicant Information -->
+                    <h3 class="subsection-title">Applicant Details</h3>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="applicantName">Applicant Name <span class="required">*</span></label>
+                            <input type="text" id="applicantName" name="applicantName" value="<%= proposal.applicantName || proposal.customerName || '' %>" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="applicantType">Applicant Type <span class="required">*</span></label>
+                            <select id="applicantType" name="applicantType" required>
+                                <option value="">Select Type</option>
+                                <option value="Individual" <%= (proposal.applicantType || proposal.customerType) === 'Individual' ? 'selected' : '' %>>Individual</option>
+                                <option value="Proprietorship" <%= (proposal.applicantType || proposal.customerType) === 'Proprietorship' ? 'selected' : '' %>>Proprietorship</option>
+                                <option value="Partnership" <%= (proposal.applicantType || proposal.customerType) === 'Partnership' ? 'selected' : '' %>>Partnership</option>
+                                <option value="LLP" <%= (proposal.applicantType || proposal.customerType) === 'LLP' ? 'selected' : '' %>>LLP (Limited Liability Partnership)</option>
+                                <option value="Private Limited" <%= (proposal.applicantType || proposal.customerType) === 'Private Limited' ? 'selected' : '' %>>Private Limited</option>
+                                <option value="Public Limited" <%= (proposal.applicantType || proposal.customerType) === 'Public Limited' ? 'selected' : '' %>>Public Limited</option>
+                                <option value="Others" <%= (proposal.applicantType || proposal.customerType) === 'Others' ? 'selected' : '' %>>Others</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Loan Information -->
+                    <h3 class="subsection-title">Loan Information</h3>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="loanAmount">Loan Amount (INR) <span class="required">*</span></label>
+                            <input type="number" id="loanAmount" name="loanAmount" value="<%= proposal.loanAmount || '' %>" min="0" step="1000" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="natureOfLoan">Nature of Loan <span class="required">*</span></label>
+                            <select id="natureOfLoan" name="natureOfLoan" required>
+                                <option value="">Select Nature</option>
+                                <option value="Secured" <%= proposal.natureOfLoan === 'Secured' ? 'selected' : '' %>>Secured</option>
+                                <option value="Unsecured" <%= proposal.natureOfLoan === 'Unsecured' ? 'selected' : '' %>>Unsecured</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="typeOfLoan">Type of Loan <span class="required">*</span></label>
+                            <select id="typeOfLoan" name="typeOfLoan" required>
+                                <option value="">Select Type</option>
+                                <option value="Home Loan" <%= proposal.typeOfLoan === 'Home Loan' ? 'selected' : '' %>>Home Loan</option>
+                                <option value="Mortgage Loan" <%= proposal.typeOfLoan === 'Mortgage Loan' ? 'selected' : '' %>>Mortgage Loan</option>
+                                <option value="Business Loan" <%= proposal.typeOfLoan === 'Business Loan' ? 'selected' : '' %>>Business Loan</option>
+                                <option value="Working Capital" <%= proposal.typeOfLoan === 'Working Capital' ? 'selected' : '' %>>Working Capital</option>
+                                <option value="Construction Finance" <%= proposal.typeOfLoan === 'Construction Finance' ? 'selected' : '' %>>Construction Finance</option>
+                                <option value="Others" <%= proposal.typeOfLoan === 'Others' ? 'selected' : '' %>>Others</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="natureOfCollateral">Nature of Collateral <span class="required">*</span></label>
+                            <select id="natureOfCollateral" name="natureOfCollateral" required>
+                                <option value="">Select Collateral Type</option>
+                                <option value="Residential House" <%= proposal.natureOfCollateral === 'Residential House' ? 'selected' : '' %>>Residential House</option>
+                                <option value="Commercial Property" <%= proposal.natureOfCollateral === 'Commercial Property' ? 'selected' : '' %>>Commercial Property</option>
+                                <option value="Residential Land" <%= proposal.natureOfCollateral === 'Residential Land' ? 'selected' : '' %>>Residential Land</option>
+                                <option value="Commercial Land" <%= proposal.natureOfCollateral === 'Commercial Land' ? 'selected' : '' %>>Commercial Land</option>
+                                <option value="Other Non-Standard Collateral" <%= proposal.natureOfCollateral === 'Other Non-Standard Collateral' ? 'selected' : '' %>>Other Non-Standard Collateral</option>
+                            </select>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Business/Financial Information -->
+                <section class="form-section">
+                    <h2>2. Business & Financial Information</h2>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="industry">Industry/Sector <span class="required">*</span></label>
+                            <select id="industry" name="industry" required>
+                                <option value="">Select Industry</option>
+                                <option value="Agriculture" <%= proposal.industry === 'Agriculture' ? 'selected' : '' %>>Agriculture</option>
+                                <option value="Manufacturing" <%= proposal.industry === 'Manufacturing' ? 'selected' : '' %>>Manufacturing</option>
+                                <option value="Technology" <%= proposal.industry === 'Technology' ? 'selected' : '' %>>Technology</option>
+                                <option value="Healthcare" <%= proposal.industry === 'Healthcare' ? 'selected' : '' %>>Healthcare</option>
+                                <option value="Retail" <%= proposal.industry === 'Retail' ? 'selected' : '' %>>Retail</option>
+                                <option value="Real Estate" <%= proposal.industry === 'Real Estate' ? 'selected' : '' %>>Real Estate</option>
+                                <option value="Financial Services" <%= proposal.industry === 'Financial Services' ? 'selected' : '' %>>Financial Services</option>
+                                <option value="Construction" <%= proposal.industry === 'Construction' ? 'selected' : '' %>>Construction</option>
+                                <option value="Education" <%= proposal.industry === 'Education' ? 'selected' : '' %>>Education</option>
+                                <option value="Hospitality" <%= proposal.industry === 'Hospitality' ? 'selected' : '' %>>Hospitality</option>
+                                <option value="Other" <%= proposal.industry === 'Other' ? 'selected' : '' %>>Other</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="yearsInBusiness">Years in Business <span class="required">*</span></label>
+                            <input type="number" id="yearsInBusiness" name="yearsInBusiness" value="<%= proposal.yearsInBusiness || '' %>" min="0" required>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="annualRevenue">Annual Revenue <span class="required">*</span></label>
+                            <select id="annualRevenue" name="annualRevenue" required>
+                                <option value="">Select Range</option>
+                                <option value="0-100K" <%= proposal.annualRevenue === '0-100K' ? 'selected' : '' %>>₹0 - ₹1 Lakh</option>
+                                <option value="100K-500K" <%= proposal.annualRevenue === '100K-500K' ? 'selected' : '' %>>₹1 Lakh - ₹5 Lakh</option>
+                                <option value="500K-1M" <%= proposal.annualRevenue === '500K-1M' ? 'selected' : '' %>>₹5 Lakh - ₹10 Lakh</option>
+                                <option value="1M-5M" <%= proposal.annualRevenue === '1M-5M' ? 'selected' : '' %>>₹10 Lakh - ₹50 Lakh</option>
+                                <option value="5M-10M" <%= proposal.annualRevenue === '5M-10M' ? 'selected' : '' %>>₹50 Lakh - ₹1 Crore</option>
+                                <option value="10M-50M" <%= proposal.annualRevenue === '10M-50M' ? 'selected' : '' %>>₹1 Crore - ₹5 Crore</option>
+                                <option value="50M+" <%= proposal.annualRevenue === '50M+' ? 'selected' : '' %>>₹5 Crore+</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="employeeCount">Number of Employees <span class="required">*</span></label>
+                            <input type="number" id="employeeCount" name="employeeCount" value="<%= proposal.employeeCount || '' %>" min="1" required>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="creditRating">Credit Rating (if available)</label>
+                            <select id="creditRating" name="creditRating">
+                                <option value="">Select Rating</option>
+                                <option value="AAA" <%= proposal.creditRating === 'AAA' ? 'selected' : '' %>>AAA - Excellent</option>
+                                <option value="AA" <%= proposal.creditRating === 'AA' ? 'selected' : '' %>>AA - Very Good</option>
+                                <option value="A" <%= proposal.creditRating === 'A' ? 'selected' : '' %>>A - Good</option>
+                                <option value="BBB" <%= proposal.creditRating === 'BBB' ? 'selected' : '' %>>BBB - Fair</option>
+                                <option value="BB" <%= proposal.creditRating === 'BB' ? 'selected' : '' %>>BB - Below Average</option>
+                                <option value="B" <%= proposal.creditRating === 'B' ? 'selected' : '' %>>B - Poor</option>
+                                <option value="Not Rated" <%= proposal.creditRating === 'Not Rated' ? 'selected' : '' %>>Not Rated</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="existingBankRelations">Existing Bank Relations</label>
+                            <input type="text" id="existingBankRelations" name="existingBankRelations" value="<%= proposal.existingBankRelations || '' %>" placeholder="e.g., HDFC, ICICI">
+                        </div>
+                    </div>
+                </section>
+
+                <div class="form-actions">
+                    <a href="/proposals" class="btn btn-secondary">Cancel</a>
+                    <button type="submit" class="btn btn-primary">Update Proposal</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('editProposalForm');
+        const proposalId = '<%= proposal.id %>';
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = new FormData(form);
+            const data = {};
+            
+            for (let [key, value] of formData.entries()) {
+                data[key] = value;
+            }
+
+            try {
+                const response = await fetch(`/proposals/${proposalId}/update`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert('Proposal updated successfully!');
+                    window.location.href = '/proposals';
+                } else {
+                    alert('Error updating proposal: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error updating proposal: ' + error.message);
+            }
+        });
+    </script>
+</body>
+</html>
