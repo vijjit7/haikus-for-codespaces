@@ -33,6 +33,77 @@
     "id": "1769259313472",
     "createdAt": "2026-01-24T12:55:13.472Z",
     "status": "Stage 1 - Proposal Submitted",
-    "currentStage": 1
+    "currentStage": 1,
+    "documents": [
+      {
+        "id": "documents-1769275349688-325977167.zip",
+        "filename": "documents-1769275349688-325977167.zip",
+        "originalName": "GSTR 3B TS.zip",
+        "category": "turnover",
+        "size": 434894,
+        "extractedText": "",
+        "uploadedAt": "2026-01-24T17:22:29.749Z"
+      },
+      {
+        "id": "documents-1769275516350-593812281.zip",
+        "filename": "documents-1769275516350-593812281.zip",
+        "originalName": "GSTR 3B AP.zip",
+        "category": "turnover",
+        "autoCategorized": true,
+        "size": 432911,
+        "extractedText": "",
+        "uploadedAt": "2026-01-24T17:25:16.411Z"
+      },
+      {
+        "id": "documents-1769275756185-452685424.pdf",
+        "filename": "documents-1769275756185-452685424.pdf",
+        "originalName": "Partnership Amendment Deed 2025_compressed.pdf",
+        "category": "incorporation",
+        "autoCategorized": true,
+        "size": 2925032,
+        "extractedText": "",
+        "uploadedAt": "2026-01-24T17:29:16.696Z"
+      },
+      {
+        "id": "documents-1769275756479-382574623.pdf",
+        "filename": "documents-1769275756479-382574623.pdf",
+        "originalName": "Pragati_Partnership Deed.pdf",
+        "category": "incorporation",
+        "autoCategorized": true,
+        "size": 1208632,
+        "extractedText": "",
+        "uploadedAt": "2026-01-24T17:29:16.698Z"
+      },
+      {
+        "id": "documents-1769275756583-422574102.pdf",
+        "filename": "documents-1769275756583-422574102.pdf",
+        "originalName": "Pragati_Partnership Deed_1.pdf",
+        "category": "incorporation",
+        "autoCategorized": true,
+        "size": 1208632,
+        "extractedText": "",
+        "uploadedAt": "2026-01-24T17:29:16.699Z"
+      },
+      {
+        "id": "documents-1769275918582-306834848.pdf",
+        "filename": "documents-1769275918582-306834848.pdf",
+        "originalName": "Divya Aadhar (1).pdf",
+        "category": "personalId",
+        "autoCategorized": true,
+        "size": 1241567,
+        "extractedText": "",
+        "uploadedAt": "2026-01-24T17:31:58.758Z"
+      },
+      {
+        "id": "documents-1769275918721-52950285.pdf",
+        "filename": "documents-1769275918721-52950285.pdf",
+        "originalName": "firm pan.pdf",
+        "category": "businessId",
+        "autoCategorized": true,
+        "size": 341163,
+        "extractedText": "",
+        "uploadedAt": "2026-01-24T17:31:58.759Z"
+      }
+    ]
   }
 ]

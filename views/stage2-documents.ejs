@@ -89,126 +89,613 @@
                 </div>
             </div>
 
-            <!-- Document Upload Section -->
-            <div class="document-upload-section">
-                <div class="upload-area card">
-                    <h2>📄 Upload Documents</h2>
-                    <form id="uploadForm" enctype="multipart/form-data">
-                        <div class="form-group">
-                            <label for="documentType">Document Type <span class="required">*</span></label>
-                            <select id="documentType" name="documentType" required>
-                                <option value="">Select Document Type</option>
-                                <% requiredDocuments.forEach(doc => { %>
-                                    <option value="<%= doc %>"><%= doc %></option>
-                                <% }); %>
-                            </select>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="documents">Select Files (PDF, DOC, XLS, Images)</label>
-                            <div class="file-input-wrapper">
-                                <input type="file" id="documents" name="documents" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png">
-                                <div class="file-input-display">
-                                    <span class="file-icon">📎</span>
-                                    <span class="file-text">Choose files or drag here</span>
-                                </div>
+            <!-- Bulk Upload Section -->
+            <div class="bulk-upload-section card">
+                <h2>📤 Bulk Upload</h2>
+                <p class="upload-instructions">Upload zip, PDF, JPG, XLS, doc</p>
+                <form id="bulkUploadForm" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <div class="file-input-wrapper">
+                            <input type="file" id="bulkDocuments" name="bulkDocuments" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.zip">
+                            <div class="file-input-display">
+                                <span class="file-icon">📎</span>
+                                <span class="file-text">Choose files or drag here</span>
                             </div>
-                            <small>Maximum file size: 10MB per file. Multiple files allowed.</small>
                         </div>
-
-                        <div id="filePreview" class="file-preview"></div>
-
-                        <button type="submit" class="btn btn-primary">
-                            <span class="upload-icon">⬆️</span> Upload Documents
-                        </button>
-                    </form>
-
-                    <div id="uploadProgress" class="upload-progress" style="display: none;">
-                        <div class="progress-bar">
-                            <div class="progress-fill"></div>
-                        </div>
-                        <p class="progress-text">Uploading and processing documents...</p>
                     </div>
-                </div>
-
-                <!-- Required Documents Checklist -->
-                <div class="checklist card">
-                    <h2>📋 Required Documents Checklist</h2>
-                    <div class="checklist-items">
-                        <% requiredDocuments.forEach(doc => { 
-                            const isUploaded = uploadedFiles.some(f => f.originalName.includes(doc.split(' ')[0]));
-                        %>
-                            <div class="checklist-item <%= isUploaded ? 'completed' : '' %>">
-                                <span class="check-icon"><%= isUploaded ? '✓' : '○' %></span>
-                                <span class="check-label"><%= doc %></span>
-                            </div>
-                        <% }); %>
+                    <div id="bulkFilePreview" class="file-preview"></div>
+                    <button type="submit" class="btn btn-primary">
+                        <span class="upload-icon">⬆️</span> Upload Files
+                    </button>
+                </form>
+                <div id="uploadProgress" class="upload-progress" style="display: none;">
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
                     </div>
+                    <p class="progress-text">Uploading and processing documents...</p>
                 </div>
             </div>
 
-            <!-- Uploaded Files List -->
-            <div class="uploaded-files card">
-                <h2>📁 Uploaded Documents (<span id="fileCount"><%= uploadedFiles.length %></span>)</h2>
+            <!-- Required Documents Section -->
+            <div class="required-documents card">
+                <h2>📋 Required Documents</h2>
                 
-                <% if (uploadedFiles.length === 0) { %>
-                    <div class="empty-state-small">
-                        <p>No documents uploaded yet</p>
-                    </div>
-                <% } else { %>
-                    <div class="files-table-wrapper">
-                        <table class="files-table">
-                            <thead>
-                                <tr>
-                                    <th>File Name</th>
-                                    <th>Size</th>
-                                    <th>Uploaded</th>
-                                    <th>Status</th>
-                                </tr>
-                            </thead>
-                            <tbody id="filesTableBody">
-                                <% uploadedFiles.forEach(file => { %>
-                                    <tr>
-                                        <td>
-                                            <span class="file-icon-small">
-                                                <%= file.originalName.endsWith('.pdf') ? '📄' : file.originalName.match(/\.(jpg|jpeg|png)$/i) ? '🖼️' : '📝' %>
-                                            </span>
-                                            <%= file.originalName %>
-                                        </td>
-                                        <td><%= file.size %></td>
-                                        <td><%= new Date(file.uploadedAt).toLocaleString() %></td>
-                                        <td><span class="badge badge-success">✓ Uploaded</span></td>
-                                    </tr>
-                                <% }); %>
-                            </tbody>
-                        </table>
-                    </div>
+                <!-- Personal ID -->
+                <div class="doc-category">
+                    <h3 class="category-title">Personal ID - only for individual applicant or coapplicants</h3>
+                    <ul class="doc-list">
+                        <li>PAN Card (Applicant or Coapplicant)</li>
+                        <li>Aadhar Card (Applicant or Coapplicant)</li>
+                    </ul>
+                </div>
+
+                <!-- Business ID (only for non-individual) -->
+                <% if (proposal.applicantType !== 'Individual') { %>
+                <div class="doc-category">
+                    <h3 class="category-title">Business ID - only for non individual</h3>
+                    <ul class="doc-list">
+                        <li>PAN Card (<%= proposal.applicantName || 'Applicant Name' %> - Non Individual)</li>
+                        <li>GST Certificate of (<%= proposal.applicantName || 'Applicant Name' %>)</li>
+                        <li>Labour License of (Applicant/ Coapplicant name)</li>
+                        <li>UDYAM Certificate of (Applicant/ Coapplicant name)</li>
+                    </ul>
+                </div>
                 <% } %>
+
+                <!-- Incorporation -->
+                <div class="doc-category">
+                    <h3 class="category-title">Incorporation</h3>
+                    <% if (proposal.applicantType === 'Partnership') { %>
+                    <div class="doc-subcategory">
+                        <h4>For Partnership</h4>
+                        <ul class="doc-list">
+                            <li>Partnership deed</li>
+                            <li>Reconstituted partnership deed</li>
+                        </ul>
+                    </div>
+                    <% } %>
+                    <% if (proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') { %>
+                    <div class="doc-subcategory">
+                        <h4>For Private Limited or Public Limited</h4>
+                        <ul class="doc-list">
+                            <li>Certificate of Incorporation</li>
+                            <li>Memorandum of Association</li>
+                            <li>Articles of Association</li>
+                        </ul>
+                    </div>
+                    <% } %>
+                </div>
+
+                <!-- Credit Reports -->
+                <div class="doc-category">
+                    <h3 class="category-title">Credit Reports</h3>
+                    <ul class="doc-list">
+                        <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
+                            <% proposal.coApplicants.forEach((co, idx) => { %>
+                                <li>Personal Credit Report of <%= co.name %> (only for individuals)</li>
+                            <% }); %>
+                        <% } %>
+                        <li>Business Credit Report of <%= proposal.applicantName %> (Non Individual)</li>
+                    </ul>
+                </div>
+
+                <!-- Financials -->
+                <div class="doc-category">
+                    <h3 class="category-title">Financials</h3>
+                    <div class="doc-subcategory">
+                        <h4>Business</h4>
+                        <ul class="doc-list">
+                            <li>ITR of Current Year of (<%= proposal.applicantName %>)</li>
+                            <li>ITR of Previous Year of (<%= proposal.applicantName %>)</li>
+                            <li>ITR of Preceding previous year of (<%= proposal.applicantName %>)</li>
+                        </ul>
+                    </div>
+                    <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
+                    <div class="doc-subcategory">
+                        <h4>Personal</h4>
+                        <ul class="doc-list">
+                            <% proposal.coApplicants.forEach((co, idx) => { %>
+                                <li>ITR of Current Year (<%= co.name || 'CoApplicant ' + (idx + 1) %>)</li>
+                                <li>ITR of Previous Year of (<%= co.name || 'coApplicant' + (idx + 1) + ' name' %>)</li>
+                                <li>ITR of Preceding previous year of (<%= co.name || 'coApplicant' + (idx + 1) + ' name' %>)</li>
+                            <% }); %>
+                        </ul>
+                    </div>
+                    <% } %>
+                </div>
+
+                <!-- Banking -->
+                <div class="doc-category">
+                    <h3 class="category-title">Banking</h3>
+                    <div class="doc-subcategory">
+                        <h4>Business</h4>
+                        <ul class="doc-list">
+                            <li>Bank Statement of <%= proposal.applicantName %></li>
+                            <li>Overdraft Bank Statement of <%= proposal.applicantName %></li>
+                        </ul>
+                    </div>
+                    <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
+                    <div class="doc-subcategory">
+                        <h4>Personal</h4>
+                        <ul class="doc-list">
+                            <% proposal.coApplicants.forEach((co, idx) => { %>
+                                <li>Bank Statement of <%= co.name || 'Coapplicant Name' + (idx + 1) %></li>
+                            <% }); %>
+                        </ul>
+                    </div>
+                    <% } %>
+                </div>
+
+                <!-- Turnover -->
+                <div class="doc-category">
+                    <h3 class="category-title">Turnover</h3>
+                    <ul class="doc-list">
+                        <li>GST 3B returns for last 12 months</li>
+                        <li>GST 1 returns for last 12 months</li>
+                    </ul>
+                </div>
+
+                <!-- Debt Profile -->
+                <div class="doc-category">
+                    <h3 class="category-title">Debt Profile</h3>
+                    <ul class="doc-list">
+                        <li>All Existing Loan Details</li>
+                    </ul>
+                </div>
+
+                <!-- Collateral -->
+                <div class="doc-category">
+                    <h3 class="category-title">Collateral</h3>
+                    <ul class="doc-list">
+                        <li>Title Documents</li>
+                        <li>Tax paid Receipts</li>
+                        <li>Approved Sanction Plan</li>
+                        <li>Encumberance Certificate</li>
+                        <li>Title Documents - Unregistered</li>
+                    </ul>
+                </div>
+
+                <p class="categorization-note">All uploaded documents needs to be categorised into below tabs</p>
             </div>
 
-            <!-- Pending Documents Section -->
-            <div class="pending-documents card">
-                <h2>⚠️ Pending Documents</h2>
-                <div id="pendingList">
+            <!-- Document Management Section with Main Tabs -->
+            <div class="documents-management card">
+                <h2>📁 Document Management</h2>
+                
+                <!-- Main Tab Navigation (Uploaded vs Pending) -->
+                <div class="main-tab-navigation">
+                    <button class="main-tab-btn active" onclick="showMainTab('uploaded')">
+                        📤 Uploaded Documents (<span id="fileCount"><%= uploadedFiles.length %></span>)
+                    </button>
+                    <button class="main-tab-btn" onclick="showMainTab('pending')">
+                        ⚠️ Pending Documents
+                    </button>
+                </div>
+
+                <!-- Uploaded Documents Section -->
+                <div id="uploadedSection" class="main-tab-content">
+                    <!-- Sub-Tab Navigation for Uploaded -->
+                    <div class="tab-navigation">
+                        <button class="tab-btn active" onclick="showTab('all')">ALL</button>
+                        <button class="tab-btn" onclick="showTab('personalId')">Personal ID</button>
+                        <button class="tab-btn" onclick="showTab('businessId')">Business ID</button>
+                        <button class="tab-btn" onclick="showTab('incorporation')">Incorporation</button>
+                        <button class="tab-btn" onclick="showTab('creditReports')">Credit Reports</button>
+                        <button class="tab-btn" onclick="showTab('financials')">Financials</button>
+                        <button class="tab-btn" onclick="showTab('banking')">Banking</button>
+                        <button class="tab-btn" onclick="showTab('turnover')">Turnover</button>
+                        <button class="tab-btn" onclick="showTab('debtProfile')">Debt Profile</button>
+                        <button class="tab-btn" onclick="showTab('collateral')">Collateral</button>
+                    </div>
+
+                <!-- Tab Content -->
+                <div class="tab-content">
+                    <% if (uploadedFiles.length === 0) { %>
+                        <div class="empty-state-small">
+                            <p>No documents uploaded yet</p>
+                        </div>
+                    <% } else { %>
+                        <div class="files-table-wrapper">
+                            <table class="files-table">
+                                <thead>
+                                    <tr>
+                                        <th>Category</th>
+                                        <th>File Name</th>
+                                        <th>Size</th>
+                                        <th>Uploaded</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="filesTableBody">
+                                    <% uploadedFiles.forEach(file => { %>
+                                        <tr data-category="<%= file.category || 'all' %>">
+                                            <td>
+                                                <span class="badge"><%= file.category || 'Uncategorized' %></span>
+                                            </td>
+                                            <td>
+                                                <span class="file-icon-small">
+                                                    <%= file.originalName.endsWith('.pdf') ? '📄' : file.originalName.match(/\.(jpg|jpeg|png)$/i) ? '🖼️' : '📝' %>
+                                                </span>
+                                                <%= file.originalName %>
+                                            </td>
+                                            <td><%= file.size %></td>
+                                            <td><%= new Date(file.uploadedAt).toLocaleString() %></td>
+                                            <td><span class="badge badge-success">✓ Uploaded</span></td>
+                                            <td class="actions-cell">
+                                                <button class="btn-view" 
+                                                    onmouseover="showPreview('<%= file.filename %>', '<%= file.originalName %>', '<%= proposalId %>')" 
+                                                    onmouseout="hidePreview()"
+                                                    title="View document">
+                                                    👁️
+                                                </button>
+                                                <select class="category-select" onchange="updateCategory('<%= file.id %>', this.value)">
+                                                    <option value="">Categorize...</option>
+                                                    <option value="personalId" <%= file.category === 'personalId' ? 'selected' : '' %>>Personal ID</option>
+                                                    <option value="businessId" <%= file.category === 'businessId' ? 'selected' : '' %>>Business ID</option>
+                                                    <option value="incorporation" <%= file.category === 'incorporation' ? 'selected' : '' %>>Incorporation</option>
+                                                    <option value="creditReports" <%= file.category === 'creditReports' ? 'selected' : '' %>>Credit Reports</option>
+                                                    <option value="financials" <%= file.category === 'financials' ? 'selected' : '' %>>Financials</option>
+                                                    <option value="banking" <%= file.category === 'banking' ? 'selected' : '' %>>Banking</option>
+                                                    <option value="turnover" <%= file.category === 'turnover' ? 'selected' : '' %>>Turnover</option>
+                                                    <option value="debtProfile" <%= file.category === 'debtProfile' ? 'selected' : '' %>>Debt Profile</option>
+                                                    <option value="collateral" <%= file.category === 'collateral' ? 'selected' : '' %>>Collateral</option>
+                                                </select>
+                                            </td>
+                                        </tr>
+                                    <% }); %>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Document Preview Popup -->
+                        <div id="documentPreview" class="document-preview-popup" style="display: none;">
+                            <div class="preview-content">
+                                <div id="previewLoader" class="preview-loader">Loading preview...</div>
+                                <iframe id="previewFrame" style="display: none;"></iframe>
+                                <img id="previewImage" style="display: none;" alt="Document preview">
+                                <div id="previewText" style="display: none;"></div>
+                            </div>
+                        </div>
+                    <% } %>
+                    </div>
+                </div>
+
+                <!-- Pending Documents Section -->
+                <div id="pendingSection" class="main-tab-content" style="display: none;">
+                    <!-- Sub-Tab Navigation for Pending -->
+                    <div class="tab-navigation">
+                        <% 
+                        // Categorize pending documents first to calculate counts
+                        const pendingByCategory = {
+                            personalId: [],
+                            businessId: [],
+                            incorporation: [],
+                            creditReports: [],
+                            financials: [],
+                            banking: [],
+                            turnover: [],
+                            debtProfile: [],
+                            collateral: []
+                        };
+
+                        // Personal ID documents
+                        pendingByCategory.personalId.push('PAN Card (Applicant or Coapplicant)');
+                        pendingByCategory.personalId.push('Aadhar Card (Applicant or Coapplicant)');
+
+                        // Business ID (only for non-individual)
+                        if (proposal.applicantType !== 'Individual') {
+                            pendingByCategory.businessId.push('PAN Card (' + (proposal.applicantName || 'Applicant Name') + ' - Non Individual)');
+                            pendingByCategory.businessId.push('GST Certificate of (' + (proposal.applicantName || 'Applicant Name') + ')');
+                            pendingByCategory.businessId.push('Labour License of (Applicant/ Coapplicant name)');
+                            pendingByCategory.businessId.push('UDYAM Certificate of (Applicant/ Coapplicant name)');
+                        }
+
+                        // Incorporation
+                        if (proposal.applicantType === 'Partnership') {
+                            pendingByCategory.incorporation.push('Partnership deed');
+                            pendingByCategory.incorporation.push('Reconstituted partnership deed');
+                        }
+                        if (proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') {
+                            pendingByCategory.incorporation.push('Certificate of Incorporation');
+                            pendingByCategory.incorporation.push('Memorandum of Association');
+                            pendingByCategory.incorporation.push('Articles of Association');
+                        }
+
+                        // Credit Reports
+                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                            proposal.coApplicants.forEach((co, idx) => {
+                                pendingByCategory.creditReports.push('Personal Credit Report of ' + co.name + ' (only for individuals)');
+                            });
+                        }
+                        pendingByCategory.creditReports.push('Business Credit Report of ' + proposal.applicantName + ' (Non Individual)');
+
+                        // Financials
+                        pendingByCategory.financials.push('ITR of Current Year of (' + proposal.applicantName + ')');
+                        pendingByCategory.financials.push('ITR of Previous Year of (' + proposal.applicantName + ')');
+                        pendingByCategory.financials.push('ITR of Preceding previous year of (' + proposal.applicantName + ')');
+                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                            proposal.coApplicants.forEach((co, idx) => {
+                                pendingByCategory.financials.push('ITR of Current Year (' + (co.name || 'CoApplicant ' + (idx + 1)) + ')');
+                                pendingByCategory.financials.push('ITR of Previous Year of (' + (co.name || 'coApplicant' + (idx + 1) + ' name') + ')');
+                                pendingByCategory.financials.push('ITR of Preceding previous year of (' + (co.name || 'coApplicant' + (idx + 1) + ' name') + ')');
+                            });
+                        }
+
+                        // Banking
+                        pendingByCategory.banking.push('Bank Statement of ' + proposal.applicantName);
+                        pendingByCategory.banking.push('Overdraft Bank Statement of ' + proposal.applicantName);
+                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                            proposal.coApplicants.forEach((co, idx) => {
+                                pendingByCategory.banking.push('Bank Statement of ' + (co.name || 'Coapplicant Name' + (idx + 1)));
+                            });
+                        }
+
+                        // Turnover
+                        pendingByCategory.turnover.push('GST 3B returns for last 12 months');
+                        pendingByCategory.turnover.push('GST 1 returns for last 12 months');
+
+                        // Debt Profile
+                        pendingByCategory.debtProfile.push('All Existing Loan Details');
+
+                        // Collateral
+                        pendingByCategory.collateral.push('Title Documents');
+                        pendingByCategory.collateral.push('Tax paid Receipts');
+                        pendingByCategory.collateral.push('Approved Sanction Plan');
+                        pendingByCategory.collateral.push('Encumberance Certificate');
+                        pendingByCategory.collateral.push('Title Documents - Unregistered');
+
+                        // Calculate all pending documents
+                        let allPending = [];
+                        Object.keys(pendingByCategory).forEach(cat => {
+                            allPending = allPending.concat(pendingByCategory[cat]);
+                        });
+                        %>
+                        <button class="tab-btn-pending active" onclick="showPendingTab('all')">ALL (<%= allPending.length %>)</button>
+                        <button class="tab-btn-pending" onclick="showPendingTab('personalId')">Personal ID (<%= pendingByCategory.personalId.length %>)</button>
+                        <button class="tab-btn-pending" onclick="showPendingTab('businessId')">Business ID (<%= pendingByCategory.businessId.length %>)</button>
+                        <button class="tab-btn-pending" onclick="showPendingTab('incorporation')">Incorporation (<%= pendingByCategory.incorporation.length %>)</button>
+                        <button class="tab-btn-pending" onclick="showPendingTab('creditReports')">Credit Reports (<%= pendingByCategory.creditReports.length %>)</button>
+                        <button class="tab-btn-pending" onclick="showPendingTab('financials')">Financials (<%= pendingByCategory.financials.length %>)</button>
+                        <button class="tab-btn-pending" onclick="showPendingTab('banking')">Banking (<%= pendingByCategory.banking.length %>)</button>
+                        <button class="tab-btn-pending" onclick="showPendingTab('turnover')">Turnover (<%= pendingByCategory.turnover.length %>)</button>
+                        <button class="tab-btn-pending" onclick="showPendingTab('debtProfile')">Debt Profile (<%= pendingByCategory.debtProfile.length %>)</button>
+                        <button class="tab-btn-pending" onclick="showPendingTab('collateral')">Collateral (<%= pendingByCategory.collateral.length %>)</button>
+                    </div>
+                
+                    <!-- Pending Documents Content -->
+                    <div id="pendingTabContent" class="pending-tab-content">
                     <% 
-                    const pendingDocs = requiredDocuments.filter(doc => 
-                        !uploadedFiles.some(f => f.originalName.includes(doc.split(' ')[0]))
-                    );
-                    if (pendingDocs.length === 0) { %>
+                    pendingByCategory.personalId.push('PAN Card (Applicant or Coapplicant)');
+                    pendingByCategory.personalId.push('Aadhar Card (Applicant or Coapplicant)');
+
+                    // Business ID (only for non-individual)
+                    if (proposal.applicantType !== 'Individual') {
+                        pendingByCategory.businessId.push('PAN Card (' + (proposal.applicantName || 'Applicant Name') + ' - Non Individual)');
+                        pendingByCategory.businessId.push('GST Certificate of (' + (proposal.applicantName || 'Applicant Name') + ')');
+                        pendingByCategory.businessId.push('Labour License of (Applicant/ Coapplicant name)');
+                        pendingByCategory.businessId.push('UDYAM Certificate of (Applicant/ Coapplicant name)');
+                    }
+
+                    // Incorporation
+                    if (proposal.applicantType === 'Partnership') {
+                        pendingByCategory.incorporation.push('Partnership deed');
+                        pendingByCategory.incorporation.push('Reconstituted partnership deed');
+                    }
+                    if (proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') {
+                        pendingByCategory.incorporation.push('Certificate of Incorporation');
+                        pendingByCategory.incorporation.push('Memorandum of Association');
+                        pendingByCategory.incorporation.push('Articles of Association');
+                    }
+
+                    // Credit Reports
+                    if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                        proposal.coApplicants.forEach((co, idx) => {
+                            pendingByCategory.creditReports.push('Personal Credit Report of ' + co.name + ' (only for individuals)');
+                        });
+                    }
+                    pendingByCategory.creditReports.push('Business Credit Report of ' + proposal.applicantName + ' (Non Individual)');
+
+                    // Financials
+                    pendingByCategory.financials.push('ITR of Current Year of (' + proposal.applicantName + ')');
+                    pendingByCategory.financials.push('ITR of Previous Year of (' + proposal.applicantName + ')');
+                    pendingByCategory.financials.push('ITR of Preceding previous year of (' + proposal.applicantName + ')');
+                    if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                        proposal.coApplicants.forEach((co, idx) => {
+                            pendingByCategory.financials.push('ITR of Current Year (' + (co.name || 'CoApplicant ' + (idx + 1)) + ')');
+                            pendingByCategory.financials.push('ITR of Previous Year of (' + (co.name || 'coApplicant' + (idx + 1) + ' name') + ')');
+                            pendingByCategory.financials.push('ITR of Preceding previous year of (' + (co.name || 'coApplicant' + (idx + 1) + ' name') + ')');
+                        });
+                    }
+
+                    // Banking
+                    pendingByCategory.banking.push('Bank Statement of ' + proposal.applicantName);
+                    pendingByCategory.banking.push('Overdraft Bank Statement of ' + proposal.applicantName);
+                    if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                        proposal.coApplicants.forEach((co, idx) => {
+                            pendingByCategory.banking.push('Bank Statement of ' + (co.name || 'Coapplicant Name' + (idx + 1)));
+                        });
+                    }
+
+                    // Turnover
+                    pendingByCategory.turnover.push('GST 3B returns for last 12 months');
+                    pendingByCategory.turnover.push('GST 1 returns for last 12 months');
+
+                    // Debt Profile
+                    pendingByCategory.debtProfile.push('All Existing Loan Details');
+
+                    // Collateral
+                    pendingByCategory.collateral.push('Title Documents');
+                    pendingByCategory.collateral.push('Tax paid Receipts');
+                    pendingByCategory.collateral.push('Approved Sanction Plan');
+                    pendingByCategory.collateral.push('Encumberance Certificate');
+                    pendingByCategory.collateral.push('Title Documents - Unregistered');
+                    %>
+
+                    <% if (allPending.length === 0) { %>
                         <div class="success-message">
                             ✓ All required documents have been uploaded!
                         </div>
                     <% } else { %>
-                        <ul class="pending-list">
-                            <% pendingDocs.forEach(doc => { %>
-                                <li class="pending-item">
-                                    <span class="warning-icon">⚠️</span>
-                                    <%= doc %>
-                                </li>
-                            <% }); %>
-                        </ul>
+                        <!-- All Pending -->
+                        <div class="pending-category-content" data-pending-category="all">
+                            <ul class="pending-list">
+                                <% allPending.forEach(doc => { %>
+                                    <li class="pending-item">
+                                        <span class="warning-icon">⚠️</span>
+                                        <%= doc %>
+                                    </li>
+                                <% }); %>
+                            </ul>
+                        </div>
+
+                        <!-- Personal ID Pending -->
+                        <div class="pending-category-content" data-pending-category="personalId" style="display: none;">
+                            <% if (pendingByCategory.personalId.length > 0) { %>
+                                <ul class="pending-list">
+                                    <% pendingByCategory.personalId.forEach(doc => { %>
+                                        <li class="pending-item">
+                                            <span class="warning-icon">⚠️</span>
+                                            <%= doc %>
+                                        </li>
+                                    <% }); %>
+                                </ul>
+                            <% } else { %>
+                                <p class="success-message">✓ All Personal ID documents uploaded!</p>
+                            <% } %>
+                        </div>
+
+                        <!-- Business ID Pending -->
+                        <div class="pending-category-content" data-pending-category="businessId" style="display: none;">
+                            <% if (pendingByCategory.businessId.length > 0) { %>
+                                <ul class="pending-list">
+                                    <% pendingByCategory.businessId.forEach(doc => { %>
+                                        <li class="pending-item">
+                                            <span class="warning-icon">⚠️</span>
+                                            <%= doc %>
+                                        </li>
+                                    <% }); %>
+                                </ul>
+                            <% } else { %>
+                                <p class="success-message">✓ All Business ID documents uploaded!</p>
+                            <% } %>
+                        </div>
+
+                        <!-- Incorporation Pending -->
+                        <div class="pending-category-content" data-pending-category="incorporation" style="display: none;">
+                            <% if (pendingByCategory.incorporation.length > 0) { %>
+                                <ul class="pending-list">
+                                    <% pendingByCategory.incorporation.forEach(doc => { %>
+                                        <li class="pending-item">
+                                            <span class="warning-icon">⚠️</span>
+                                            <%= doc %>
+                                        </li>
+                                    <% }); %>
+                                </ul>
+                            <% } else { %>
+                                <p class="success-message">✓ All Incorporation documents uploaded!</p>
+                            <% } %>
+                        </div>
+
+                        <!-- Credit Reports Pending -->
+                        <div class="pending-category-content" data-pending-category="creditReports" style="display: none;">
+                            <% if (pendingByCategory.creditReports.length > 0) { %>
+                                <ul class="pending-list">
+                                    <% pendingByCategory.creditReports.forEach(doc => { %>
+                                        <li class="pending-item">
+                                            <span class="warning-icon">⚠️</span>
+                                            <%= doc %>
+                                        </li>
+                                    <% }); %>
+                                </ul>
+                            <% } else { %>
+                                <p class="success-message">✓ All Credit Reports uploaded!</p>
+                            <% } %>
+                        </div>
+
+                        <!-- Financials Pending -->
+                        <div class="pending-category-content" data-pending-category="financials" style="display: none;">
+                            <% if (pendingByCategory.financials.length > 0) { %>
+                                <ul class="pending-list">
+                                    <% pendingByCategory.financials.forEach(doc => { %>
+                                        <li class="pending-item">
+                                            <span class="warning-icon">⚠️</span>
+                                            <%= doc %>
+                                        </li>
+                                    <% }); %>
+                                </ul>
+                            <% } else { %>
+                                <p class="success-message">✓ All Financial documents uploaded!</p>
+                            <% } %>
+                        </div>
+
+                        <!-- Banking Pending -->
+                        <div class="pending-category-content" data-pending-category="banking" style="display: none;">
+                            <% if (pendingByCategory.banking.length > 0) { %>
+                                <ul class="pending-list">
+                                    <% pendingByCategory.banking.forEach(doc => { %>
+                                        <li class="pending-item">
+                                            <span class="warning-icon">⚠️</span>
+                                            <%= doc %>
+                                        </li>
+                                    <% }); %>
+                                </ul>
+                            <% } else { %>
+                                <p class="success-message">✓ All Banking documents uploaded!</p>
+                            <% } %>
+                        </div>
+
+                        <!-- Turnover Pending -->
+                        <div class="pending-category-content" data-pending-category="turnover" style="display: none;">
+                            <% if (pendingByCategory.turnover.length > 0) { %>
+                                <ul class="pending-list">
+                                    <% pendingByCategory.turnover.forEach(doc => { %>
+                                        <li class="pending-item">
+                                            <span class="warning-icon">⚠️</span>
+                                            <%= doc %>
+                                        </li>
+                                    <% }); %>
+                                </ul>
+                            <% } else { %>
+                                <p class="success-message">✓ All Turnover documents uploaded!</p>
+                            <% } %>
+                        </div>
+
+                        <!-- Debt Profile Pending -->
+                        <div class="pending-category-content" data-pending-category="debtProfile" style="display: none;">
+                            <% if (pendingByCategory.debtProfile.length > 0) { %>
+                                <ul class="pending-list">
+                                    <% pendingByCategory.debtProfile.forEach(doc => { %>
+                                        <li class="pending-item">
+                                            <span class="warning-icon">⚠️</span>
+                                            <%= doc %>
+                                        </li>
+                                    <% }); %>
+                                </ul>
+                            <% } else { %>
+                                <p class="success-message">✓ All Debt Profile documents uploaded!</p>
+                            <% } %>
+                        </div>
+
+                        <!-- Collateral Pending -->
+                        <div class="pending-category-content" data-pending-category="collateral" style="display: none;">
+                            <% if (pendingByCategory.collateral.length > 0) { %>
+                                <ul class="pending-list">
+                                    <% pendingByCategory.collateral.forEach(doc => { %>
+                                        <li class="pending-item">
+                                            <span class="warning-icon">⚠️</span>
+                                            <%= doc %>
+                                        </li>
+                                    <% }); %>
+                                </ul>
+                            <% } else { %>
+                                <p class="success-message">✓ All Collateral documents uploaded!</p>
+                            <% } %>
+                        </div>
+
                         <p class="pending-note">Please upload all pending documents before proceeding to Stage 3.</p>
                     <% } %>
+                    </div>
                 </div>
             </div>
 
@@ -224,25 +711,25 @@
 
     <script>
         const proposalId = '<%= proposal.id %>';
-        const fileInput = document.getElementById('documents');
-        const filePreview = document.getElementById('filePreview');
-        const uploadForm = document.getElementById('uploadForm');
+        const bulkFileInput = document.getElementById('bulkDocuments');
+        const bulkFilePreview = document.getElementById('bulkFilePreview');
+        const bulkUploadForm = document.getElementById('bulkUploadForm');
         const uploadProgress = document.getElementById('uploadProgress');
 
         // File input preview
-        fileInput.addEventListener('change', function(e) {
+        bulkFileInput.addEventListener('change', function(e) {
             const files = Array.from(e.target.files);
-            filePreview.innerHTML = '';
+            bulkFilePreview.innerHTML = '';
             
             files.forEach(file => {
                 const fileItem = document.createElement('div');
                 fileItem.className = 'file-preview-item';
                 fileItem.innerHTML = `
-                    <span class="file-icon">${file.type.includes('pdf') ? '📄' : file.type.includes('image') ? '🖼️' : '📝'}</span>
+                    <span class="file-icon">${file.type.includes('pdf') ? '📄' : file.type.includes('image') ? '🖼️' : file.name.endsWith('.zip') ? '📦' : '📝'}</span>
                     <span class="file-name">${file.name}</span>
                     <span class="file-size">${(file.size / 1024).toFixed(2)} KB</span>
                 `;
-                filePreview.appendChild(fileItem);
+                bulkFilePreview.appendChild(fileItem);
             });
         });
 
@@ -273,29 +760,22 @@
         fileInputWrapper.addEventListener('drop', function(e) {
             const dt = e.dataTransfer;
             const files = dt.files;
-            fileInput.files = files;
-            fileInput.dispatchEvent(new Event('change'));
+            bulkFileInput.files = files;
+            bulkFileInput.dispatchEvent(new Event('change'));
         });
 
         // Form submission
-        uploadForm.addEventListener('submit', async function(e) {
+        bulkUploadForm.addEventListener('submit', async function(e) {
             e.preventDefault();
             
             const formData = new FormData();
-            const files = fileInput.files;
-            const documentType = document.getElementById('documentType').value;
+            const files = bulkFileInput.files;
             
             if (files.length === 0) {
                 alert('Please select at least one file');
                 return;
             }
             
-            if (!documentType) {
-                alert('Please select document type');
-                return;
-            }
-            
-            formData.append('documentType', documentType);
             for (let file of files) {
                 formData.append('documents', file);
             }
@@ -325,6 +805,88 @@
             }
         });
 
+        // Tab functionality
+        function showTab(category) {
+            const allRows = document.querySelectorAll('#filesTableBody tr');
+            const tabBtns = document.querySelectorAll('.tab-btn');
+            
+            // Update active tab button
+            tabBtns.forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            // Filter rows by category
+            if (category === 'all') {
+                allRows.forEach(row => row.style.display = '');
+            } else {
+                allRows.forEach(row => {
+                    const rowCategory = row.getAttribute('data-category');
+                    row.style.display = rowCategory === category ? '' : 'none';
+                });
+            }
+        }
+
+        // Update document category
+        async function updateCategory(fileId, category) {
+            if (!category) return;
+            
+            try {
+                const response = await fetch(`/stage2/${proposalId}/categorize`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ fileId, category })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert('Category updated successfully!');
+                    window.location.reload();
+                } else {
+                    alert('Update failed: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        // Pending documents tab functionality
+        function showPendingTab(category) {
+            const allPendingContent = document.querySelectorAll('.pending-category-content');
+            const pendingTabBtns = document.querySelectorAll('.tab-btn-pending');
+            
+            // Update active tab button
+            pendingTabBtns.forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            // Show/hide content by category
+            allPendingContent.forEach(content => {
+                const contentCategory = content.getAttribute('data-pending-category');
+                content.style.display = contentCategory === category ? 'block' : 'none';
+            });
+        }
+
+        // Main tab functionality (Uploaded vs Pending)
+        function showMainTab(tabName) {
+            const mainTabBtns = document.querySelectorAll('.main-tab-btn');
+            const uploadedSection = document.getElementById('uploadedSection');
+            const pendingSection = document.getElementById('pendingSection');
+            
+            // Update active button
+            mainTabBtns.forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            // Show/hide sections
+            if (tabName === 'uploaded') {
+                uploadedSection.style.display = 'block';
+                pendingSection.style.display = 'none';
+            } else {
+                uploadedSection.style.display = 'none';
+                pendingSection.style.display = 'block';
+            }
+        }
+
         async function proceedToStage3() {
             if (confirm('Complete Stage 2 and proceed to Customer Profiling?')) {
                 try {
@@ -346,6 +908,58 @@
                     alert('Error: ' + error.message);
                 }
             }
+        }
+
+        // Document preview functions
+        function showPreview(filename, originalName, proposalId) {
+            const preview = document.getElementById('documentPreview');
+            const loader = document.getElementById('previewLoader');
+            const iframe = document.getElementById('previewFrame');
+            const image = document.getElementById('previewImage');
+            const text = document.getElementById('previewText');
+            
+            // Reset all preview elements
+            loader.style.display = 'block';
+            iframe.style.display = 'none';
+            image.style.display = 'none';
+            text.style.display = 'none';
+            
+            // Show preview popup
+            preview.style.display = 'block';
+            
+            // Determine file type from original name
+            const ext = originalName.toLowerCase().split('.').pop();
+            const fileUrl = `/uploads/${proposalId}/${filename}`;
+            
+            // Load appropriate preview based on file type
+            if (ext === 'pdf') {
+                iframe.src = fileUrl;
+                iframe.onload = function() {
+                    loader.style.display = 'none';
+                    iframe.style.display = 'block';
+                };
+            } else if (['jpg', 'jpeg', 'png', 'gif'].includes(ext)) {
+                image.src = fileUrl;
+                image.onload = function() {
+                    loader.style.display = 'none';
+                    image.style.display = 'block';
+                };
+            } else {
+                // For other file types, show file info
+                text.innerHTML = `<strong>File:</strong> ${originalName}<br><strong>Type:</strong> ${ext.toUpperCase()}<br><br>Preview not available for this file type.<br><a href="${fileUrl}" target="_blank">Download to view</a>`;
+                loader.style.display = 'none';
+                text.style.display = 'block';
+            }
+        }
+
+        function hidePreview() {
+            const preview = document.getElementById('documentPreview');
+            const iframe = document.getElementById('previewFrame');
+            const image = document.getElementById('previewImage');
+            
+            preview.style.display = 'none';
+            iframe.src = '';
+            image.src = '';
         }
     </script>
 </body>

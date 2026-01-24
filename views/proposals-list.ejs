@@ -93,6 +93,11 @@
                                             <button class="btn-action btn-edit" onclick="editProposal('<%= proposal.id %>')" title="Edit">
                                                 ✏️
                                             </button>
+                                            <% if (proposal.currentStage === 1) { %>
+                                                <button class="btn-action btn-stage2" onclick="moveToStage2('<%= proposal.id %>')" title="Move to Stage 2">
+                                                    ➡️ Stage 2
+                                                </button>
+                                            <% } %>
                                             <button class="btn-action btn-delete" onclick="deleteProposal('<%= proposal.id %>', '<%= proposal.applicantName || proposal.customerName %>')" title="Delete">
                                                 🗑️
                                             </button>
@@ -110,6 +115,10 @@
     <script>
         function editProposal(proposalId) {
             window.location.href = `/proposals/${proposalId}/edit`;
+        }
+        
+        function moveToStage2(proposalId) {
+            window.location.href = `/stage2/${proposalId}`;
         }
         
         async function deleteProposal(proposalId, applicantName) {
