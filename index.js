@@ -241,6 +241,93 @@ function autoCategorizeDocument(filename, extractedText = '') {
   return '';
 }
 
+// Extract partnership deed details from text
+function extractPartnershipDeedDetails(fullText) {
+  const details = {
+    deedDate: null,
+    partnerShares: []
+  };
+
+  if (!fullText) {
+    console.log('No text provided for extraction');
+    return details;
+  }
+
+  console.log('Extracting from text length:', fullText.length);
+  const lowerText = fullText.toLowerCase();
+  
+  // Try to extract deed date - comprehensive patterns
+  const datePatterns = [
+    /(?:dated|executed\s+on|dated\s+this|made\s+this|entered\s+into\s+on|deed\s+dated|this\s+deed\s+of\s+partnership\s+made\s+on)\s*(?:the\s*)?(\d{1,2}(?:st|nd|rd|th)?\s+(?:day\s+of\s+)?(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[,\s]+\d{4})/gi,
+    /(?:deed\s+date|date\s+of\s+deed|execution\s+date|on\s+this|amendment\s+dated)[\s:]+(\d{1,2}[\s\/\-]\d{1,2}[\s\/\-]\d{2,4})/gi,
+    /(\d{1,2}[\s\/\-]\d{1,2}[\s\/\-]\d{4})/g
+  ];
+
+  for (const pattern of datePatterns) {
+    const matches = fullText.matchAll(pattern);
+    for (const match of matches) {
+      if (match[1] || match[0]) {
+        details.deedDate = match[1] || match[0];
+        console.log('Found date:', details.deedDate);
+        break;
+      }
+    }
+    if (details.deedDate) break;
+  }
+
+  // Enhanced profit/loss sharing extraction
+  const sharePatterns = [
+    // Pattern: "Partner Name - 50%"
+    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*[-:]\s*(\d+)\s*%/g,
+    // Pattern: "Partner Name shall have 50%"
+    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:shall|will)\s+(?:be\s+entitled\s+to|receive|have|get)\s+(\d+)\s*%/gi,
+    // Pattern: "50% to Partner Name"
+    /(\d+)\s*%\s+(?:to|for|of)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/g,
+    // Pattern: "profit sharing ratio: Partner1 50%, Partner2 50%"
+    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(\d+)\s*%/g,
+    // Pattern: "ratio of 50:50" or "50:50"
+    /(?:ratio|share|sharing)(?:\s+is|\s+shall\s+be)?[\s:]+(\d+)\s*:\s*(\d+)/gi,
+    // Pattern: "equally" or "equal shares"
+    /(?:share|profit|loss)(?:s)?\s+(?:shall\s+be\s+)?(?:equally|equal)/gi
+  ];
+
+  const foundShares = new Set();
+  
+  for (const pattern of sharePatterns) {
+    const matches = fullText.matchAll(pattern);
+    for (const match of matches) {
+      if (match[0] && match[0].length < 300 && match[0].length > 3) {
+        const shareText = match[0].trim();
+        // Avoid duplicate or very similar entries
+        if (!foundShares.has(shareText.toLowerCase())) {
+          foundShares.add(shareText.toLowerCase());
+          details.partnerShares.push(shareText);
+          console.log('Found share:', shareText);
+        }
+      }
+    }
+  }
+
+  // Look for common patterns in partnership deeds
+  const profitLossSection = fullText.match(/(?:profit\s+(?:and|&)\s+loss|sharing\s+ratio|distribution\s+of\s+profit)[\s\S]{0,500}/gi);
+  if (profitLossSection && profitLossSection.length > 0) {
+    console.log('Found profit/loss section:', profitLossSection[0].substring(0, 200));
+    
+    // Extract any percentage numbers from this section
+    const percentages = profitLossSection[0].match(/\d+\s*%/g);
+    if (percentages && percentages.length > 0) {
+      const percentText = `Profit sharing: ${percentages.join(', ')}`;
+      if (!foundShares.has(percentText.toLowerCase())) {
+        details.partnerShares.push(percentText);
+        console.log('Found percentages in profit section:', percentText);
+      }
+    }
+  }
+
+  console.log('Extraction complete. Date:', details.deedDate, 'Shares:', details.partnerShares.length);
+  return details;
+}
+
 // Routes
 app.get('/', (req, res) => {
   res.render('dashboard', { user: 'Associate' });
@@ -454,11 +541,17 @@ app.post('/stage2/:proposalId/upload', upload.array('documents', 10), async (req
     const fileDetails = [];
     for (const file of allFiles) {
       let extractedText = '';
+      let fullText = '';
+      let pageCount = null;
+      let extractedDetails = null;
+      
       if (file.mimetype === 'application/pdf') {
         try {
           const dataBuffer = fs.readFileSync(file.path);
           const pdfData = await pdfParse(dataBuffer);
-          extractedText = pdfData.text.substring(0, 500); // First 500 chars
+          fullText = pdfData.text;
+          extractedText = pdfData.text.substring(0, 500); // First 500 chars for preview
+          pageCount = pdfData.numpages; // Extract page count
         } catch (err) {
           console.error('PDF parsing error:', err);
         }
@@ -467,6 +560,13 @@ app.post('/stage2/:proposalId/upload', upload.array('documents', 10), async (req
       // Auto-categorize based on filename and extracted text
       const autoCategory = autoCategorizeDocument(file.originalname, extractedText);
       
+      // Extract specific details for incorporation documents (partnership deeds)
+      if (autoCategory === 'incorporation' && fullText) {
+        console.log('Processing incorporation document:', file.originalname);
+        extractedDetails = extractPartnershipDeedDetails(fullText);
+        console.log('Extracted details:', JSON.stringify(extractedDetails));
+      }
+      
       fileDetails.push({
         id: file.filename,
         filename: file.filename,
@@ -474,7 +574,9 @@ app.post('/stage2/:proposalId/upload', upload.array('documents', 10), async (req
         category: autoCategory,
         autoCategorized: !!autoCategory,
         size: file.size,
+        pages: pageCount,
         extractedText: extractedText,
+        extractedDetails: extractedDetails,
         uploadedAt: new Date().toISOString()
       });
     }
@@ -489,6 +591,142 @@ app.post('/stage2/:proposalId/upload', upload.array('documents', 10), async (req
     res.json({ success: true, files: fileDetails });
   } catch (error) {
     console.error('Upload error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Delete multiple documents endpoint
+app.post('/stage2/:proposalId/delete-multiple-documents', (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const { fileIds } = req.body;
+    
+    if (!fileIds || !Array.isArray(fileIds) || fileIds.length === 0) {
+      return res.status(400).json({ success: false, error: 'File IDs array is required' });
+    }
+    
+    // Get proposal
+    const proposal = getProposalById(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ success: false, error: 'Proposal not found' });
+    }
+    
+    if (!proposal.documents || !Array.isArray(proposal.documents)) {
+      return res.status(400).json({ success: false, error: 'No documents found in proposal' });
+    }
+    
+    let deletedCount = 0;
+    const errors = [];
+    
+    // Process each file ID
+    fileIds.forEach(fileId => {
+      const docIndex = proposal.documents.findIndex(doc => doc.id === fileId || doc.filename === fileId);
+      
+      if (docIndex !== -1) {
+        const document = proposal.documents[docIndex];
+        
+        // Delete physical file
+        const filePath = path.join(UPLOADS_DIR, proposalId, document.filename);
+        
+        if (fs.existsSync(filePath)) {
+          try {
+            fs.unlinkSync(filePath);
+            deletedCount++;
+          } catch (err) {
+            errors.push(`Failed to delete file: ${document.originalName}`);
+          }
+        }
+        
+        // Remove from proposal documents array
+        proposal.documents.splice(docIndex, 1);
+      } else {
+        errors.push(`Document not found: ${fileId}`);
+      }
+    });
+    
+    // Update proposal
+    updateProposal(proposalId, { documents: proposal.documents });
+    
+    if (errors.length > 0) {
+      return res.json({ 
+        success: true, 
+        deletedCount, 
+        message: `Deleted ${deletedCount} documents with ${errors.length} errors`,
+        errors 
+      });
+    }
+    
+    res.json({ success: true, deletedCount, message: `Successfully deleted ${deletedCount} documents` });
+  } catch (error) {
+    console.error('Bulk delete error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Delete multiple documents endpoint
+app.post('/stage2/:proposalId/delete-multiple-documents', (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const { fileIds } = req.body;
+    
+    if (!fileIds || !Array.isArray(fileIds) || fileIds.length === 0) {
+      return res.status(400).json({ success: false, error: 'File IDs array is required' });
+    }
+    
+    // Get proposal
+    const proposal = getProposalById(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ success: false, error: 'Proposal not found' });
+    }
+    
+    if (!proposal.documents || !Array.isArray(proposal.documents)) {
+      return res.status(400).json({ success: false, error: 'No documents found in proposal' });
+    }
+    
+    let deletedCount = 0;
+    const errors = [];
+    
+    // Process each file ID
+    fileIds.forEach(fileId => {
+      const docIndex = proposal.documents.findIndex(doc => doc.id === fileId || doc.filename === fileId);
+      
+      if (docIndex !== -1) {
+        const document = proposal.documents[docIndex];
+        
+        // Delete physical file
+        const filePath = path.join(UPLOADS_DIR, proposalId, document.filename);
+        
+        if (fs.existsSync(filePath)) {
+          try {
+            fs.unlinkSync(filePath);
+            deletedCount++;
+          } catch (err) {
+            errors.push(`Failed to delete file: ${document.originalName}`);
+          }
+        }
+        
+        // Remove from proposal documents array
+        proposal.documents.splice(docIndex, 1);
+      } else {
+        errors.push(`Document not found: ${fileId}`);
+      }
+    });
+    
+    // Update proposal
+    updateProposal(proposalId, { documents: proposal.documents });
+    
+    if (errors.length > 0) {
+      return res.json({ 
+        success: true, 
+        deletedCount, 
+        message: `Deleted ${deletedCount} documents with ${errors.length} errors`,
+        errors 
+      });
+    }
+    
+    res.json({ success: true, deletedCount, message: `Successfully deleted ${deletedCount} documents` });
+  } catch (error) {
+    console.error('Bulk delete error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -592,6 +830,61 @@ app.post('/stage2/:proposalId/categorize', (req, res) => {
     }
   } catch (error) {
     console.error('Categorize error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Reprocess incorporation documents to extract partnership deed details
+app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    
+    const proposal = getProposalById(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ success: false, error: 'Proposal not found' });
+    }
+    
+    if (!proposal.documents || proposal.documents.length === 0) {
+      return res.status(400).json({ success: false, error: 'No documents found' });
+    }
+    
+    let processedCount = 0;
+    const proposalDir = path.join(UPLOADS_DIR, proposalId);
+    
+    // Process each incorporation document
+    for (let i = 0; i < proposal.documents.length; i++) {
+      const doc = proposal.documents[i];
+      
+      if (doc.category === 'incorporation') {
+        const filePath = path.join(proposalDir, doc.filename);
+        
+        if (fs.existsSync(filePath) && doc.originalName.toLowerCase().endsWith('.pdf')) {
+          try {
+            const dataBuffer = fs.readFileSync(filePath);
+            const pdfData = await pdfParse(dataBuffer);
+            const fullText = pdfData.text;
+            
+            console.log('Reprocessing:', doc.originalName, 'Text length:', fullText.length);
+            
+            const extractedDetails = extractPartnershipDeedDetails(fullText);
+            proposal.documents[i].extractedDetails = extractedDetails;
+            
+            console.log('Updated extractedDetails for:', doc.originalName);
+            processedCount++;
+          } catch (err) {
+            console.error('Error reprocessing', doc.originalName, err);
+          }
+        }
+      }
+    }
+    
+    if (processedCount > 0) {
+      updateProposal(proposalId, { documents: proposal.documents });
+    }
+    
+    res.json({ success: true, processedCount, message: `Reprocessed ${processedCount} incorporation document(s)` });
+  } catch (error) {
+    console.error('Reprocess error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

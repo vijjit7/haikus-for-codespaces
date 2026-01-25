@@ -143,8 +143,18 @@
                 <div class="doc-category">
                     <h3 class="category-title">Personal ID - only for individual applicant or coapplicants</h3>
                     <ul class="doc-list">
-                        <li>PAN Card (Applicant or Coapplicant)</li>
-                        <li>Aadhar Card (Applicant or Coapplicant)</li>
+                        <% if (proposal.applicantType === 'Individual') { %>
+                            <li>PAN Card of <%= proposal.applicantName || proposal.customerName %></li>
+                            <li>Aadhar Card of <%= proposal.applicantName || proposal.customerName %></li>
+                        <% } %>
+                        <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
+                            <% proposal.coApplicants.forEach((co, idx) => { %>
+                                <% if (co.type === 'Individual') { %>
+                                    <li>PAN Card of <%= co.name %></li>
+                                    <li>Aadhar Card of <%= co.name %></li>
+                                <% } %>
+                            <% }); %>
+                        <% } %>
                     </ul>
                 </div>
 
@@ -153,10 +163,10 @@
                 <div class="doc-category">
                     <h3 class="category-title">Business ID - only for non individual</h3>
                     <ul class="doc-list">
-                        <li>PAN Card (<%= proposal.applicantName || 'Applicant Name' %> - Non Individual)</li>
-                        <li>GST Certificate of (<%= proposal.applicantName || 'Applicant Name' %>)</li>
-                        <li>Labour License of (Applicant/ Coapplicant name)</li>
-                        <li>UDYAM Certificate of (Applicant/ Coapplicant name)</li>
+                        <li>PAN Card of <%= proposal.applicantName || 'Applicant Name' %> (Non Individual)</li>
+                        <li>GST Certificate of <%= proposal.applicantName || 'Applicant Name' %></li>
+                        <li>Labour License of <%= proposal.applicantName || 'Applicant Name' %></li>
+                        <li>UDYAM Certificate of <%= proposal.applicantName || 'Applicant Name' %></li>
                     </ul>
                 </div>
                 <% } %>
@@ -168,8 +178,18 @@
                     <div class="doc-subcategory">
                         <h4>For Partnership</h4>
                         <ul class="doc-list">
-                            <li>Partnership deed</li>
-                            <li>Reconstituted partnership deed</li>
+                            <li>Partnership deed
+                                <ul style="margin-left: 20px; margin-top: 5px; font-size: 0.9em; color: #7f8c8d;">
+                                    <li>Date of the deed</li>
+                                    <li>Profit & Loss share of each partner</li>
+                                </ul>
+                            </li>
+                            <li>Reconstituted partnership deed
+                                <ul style="margin-left: 20px; margin-top: 5px; font-size: 0.9em; color: #7f8c8d;">
+                                    <li>Date of the deed</li>
+                                    <li>Profit & Loss share of each partner</li>
+                                </ul>
+                            </li>
                         </ul>
                     </div>
                     <% } %>
@@ -314,13 +334,19 @@
                             <p>No documents uploaded yet</p>
                         </div>
                     <% } else { %>
+                        <div class="bulk-actions-bar" id="bulkActionsBar" style="display: none;">
+                            <span id="selectedCount">0</span> document(s) selected
+                            <button class="btn btn-danger" onclick="deleteSelectedDocuments()">🗑️ Delete Selected</button>
+                        </div>
                         <div class="files-table-wrapper">
                             <table class="files-table">
                                 <thead>
                                     <tr>
+                                        <th style="width: 40px;"><input type="checkbox" id="selectAllCheckbox" onclick="toggleSelectAll(this)"></th>
                                         <th>Category</th>
                                         <th>File Name</th>
                                         <th>Size</th>
+                                        <th>Pages</th>
                                         <th>Uploaded</th>
                                         <th>Status</th>
                                         <th>Actions</th>
@@ -329,6 +355,7 @@
                                 <tbody id="filesTableBody">
                                     <% uploadedFiles.forEach(file => { %>
                                         <tr data-category="<%= file.category || 'all' %>">
+                                            <td><input type="checkbox" class="doc-checkbox" value="<%= file.id %>" onchange="updateBulkActions()"></td>
                                             <td>
                                                 <span class="badge"><%= file.category || 'Uncategorized' %></span>
                                             </td>
@@ -339,6 +366,7 @@
                                                 <%= file.originalName %>
                                             </td>
                                             <td><%= file.size %></td>
+                                            <td><%= file.pages ? file.pages : 'N/A' %></td>
                                             <td><%= new Date(file.uploadedAt).toLocaleString() %></td>
                                             <td><span class="badge badge-success">✓ Uploaded</span></td>
                                             <td class="actions-cell">
@@ -393,7 +421,17 @@
                     <!-- Sub-Tab Navigation for Pending -->
                     <div class="tab-navigation">
                         <% 
-                        // Categorize pending documents first to calculate counts
+                        // Helper function to check if a document type is uploaded in a category
+                        function isDocumentUploaded(category) {
+                            return uploadedFiles.some(file => file.category === category);
+                        }
+
+                        // Get count of documents in a specific category
+                        function getUploadedCountInCategory(category) {
+                            return uploadedFiles.filter(file => file.category === category).length;
+                        }
+
+                        // Categorize pending documents based on what's NOT uploaded
                         const pendingByCategory = {
                             personalId: [],
                             businessId: [],
@@ -406,71 +444,122 @@
                             collateral: []
                         };
 
-                        // Personal ID documents
-                        pendingByCategory.personalId.push('PAN Card (Applicant or Coapplicant)');
-                        pendingByCategory.personalId.push('Aadhar Card (Applicant or Coapplicant)');
+                        // Count uploaded documents by category
+                        const uploadedPersonalIdCount = getUploadedCountInCategory('personalId');
+                        
+                        // Personal ID documents - check for each individual
+                        let requiredPersonalIdCount = 0;
+                        if (proposal.applicantType === 'Individual') {
+                            requiredPersonalIdCount += 2; // PAN + Aadhar for applicant
+                        }
+                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                            proposal.coApplicants.forEach(co => {
+                                if (co.type === 'Individual') {
+                                    requiredPersonalIdCount += 2; // PAN + Aadhar for each individual co-applicant
+                                }
+                            });
+                        }
+
+                        // Add pending personal ID docs
+                        if (uploadedPersonalIdCount < requiredPersonalIdCount) {
+                            if (proposal.applicantType === 'Individual') {
+                                pendingByCategory.personalId.push('PAN Card of ' + (proposal.applicantName || proposal.customerName));
+                                pendingByCategory.personalId.push('Aadhar Card of ' + (proposal.applicantName || proposal.customerName));
+                            }
+                            if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                                proposal.coApplicants.forEach((co, idx) => {
+                                    if (co.type === 'Individual') {
+                                        pendingByCategory.personalId.push('PAN Card of ' + co.name);
+                                        pendingByCategory.personalId.push('Aadhar Card of ' + co.name);
+                                    }
+                                });
+                            }
+                        }
 
                         // Business ID (only for non-individual)
-                        if (proposal.applicantType !== 'Individual') {
-                            pendingByCategory.businessId.push('PAN Card (' + (proposal.applicantName || 'Applicant Name') + ' - Non Individual)');
-                            pendingByCategory.businessId.push('GST Certificate of (' + (proposal.applicantName || 'Applicant Name') + ')');
-                            pendingByCategory.businessId.push('Labour License of (Applicant/ Coapplicant name)');
-                            pendingByCategory.businessId.push('UDYAM Certificate of (Applicant/ Coapplicant name)');
+                        if (proposal.applicantType !== 'Individual' && getUploadedCountInCategory('businessId') === 0) {
+                            pendingByCategory.businessId.push('PAN Card of ' + (proposal.applicantName || 'Applicant Name') + ' (Non Individual)');
+                            pendingByCategory.businessId.push('GST Certificate of ' + (proposal.applicantName || 'Applicant Name'));
+                            pendingByCategory.businessId.push('Labour License of ' + (proposal.applicantName || 'Applicant Name'));
+                            pendingByCategory.businessId.push('UDYAM Certificate of ' + (proposal.applicantName || 'Applicant Name'));
                         }
 
-                        // Incorporation
+                        // Incorporation - Always show for Partnership to display required details
                         if (proposal.applicantType === 'Partnership') {
-                            pendingByCategory.incorporation.push('Partnership deed');
-                            pendingByCategory.incorporation.push('Reconstituted partnership deed');
-                        }
-                        if (proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') {
-                            pendingByCategory.incorporation.push('Certificate of Incorporation');
-                            pendingByCategory.incorporation.push('Memorandum of Association');
-                            pendingByCategory.incorporation.push('Articles of Association');
+                            // Always show partnership deed requirements with details to extract
+                            pendingByCategory.incorporation.push('Partnership deed - Date of deed, Profit & Loss share of partners');
+                            pendingByCategory.incorporation.push('Reconstituted partnership deed - Date of deed, Profit & Loss share of partners');
+                        } else if (!isDocumentUploaded('incorporation')) {
+                            // For other types, only show if not uploaded
+                            if (proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') {
+                                pendingByCategory.incorporation.push('Certificate of Incorporation');
+                                pendingByCategory.incorporation.push('Memorandum of Association');
+                                pendingByCategory.incorporation.push('Articles of Association');
+                            }
                         }
 
                         // Credit Reports
-                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
-                            proposal.coApplicants.forEach((co, idx) => {
-                                pendingByCategory.creditReports.push('Personal Credit Report of ' + co.name + ' (only for individuals)');
-                            });
+                        if (!isDocumentUploaded('creditReports')) {
+                            if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                                proposal.coApplicants.forEach((co, idx) => {
+                                    if (co.type === 'Individual') {
+                                        pendingByCategory.creditReports.push('Personal Credit Report of ' + co.name);
+                                    }
+                                });
+                            }
+                            if (proposal.applicantType !== 'Individual') {
+                                pendingByCategory.creditReports.push('Business Credit Report of ' + proposal.applicantName);
+                            }
                         }
-                        pendingByCategory.creditReports.push('Business Credit Report of ' + proposal.applicantName + ' (Non Individual)');
 
                         // Financials
-                        pendingByCategory.financials.push('ITR of Current Year of (' + proposal.applicantName + ')');
-                        pendingByCategory.financials.push('ITR of Previous Year of (' + proposal.applicantName + ')');
-                        pendingByCategory.financials.push('ITR of Preceding previous year of (' + proposal.applicantName + ')');
-                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
-                            proposal.coApplicants.forEach((co, idx) => {
-                                pendingByCategory.financials.push('ITR of Current Year (' + (co.name || 'CoApplicant ' + (idx + 1)) + ')');
-                                pendingByCategory.financials.push('ITR of Previous Year of (' + (co.name || 'coApplicant' + (idx + 1) + ' name') + ')');
-                                pendingByCategory.financials.push('ITR of Preceding previous year of (' + (co.name || 'coApplicant' + (idx + 1) + ' name') + ')');
-                            });
+                        if (!isDocumentUploaded('financials')) {
+                            pendingByCategory.financials.push('ITR of Current Year of ' + proposal.applicantName);
+                            pendingByCategory.financials.push('ITR of Previous Year of ' + proposal.applicantName);
+                            pendingByCategory.financials.push('ITR of Preceding previous year of ' + proposal.applicantName);
+                            if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                                proposal.coApplicants.forEach((co, idx) => {
+                                    if (co.type === 'Individual') {
+                                        pendingByCategory.financials.push('ITR of Current Year of ' + (co.name || 'CoApplicant ' + (idx + 1)));
+                                        pendingByCategory.financials.push('ITR of Previous Year of ' + (co.name || 'coApplicant' + (idx + 1) + ' name'));
+                                        pendingByCategory.financials.push('ITR of Preceding previous year of ' + (co.name || 'coApplicant' + (idx + 1) + ' name'));
+                                    }
+                                });
+                            }
                         }
 
                         // Banking
-                        pendingByCategory.banking.push('Bank Statement of ' + proposal.applicantName);
-                        pendingByCategory.banking.push('Overdraft Bank Statement of ' + proposal.applicantName);
-                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
-                            proposal.coApplicants.forEach((co, idx) => {
-                                pendingByCategory.banking.push('Bank Statement of ' + (co.name || 'Coapplicant Name' + (idx + 1)));
-                            });
+                        if (!isDocumentUploaded('banking')) {
+                            pendingByCategory.banking.push('Bank Statement of ' + proposal.applicantName);
+                            pendingByCategory.banking.push('Overdraft Bank Statement of ' + proposal.applicantName);
+                            if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                                proposal.coApplicants.forEach((co, idx) => {
+                                    if (co.type === 'Individual') {
+                                        pendingByCategory.banking.push('Bank Statement of ' + (co.name || 'Coapplicant Name' + (idx + 1)));
+                                    }
+                                });
+                            }
                         }
 
                         // Turnover
-                        pendingByCategory.turnover.push('GST 3B returns for last 12 months');
-                        pendingByCategory.turnover.push('GST 1 returns for last 12 months');
+                        if (!isDocumentUploaded('turnover')) {
+                            pendingByCategory.turnover.push('GST 3B returns for last 12 months');
+                            pendingByCategory.turnover.push('GST 1 returns for last 12 months');
+                        }
 
                         // Debt Profile
-                        pendingByCategory.debtProfile.push('All Existing Loan Details');
+                        if (!isDocumentUploaded('debtProfile')) {
+                            pendingByCategory.debtProfile.push('All Existing Loan Details');
+                        }
 
                         // Collateral
-                        pendingByCategory.collateral.push('Title Documents');
-                        pendingByCategory.collateral.push('Tax paid Receipts');
-                        pendingByCategory.collateral.push('Approved Sanction Plan');
-                        pendingByCategory.collateral.push('Encumberance Certificate');
-                        pendingByCategory.collateral.push('Title Documents - Unregistered');
+                        if (!isDocumentUploaded('collateral')) {
+                            pendingByCategory.collateral.push('Title Documents');
+                            pendingByCategory.collateral.push('Tax paid Receipts');
+                            pendingByCategory.collateral.push('Approved Sanction Plan');
+                            pendingByCategory.collateral.push('Encumberance Certificate');
+                            pendingByCategory.collateral.push('Title Documents - Unregistered');
+                        }
 
                         // Calculate all pending documents
                         let allPending = [];
@@ -492,72 +581,6 @@
                 
                     <!-- Pending Documents Content -->
                     <div id="pendingTabContent" class="pending-tab-content">
-                    <% 
-                    pendingByCategory.personalId.push('PAN Card (Applicant or Coapplicant)');
-                    pendingByCategory.personalId.push('Aadhar Card (Applicant or Coapplicant)');
-
-                    // Business ID (only for non-individual)
-                    if (proposal.applicantType !== 'Individual') {
-                        pendingByCategory.businessId.push('PAN Card (' + (proposal.applicantName || 'Applicant Name') + ' - Non Individual)');
-                        pendingByCategory.businessId.push('GST Certificate of (' + (proposal.applicantName || 'Applicant Name') + ')');
-                        pendingByCategory.businessId.push('Labour License of (Applicant/ Coapplicant name)');
-                        pendingByCategory.businessId.push('UDYAM Certificate of (Applicant/ Coapplicant name)');
-                    }
-
-                    // Incorporation
-                    if (proposal.applicantType === 'Partnership') {
-                        pendingByCategory.incorporation.push('Partnership deed');
-                        pendingByCategory.incorporation.push('Reconstituted partnership deed');
-                    }
-                    if (proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') {
-                        pendingByCategory.incorporation.push('Certificate of Incorporation');
-                        pendingByCategory.incorporation.push('Memorandum of Association');
-                        pendingByCategory.incorporation.push('Articles of Association');
-                    }
-
-                    // Credit Reports
-                    if (proposal.coApplicants && proposal.coApplicants.length > 0) {
-                        proposal.coApplicants.forEach((co, idx) => {
-                            pendingByCategory.creditReports.push('Personal Credit Report of ' + co.name + ' (only for individuals)');
-                        });
-                    }
-                    pendingByCategory.creditReports.push('Business Credit Report of ' + proposal.applicantName + ' (Non Individual)');
-
-                    // Financials
-                    pendingByCategory.financials.push('ITR of Current Year of (' + proposal.applicantName + ')');
-                    pendingByCategory.financials.push('ITR of Previous Year of (' + proposal.applicantName + ')');
-                    pendingByCategory.financials.push('ITR of Preceding previous year of (' + proposal.applicantName + ')');
-                    if (proposal.coApplicants && proposal.coApplicants.length > 0) {
-                        proposal.coApplicants.forEach((co, idx) => {
-                            pendingByCategory.financials.push('ITR of Current Year (' + (co.name || 'CoApplicant ' + (idx + 1)) + ')');
-                            pendingByCategory.financials.push('ITR of Previous Year of (' + (co.name || 'coApplicant' + (idx + 1) + ' name') + ')');
-                            pendingByCategory.financials.push('ITR of Preceding previous year of (' + (co.name || 'coApplicant' + (idx + 1) + ' name') + ')');
-                        });
-                    }
-
-                    // Banking
-                    pendingByCategory.banking.push('Bank Statement of ' + proposal.applicantName);
-                    pendingByCategory.banking.push('Overdraft Bank Statement of ' + proposal.applicantName);
-                    if (proposal.coApplicants && proposal.coApplicants.length > 0) {
-                        proposal.coApplicants.forEach((co, idx) => {
-                            pendingByCategory.banking.push('Bank Statement of ' + (co.name || 'Coapplicant Name' + (idx + 1)));
-                        });
-                    }
-
-                    // Turnover
-                    pendingByCategory.turnover.push('GST 3B returns for last 12 months');
-                    pendingByCategory.turnover.push('GST 1 returns for last 12 months');
-
-                    // Debt Profile
-                    pendingByCategory.debtProfile.push('All Existing Loan Details');
-
-                    // Collateral
-                    pendingByCategory.collateral.push('Title Documents');
-                    pendingByCategory.collateral.push('Tax paid Receipts');
-                    pendingByCategory.collateral.push('Approved Sanction Plan');
-                    pendingByCategory.collateral.push('Encumberance Certificate');
-                    pendingByCategory.collateral.push('Title Documents - Unregistered');
-                    %>
 
                     <% if (allPending.length === 0) { %>
                         <div class="success-message">
@@ -621,6 +644,58 @@
                                 </ul>
                             <% } else { %>
                                 <p class="success-message">✓ All Incorporation documents uploaded!</p>
+                            <% } %>
+                            
+                            <!-- Show extracted details from uploaded partnership deeds -->
+                            <% 
+                            const incorporationDocs = uploadedFiles.filter(f => f.category === 'incorporation');
+                            if (incorporationDocs.length > 0 && proposal.applicantType === 'Partnership') { %>
+                                <div style="margin-top: 20px; padding: 15px; background: #e8f5e9; border-radius: 8px; border-left: 4px solid #4caf50;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                        <h4 style="margin: 0; color: #2e7d32;">📄 Extracted Information from Partnership Deeds</h4>
+                                        <button onclick="reprocessIncorporationDocs()" class="btn btn-primary" style="font-size: 0.85em; padding: 6px 12px;">
+                                            🔄 Re-extract Information
+                                        </button>
+                                    </div>
+                                    <% incorporationDocs.forEach(doc => { %>
+                                        <div style="margin-bottom: 15px; padding: 10px; background: white; border-radius: 5px;">
+                                            <strong style="color: #1976d2;">📋 <%= doc.originalName %></strong>
+                                            <% if (doc.extractedDetails) { %>
+                                                <div style="margin-top: 8px;">
+                                                    <% if (doc.extractedDetails.deedDate) { %>
+                                                        <div style="margin: 5px 0;">
+                                                            <strong>📅 Deed Date:</strong> 
+                                                            <span style="color: #2e7d32;"><%= doc.extractedDetails.deedDate %></span>
+                                                        </div>
+                                                    <% } else { %>
+                                                        <div style="margin: 5px 0; color: #d32f2f;">
+                                                            <strong>📅 Deed Date:</strong> Not found in document
+                                                        </div>
+                                                    <% } %>
+                                                    
+                                                    <% if (doc.extractedDetails.partnerShares && doc.extractedDetails.partnerShares.length > 0) { %>
+                                                        <div style="margin: 5px 0;">
+                                                            <strong>💰 Profit & Loss Sharing:</strong>
+                                                            <ul style="margin: 5px 0 0 20px; list-style: disc;">
+                                                                <% doc.extractedDetails.partnerShares.forEach(share => { %>
+                                                                    <li style="color: #2e7d32;"><%= share %></li>
+                                                                <% }); %>
+                                                            </ul>
+                                                        </div>
+                                                    <% } else { %>
+                                                        <div style="margin: 5px 0; color: #d32f2f;">
+                                                            <strong>💰 Profit & Loss Sharing:</strong> Not found in document
+                                                        </div>
+                                                    <% } %>
+                                                </div>
+                                            <% } else { %>
+                                                <div style="margin-top: 8px; color: #f57c00;">
+                                                    <em>⚠️ No extraction data. Click "Re-extract Information" button above.</em>
+                                                </div>
+                                            <% } %>
+                                        </div>
+                                    <% }); %>
+                                </div>
                             <% } %>
                         </div>
 
@@ -841,15 +916,31 @@
             tabBtns.forEach(btn => btn.classList.remove('active'));
             event.target.classList.add('active');
             
-            // Filter rows by category
+            // Filter rows by category and uncheck hidden rows
             if (category === 'all') {
                 allRows.forEach(row => row.style.display = '');
             } else {
                 allRows.forEach(row => {
                     const rowCategory = row.getAttribute('data-category');
-                    row.style.display = rowCategory === category ? '' : 'none';
+                    if (rowCategory === category) {
+                        row.style.display = '';
+                    } else {
+                        row.style.display = 'none';
+                        // Uncheck checkboxes in hidden rows
+                        const checkbox = row.querySelector('.doc-checkbox');
+                        if (checkbox) {
+                            checkbox.checked = false;
+                        }
+                    }
                 });
             }
+            
+            // Reset select all checkbox and update bulk actions when tab changes
+            const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+            if (selectAllCheckbox) {
+                selectAllCheckbox.checked = false;
+            }
+            updateBulkActions();
         }
 
         // Update document category
@@ -872,6 +963,168 @@
                     window.location.reload();
                 } else {
                     alert('Update failed: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        // Helper function to check if a row is actually visible
+        function isRowVisible(row) {
+            return row.style.display !== 'none' && row.offsetParent !== null;
+        }
+
+        // Toggle select all checkboxes - only for visible rows
+        function toggleSelectAll(selectAllCheckbox) {
+            const allRows = document.querySelectorAll('#filesTableBody tr');
+            allRows.forEach(row => {
+                // Only select checkboxes in visible rows
+                if (isRowVisible(row)) {
+                    const checkbox = row.querySelector('.doc-checkbox');
+                    if (checkbox) {
+                        checkbox.checked = selectAllCheckbox.checked;
+                    }
+                }
+            });
+            updateBulkActions();
+        }
+
+        // Update bulk actions bar visibility and count - only count visible checked boxes
+        function updateBulkActions() {
+            const allRows = document.querySelectorAll('#filesTableBody tr');
+            let visibleCheckedCount = 0;
+            let visibleTotalCount = 0;
+            
+            allRows.forEach(row => {
+                if (isRowVisible(row)) {
+                    visibleTotalCount++;
+                    const checkbox = row.querySelector('.doc-checkbox');
+                    if (checkbox && checkbox.checked) {
+                        visibleCheckedCount++;
+                    }
+                }
+            });
+            
+            const bulkActionsBar = document.getElementById('bulkActionsBar');
+            const selectedCount = document.getElementById('selectedCount');
+            const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+            
+            if (visibleCheckedCount > 0) {
+                bulkActionsBar.style.display = 'flex';
+                selectedCount.textContent = visibleCheckedCount;
+            } else {
+                bulkActionsBar.style.display = 'none';
+            }
+            
+            // Update select all checkbox state - only based on visible rows
+            selectAllCheckbox.checked = visibleTotalCount > 0 && visibleCheckedCount === visibleTotalCount;
+            selectAllCheckbox.indeterminate = visibleCheckedCount > 0 && visibleCheckedCount < visibleTotalCount;
+        }
+
+        // Delete selected documents - only delete visible checked documents
+        async function deleteSelectedDocuments() {
+            const allRows = document.querySelectorAll('#filesTableBody tr');
+            const fileIds = [];
+            
+            // Only get file IDs from visible checked rows
+            allRows.forEach(row => {
+                if (isRowVisible(row)) {
+                    const checkbox = row.querySelector('.doc-checkbox');
+                    if (checkbox && checkbox.checked) {
+                        fileIds.push(checkbox.value);
+                    }
+                }
+            });
+            
+            if (fileIds.length === 0) {
+                alert('No documents selected');
+                return;
+            }
+            
+            if (!confirm(`Are you sure you want to delete ${fileIds.length} document(s)?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/stage2/${proposalId}/delete-multiple-documents`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ fileIds })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert(`Successfully deleted ${result.deletedCount} document(s)!`);
+                    window.location.reload();
+                } else {
+                    alert('Delete failed: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        // Toggle select all checkboxes
+        function toggleSelectAll(selectAllCheckbox) {
+            const checkboxes = document.querySelectorAll('.doc-checkbox');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = selectAllCheckbox.checked;
+            });
+            updateBulkActions();
+        }
+
+        // Update bulk actions bar visibility and count
+        function updateBulkActions() {
+            const checkboxes = document.querySelectorAll('.doc-checkbox:checked');
+            const bulkActionsBar = document.getElementById('bulkActionsBar');
+            const selectedCount = document.getElementById('selectedCount');
+            const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+            
+            if (checkboxes.length > 0) {
+                bulkActionsBar.style.display = 'flex';
+                selectedCount.textContent = checkboxes.length;
+            } else {
+                bulkActionsBar.style.display = 'none';
+            }
+            
+            // Update select all checkbox state
+            const allCheckboxes = document.querySelectorAll('.doc-checkbox');
+            selectAllCheckbox.checked = allCheckboxes.length > 0 && checkboxes.length === allCheckboxes.length;
+        }
+
+        // Delete selected documents
+        async function deleteSelectedDocuments() {
+            const checkboxes = document.querySelectorAll('.doc-checkbox:checked');
+            const fileIds = Array.from(checkboxes).map(cb => cb.value);
+            
+            if (fileIds.length === 0) {
+                alert('No documents selected');
+                return;
+            }
+            
+            if (!confirm(`Are you sure you want to delete ${fileIds.length} document(s)?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/stage2/${proposalId}/delete-multiple-documents`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ fileIds })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert(`Successfully deleted ${result.deletedCount} document(s)!`);
+                    window.location.reload();
+                } else {
+                    alert('Delete failed: ' + result.error);
                 }
             } catch (error) {
                 alert('Error: ' + error.message);
@@ -939,6 +1192,33 @@
             } else {
                 uploadedSection.style.display = 'none';
                 pendingSection.style.display = 'block';
+            }
+        }
+
+        // Reprocess incorporation documents to extract partnership deed details
+        async function reprocessIncorporationDocs() {
+            if (!confirm('This will re-extract information from all partnership deed PDFs. Continue?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/stage2/${proposalId}/reprocess-incorporation`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert(`Successfully reprocessed ${result.processedCount} document(s)!`);
+                    window.location.reload();
+                } else {
+                    alert('Reprocess failed: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
             }
         }
 
