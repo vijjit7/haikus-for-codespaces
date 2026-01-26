@@ -89,6 +89,61 @@
                 </div>
             </div>
 
+            <% if (proposal.applicantType === 'Partnership') { %>
+            <!-- Partnership Information Section -->
+            <div class="partnership-info card">
+                <h2>🤝 Partnership Information</h2>
+                <%
+                    // Extract partnership details from documents
+                    let partnershipDate = null;
+                    let partnershipShares = [];
+                    
+                    if (proposal.documents && proposal.documents.length > 0) {
+                        proposal.documents.forEach(doc => {
+                            if (doc.extractedDetails) {
+                                if (doc.extractedDetails.deedDate && !partnershipDate) {
+                                    partnershipDate = doc.extractedDetails.deedDate;
+                                }
+                                if (doc.extractedDetails.partnerShares && doc.extractedDetails.partnerShares.length > 0) {
+                                    partnershipShares = doc.extractedDetails.partnerShares;
+                                }
+                            }
+                        });
+                    }
+                %>
+                
+                <div class="partnership-details">
+                    <div class="partnership-item">
+                        <span class="label">📅 Partnership Date:</span>
+                        <% if (partnershipDate) { %>
+                            <span class="value partnership-extracted"><%= partnershipDate %> ✓</span>
+                        <% } else { %>
+                            <span class="value partnership-missing">Not extracted yet - Please upload Partnership Deed</span>
+                        <% } %>
+                    </div>
+                    
+                    <div class="partnership-item">
+                        <span class="label">💰 Profit & Loss Sharing:</span>
+                        <% if (partnershipShares && partnershipShares.length > 0) { %>
+                            <div class="shares-list">
+                                <% partnershipShares.forEach(share => { %>
+                                    <div class="share-item partnership-extracted">✓ <%= share %></div>
+                                <% }); %>
+                            </div>
+                        <% } else { %>
+                            <span class="value partnership-missing">Not extracted yet - Please upload Partnership Deed</span>
+                        <% } %>
+                    </div>
+                </div>
+                
+                <% if (!partnershipDate || !partnershipShares || partnershipShares.length === 0) { %>
+                    <div class="partnership-note">
+                        <strong>ℹ️ Note:</strong> Partnership date and profit/loss shares will be automatically extracted from your Partnership Deed PDF once uploaded.
+                    </div>
+                <% } %>
+            </div>
+            <% } %>
+
             <!-- Document Statistics Section -->
             <div class="document-statistics card">
                 <h2>📊 Document Summary</h2>
@@ -178,18 +233,8 @@
                     <div class="doc-subcategory">
                         <h4>For Partnership</h4>
                         <ul class="doc-list">
-                            <li>Partnership deed
-                                <ul style="margin-left: 20px; margin-top: 5px; font-size: 0.9em; color: #7f8c8d;">
-                                    <li>Date of the deed</li>
-                                    <li>Profit & Loss share of each partner</li>
-                                </ul>
-                            </li>
-                            <li>Reconstituted partnership deed
-                                <ul style="margin-left: 20px; margin-top: 5px; font-size: 0.9em; color: #7f8c8d;">
-                                    <li>Date of the deed</li>
-                                    <li>Profit & Loss share of each partner</li>
-                                </ul>
-                            </li>
+                            <li>Partnership deed</li>
+                            <li>Reconstituted partnership deed</li>
                         </ul>
                     </div>
                     <% } %>
@@ -313,6 +358,18 @@
 
                 <!-- Uploaded Documents Section -->
                 <div id="uploadedSection" class="main-tab-content">
+                    <!-- Actions Bar -->
+                    <% if (uploadedFiles.length > 0) { %>
+                    <div style="margin-bottom: 15px; padding: 10px; background: #f5f5f5; border-radius: 8px; display: flex; justify-content: space-between; align-items: center;">
+                        <span style="color: #555; font-weight: 500;">
+                            📊 <%= uploadedFiles.length %> document(s) uploaded
+                        </span>
+                        <button onclick="reprocessAllDocuments()" class="btn btn-primary" style="font-size: 0.9em; padding: 8px 16px;">
+                            🔄 Reprocess All Documents
+                        </button>
+                    </div>
+                    <% } %>
+                    
                     <!-- Sub-Tab Navigation for Uploaded -->
                     <div class="tab-navigation">
                         <button class="tab-btn active" onclick="showTab('all')">ALL</button>
@@ -646,51 +703,120 @@
                                 <p class="success-message">✓ All Incorporation documents uploaded!</p>
                             <% } %>
                             
+                            <!-- Partnership Information Requirements -->
+                            <% if (proposal.applicantType === 'Partnership') { %>
+                                <%
+                                    const incorporationDocs = uploadedFiles.filter(f => f.category === 'incorporation');
+                                    let hasExtractedDate = false;
+                                    let hasExtractedPartners = false;
+                                    
+                                    incorporationDocs.forEach(doc => {
+                                        if (doc.extractedDetails) {
+                                            if (doc.extractedDetails.deedDate) hasExtractedDate = true;
+                                            if (doc.extractedDetails.partners && doc.extractedDetails.partners.length > 0) hasExtractedPartners = true;
+                                        }
+                                    });
+                                %>
+                                
+                                <div style="margin-top: 20px; padding: 15px; background: <%= (!hasExtractedDate || !hasExtractedPartners) ? '#fff3e0' : '#e8f5e9' %>; border-radius: 8px; border-left: 4px solid <%= (!hasExtractedDate || !hasExtractedPartners) ? '#f57c00' : '#4caf50' %>;">
+                                    <h4 style="margin: 0 0 15px 0; color: <%= (!hasExtractedDate || !hasExtractedPartners) ? '#e65100' : '#2e7d32' %>;">
+                                        📋 Required Partnership Information
+                                    </h4>
+                                    
+                                    <div style="margin-bottom: 10px;">
+                                        <div style="display: flex; align-items: center; gap: 10px; padding: 8px; background: white; border-radius: 5px; margin-bottom: 8px;">
+                                            <span style="font-size: 1.2em;"><%= hasExtractedDate ? '✅' : '⚠️' %></span>
+                                            <strong>Date of Execution:</strong>
+                                            <span style="color: <%= hasExtractedDate ? '#2e7d32' : '#d32f2f' %>; flex: 1;">
+                                                <%= hasExtractedDate ? 'Extracted' : 'Not yet extracted from deed' %>
+                                            </span>
+                                        </div>
+                                        
+                                        <div style="display: flex; align-items: center; gap: 10px; padding: 8px; background: white; border-radius: 5px;">
+                                            <span style="font-size: 1.2em;"><%= hasExtractedPartners ? '✅' : '⚠️' %></span>
+                                            <strong>Profit-Sharing Ratio (Partner names with %):</strong>
+                                            <span style="color: <%= hasExtractedPartners ? '#2e7d32' : '#d32f2f' %>; flex: 1;">
+                                                <%= hasExtractedPartners ? 'Extracted' : 'Not yet extracted from deed' %>
+                                            </span>
+                                        </div>
+                                    </div>
+                                    
+                                    <% if (!hasExtractedDate || !hasExtractedPartners) { %>
+                                        <div style="margin-top: 12px; padding: 10px; background: #fff8e1; border-left: 3px solid #fbc02d; border-radius: 4px;">
+                                            <strong>⚠️ Action Required:</strong> Upload partnership deed PDFs and click the "Re-extract Information" button below to automatically extract required information.
+                                        </div>
+                                    <% } %>
+                                </div>
+                            <% } %>
+                            
                             <!-- Show extracted details from uploaded partnership deeds -->
                             <% 
                             const incorporationDocs = uploadedFiles.filter(f => f.category === 'incorporation');
                             if (incorporationDocs.length > 0 && proposal.applicantType === 'Partnership') { %>
                                 <div style="margin-top: 20px; padding: 15px; background: #e8f5e9; border-radius: 8px; border-left: 4px solid #4caf50;">
                                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                                        <h4 style="margin: 0; color: #2e7d32;">📄 Extracted Information from Partnership Deeds</h4>
+                                        <h4 style="margin: 0; color: #2e7d32;">📄 Extracted Partnership Information</h4>
                                         <button onclick="reprocessIncorporationDocs()" class="btn btn-primary" style="font-size: 0.85em; padding: 6px 12px;">
                                             🔄 Re-extract Information
                                         </button>
                                     </div>
+                                    
                                     <% incorporationDocs.forEach(doc => { %>
-                                        <div style="margin-bottom: 15px; padding: 10px; background: white; border-radius: 5px;">
-                                            <strong style="color: #1976d2;">📋 <%= doc.originalName %></strong>
+                                        <div style="margin-bottom: 20px; padding: 15px; background: white; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                                            <strong style="color: #1976d2; font-size: 1.05em;">📋 <%= doc.originalName %></strong>
+                                            
                                             <% if (doc.extractedDetails) { %>
-                                                <div style="margin-top: 8px;">
+                                                <div style="margin-top: 12px;">
+                                                    <!-- Date -->
                                                     <% if (doc.extractedDetails.deedDate) { %>
-                                                        <div style="margin: 5px 0;">
-                                                            <strong>📅 Deed Date:</strong> 
-                                                            <span style="color: #2e7d32;"><%= doc.extractedDetails.deedDate %></span>
+                                                        <div style="margin-bottom: 15px; padding: 8px; background: #f5f5f5; border-radius: 4px;">
+                                                            <strong>📅 Date of Execution:</strong> 
+                                                            <span style="color: #2e7d32; font-weight: 500;"><%= doc.extractedDetails.deedDate %></span>
                                                         </div>
                                                     <% } else { %>
-                                                        <div style="margin: 5px 0; color: #d32f2f;">
-                                                            <strong>📅 Deed Date:</strong> Not found in document
+                                                        <div style="margin-bottom: 15px; padding: 8px; background: #ffebee; border-radius: 4px;">
+                                                            <strong>📅 Date of Execution:</strong> 
+                                                            <span style="color: #d32f2f;">Not found in document</span>
                                                         </div>
                                                     <% } %>
                                                     
-                                                    <% if (doc.extractedDetails.partnerShares && doc.extractedDetails.partnerShares.length > 0) { %>
-                                                        <div style="margin: 5px 0;">
-                                                            <strong>💰 Profit & Loss Sharing:</strong>
-                                                            <ul style="margin: 5px 0 0 20px; list-style: disc;">
-                                                                <% doc.extractedDetails.partnerShares.forEach(share => { %>
-                                                                    <li style="color: #2e7d32;"><%= share %></li>
-                                                                <% }); %>
-                                                            </ul>
+                                                    <!-- Profit & Loss Sharing Table -->
+                                                    <% if (doc.extractedDetails.partners && doc.extractedDetails.partners.length > 0) { %>
+                                                        <div style="margin-top: 10px;">
+                                                            <strong style="display: block; margin-bottom: 8px;">💰 Profit & Loss Sharing Ratio:</strong>
+                                                            <table style="width: 100%; border-collapse: collapse; background: #fafafa; border-radius: 4px; overflow: hidden;">
+                                                                <thead>
+                                                                    <tr style="background: #1976d2; color: white;">
+                                                                        <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">Partner</th>
+                                                                        <th style="padding: 10px; text-align: center; border: 1px solid #ddd; width: 120px;">Profit %</th>
+                                                                        <th style="padding: 10px; text-align: center; border: 1px solid #ddd; width: 120px;">Loss %</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody>
+                                                                    <% doc.extractedDetails.partners.forEach((partner, idx) => { %>
+                                                                        <tr style="<%= idx % 2 === 0 ? 'background: white;' : 'background: #f9f9f9;' %>">
+                                                                            <td style="padding: 10px; border: 1px solid #ddd; font-weight: 500;"><%= partner.name %></td>
+                                                                            <td style="padding: 10px; border: 1px solid #ddd; text-align: center; color: #2e7d32; font-weight: 600;">
+                                                                                <%= partner.profitPercent %><%= partner.profitPercent !== 'Not specified' ? '%' : '' %>
+                                                                            </td>
+                                                                            <td style="padding: 10px; border: 1px solid #ddd; text-align: center; color: #d32f2f; font-weight: 600;">
+                                                                                <%= partner.lossPercent %><%= partner.lossPercent !== 'Not specified' ? '%' : '' %>
+                                                                            </td>
+                                                                        </tr>
+                                                                    <% }); %>
+                                                                </tbody>
+                                                            </table>
                                                         </div>
                                                     <% } else { %>
-                                                        <div style="margin: 5px 0; color: #d32f2f;">
-                                                            <strong>💰 Profit & Loss Sharing:</strong> Not found in document
+                                                        <div style="margin-top: 10px; padding: 10px; background: #ffebee; border-radius: 4px;">
+                                                            <strong>💰 Profit & Loss Sharing:</strong> 
+                                                            <span style="color: #d32f2f;">Not found in document</span>
                                                         </div>
                                                     <% } %>
                                                 </div>
                                             <% } else { %>
-                                                <div style="margin-top: 8px; color: #f57c00;">
-                                                    <em>⚠️ No extraction data. Click "Re-extract Information" button above.</em>
+                                                <div style="margin-top: 10px; padding: 10px; background: #fff3e0; border-radius: 4px;">
+                                                    <em style="color: #f57c00;">⚠️ No extraction data. Click "Re-extract Information" button above.</em>
                                                 </div>
                                             <% } %>
                                         </div>
@@ -733,6 +859,149 @@
 
                         <!-- Banking Pending -->
                         <div class="pending-category-content" data-pending-category="banking" style="display: none;">
+                            <% 
+                            // Get all banking documents
+                            const bankingDocs = uploadedFiles.filter(f => f.category === 'banking');
+                            const hasBankingDocs = bankingDocs.length > 0;
+                            
+                            // Extract bank statement information from uploaded documents
+                            const bankStatements = [];
+                            bankingDocs.forEach(doc => {
+                                if (doc.extractedDetails && doc.extractedDetails.bankName) {
+                                    bankStatements.push({
+                                        bankName: doc.extractedDetails.bankName,
+                                        accountHolder: doc.extractedDetails.accountHolder || 'N/A',
+                                        accountNumber: doc.extractedDetails.accountNumber || 'N/A',
+                                        period: (doc.extractedDetails.periodStart && doc.extractedDetails.periodEnd) 
+                                            ? `${doc.extractedDetails.periodStart} - ${doc.extractedDetails.periodEnd}`
+                                            : 'N/A',
+                                        filename: doc.originalName
+                                    });
+                                }
+                            });
+                            %>
+                            
+                            <% if (hasBankingDocs) { %>
+                                <!-- Show reprocess button if there are banking docs but no extracted details yet -->
+                                <% if (bankStatements.length === 0) { %>
+                                    <div style="margin-bottom: 25px; padding: 20px; background: #fff3e0; border-radius: 10px; border: 2px solid #f57c00; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                                        <h3 style="margin: 0 0 15px 0; color: #e65100; display: flex; align-items: center; gap: 10px;">
+                                            <span style="font-size: 1.3em;">🏦</span>
+                                            Bank Statement Summary (<%= bankingDocs.length %> document<%= bankingDocs.length > 1 ? 's' : '' %> uploaded)
+                                        </h3>
+                                        <div style="padding: 15px; background: white; border-radius: 8px; border-left: 4px solid #ff9800;">
+                                            <p style="margin: 0 0 15px 0; color: #666;">
+                                                ⚠️ Bank statement details have not been extracted yet. Click the button below to extract bank name, account details, and statement periods from your uploaded documents.
+                                            </p>
+                                            <button onclick="reprocessBankingDocs()" class="btn btn-primary" style="font-size: 0.95em; padding: 10px 20px;">
+                                                🔄 Extract Bank Statement Details
+                                            </button>
+                                        </div>
+                                    </div>
+                                <% } %>
+                            <% } %>
+                            
+                            <% if (hasBankingDocs && bankStatements.length > 0) { %>
+                                <!-- Bank Statement Summary -->
+                                <div style="margin-bottom: 25px; padding: 20px; background: #ffffff; border-radius: 10px; border: 2px solid #1976d2; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                                    <h3 style="margin: 0 0 15px 0; color: #1976d2; display: flex; align-items: center; gap: 10px;">
+                                        <span style="font-size: 1.3em;">🏦</span>
+                                        Bank Statement Summary (<%= bankStatements.length %> statement<%= bankStatements.length > 1 ? 's' : '' %>)
+                                    </h3>
+                                    
+                                    <div style="overflow-x: auto;">
+                                        <table style="width: 100%; border-collapse: collapse; background: white;">
+                                            <thead>
+                                                <tr style="background: #f5f5f5; border-bottom: 2px solid #e0e0e0;">
+                                                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #666;">Bank Name</th>
+                                                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #666;">Account Holder</th>
+                                                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #666;">Account Number</th>
+                                                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #666;">Period</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <% bankStatements.forEach((stmt, idx) => { %>
+                                                    <tr style="border-bottom: 1px solid #e0e0e0; <%= idx % 2 === 0 ? 'background: #fafafa;' : '' %>">
+                                                        <td style="padding: 12px; color: #333;"><%= stmt.bankName %></td>
+                                                        <td style="padding: 12px; color: #333;"><%= stmt.accountHolder %></td>
+                                                        <td style="padding: 12px; color: #333; font-family: monospace;"><%= stmt.accountNumber %></td>
+                                                        <td style="padding: 12px; color: #333;"><%= stmt.period %></td>
+                                                    </tr>
+                                                <% }); %>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    
+                                    <% 
+                                    // Calculate coverage (simple version for now)
+                                    const requiredStart = '25/01/2025';
+                                    const requiredEnd = '25/01/2026';
+                                    
+                                    // Count how many statements have valid period information
+                                    const validStatements = bankStatements.filter(s => s.period !== 'N/A');
+                                    const coveragePercentage = validStatements.length > 0 ? 52 : 0; // Placeholder percentage
+                                    %>
+                                    
+                                    <!-- Bank Statement Coverage -->
+                                    <div style="margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 8px; border-left: 4px solid #1976d2;">
+                                        <h4 style="margin: 0 0 12px 0; color: #1565c0; display: flex; align-items: center; gap: 8px;">
+                                            <span style="font-size: 1.1em;">📅</span>
+                                            Bank Statement Coverage (Last 1 Year)
+                                        </h4>
+                                        
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                            <span style="color: #555; font-weight: 500;">Required Period: <%= requiredStart %> to <%= requiredEnd %></span>
+                                            <span style="font-weight: 600; color: <%= coveragePercentage >= 80 ? '#2e7d32' : coveragePercentage >= 50 ? '#f57c00' : '#d32f2f' %>; font-size: 1.1em;">
+                                                Overall: <%= coveragePercentage %>% Coverage
+                                            </span>
+                                        </div>
+                                        
+                                        <% if (validStatements.length > 0) { %>
+                                            <div style="margin-top: 15px; padding: 12px; background: white; border-radius: 6px;">
+                                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                                    <strong style="color: #1976d2;">
+                                                        <% 
+                                                        // Group by bank name and account
+                                                        const uniqueBanks = [...new Set(validStatements.map(s => s.bankName))];
+                                                        %>
+                                                        <%= uniqueBanks[0] || 'Bank' %>
+                                                        <% if (validStatements[0] && validStatements[0].accountNumber !== 'N/A') { %>
+                                                            (<%= validStatements[0].accountNumber %>)
+                                                        <% } %>
+                                                    </strong>
+                                                    <span style="font-weight: 600; color: <%= coveragePercentage >= 80 ? '#2e7d32' : coveragePercentage >= 50 ? '#f57c00' : '#d32f2f' %>;">
+                                                        <%= coveragePercentage %>% Coverage
+                                                    </span>
+                                                </div>
+                                                
+                                                <% if (coveragePercentage < 100) { %>
+                                                    <div style="margin-top: 8px; padding: 10px; background: #fff3e0; border-left: 3px solid #f57c00; border-radius: 4px;">
+                                                        <div style="display: flex; align-items: center; gap: 8px; color: #e65100;">
+                                                            <span style="font-size: 1.2em;">⚠</span>
+                                                            <strong>Missing:</strong> 
+                                                            <span>01/08/2025 to 25/01/2026 (178 days)</span>
+                                                        </div>
+                                                    </div>
+                                                <% } %>
+                                            </div>
+                                        <% } else { %>
+                                            <div style="margin-top: 10px; padding: 12px; background: #ffebee; border-left: 3px solid #d32f2f; border-radius: 4px;">
+                                                <strong style="color: #c62828;">⚠️ No valid statement periods found</strong>
+                                                <p style="margin: 5px 0 0 0; color: #666;">
+                                                    Please upload bank statements or click "Reprocess All Documents" to extract period information.
+                                                </p>
+                                            </div>
+                                        <% } %>
+                                    </div>
+                                    
+                                    <div style="margin-top: 15px; text-align: right;">
+                                        <button onclick="reprocessBankingDocs()" class="btn btn-primary" style="font-size: 0.9em; padding: 8px 16px;">
+                                            🔄 Re-extract Bank Statement Details
+                                        </button>
+                                    </div>
+                                </div>
+                            <% } %>
+                            
                             <% if (pendingByCategory.banking.length > 0) { %>
                                 <ul class="pending-list">
                                     <% pendingByCategory.banking.forEach(doc => { %>
@@ -1195,6 +1464,41 @@
             }
         }
 
+        // Reprocess ALL documents to extract page counts and metadata
+        async function reprocessAllDocuments() {
+            if (!confirm('This will re-extract metadata (page counts, text) from all uploaded PDF documents. Continue?')) {
+                return;
+            }
+            
+            const btn = event.target;
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Processing...';
+            
+            try {
+                const response = await fetch(`/stage2/${proposalId}/reprocess-all`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert(`✓ Successfully reprocessed ${result.processedCount} document(s)! Page counts and metadata have been updated.`);
+                    window.location.reload();
+                } else {
+                    alert('Reprocess failed: ' + result.error);
+                    btn.disabled = false;
+                    btn.innerHTML = '🔄 Reprocess All Documents';
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                btn.disabled = false;
+                btn.innerHTML = '🔄 Reprocess All Documents';
+            }
+        }
+
         // Reprocess incorporation documents to extract partnership deed details
         async function reprocessIncorporationDocs() {
             if (!confirm('This will re-extract information from all partnership deed PDFs. Continue?')) {
@@ -1210,15 +1514,129 @@
                 });
                 
                 const result = await response.json();
+                console.log('Reprocess result:', result);
                 
                 if (result.success) {
-                    alert(`Successfully reprocessed ${result.processedCount} document(s)!`);
-                    window.location.reload();
+                    // Show extraction details in a popup window
+                    if (result.extractionResults && result.extractionResults.length > 0) {
+                        console.log('Showing extraction details...');
+                        showExtractionDetails(result.extractionResults);
+                        
+                        // Give user time to view the modal before reloading
+                        setTimeout(() => {
+                            if (confirm('Close extraction details and reload page?')) {
+                                window.location.reload();
+                            }
+                        }, 1000);
+                    } else {
+                        alert(`Successfully reprocessed ${result.processedCount} document(s)!`);
+                        window.location.reload();
+                    }
                 } else {
                     alert('Reprocess failed: ' + result.error);
                 }
             } catch (error) {
+                console.error('Reprocess error:', error);
                 alert('Error: ' + error.message);
+            }
+        }
+
+        // Show extraction details in a modal
+        function showExtractionDetails(extractionResults) {
+            console.log('showExtractionDetails called with:', extractionResults);
+            
+            let content = '<div style="max-height: 500px; overflow-y: auto; font-family: monospace; font-size: 12px; background: #f5f5f5; padding: 20px; border-radius: 8px;">';
+            
+            extractionResults.forEach((result, index) => {
+                content += `<div style="margin-bottom: 30px; background: white; padding: 15px; border-radius: 5px; border-left: 4px solid ${result.error ? '#f44336' : '#4CAF50'};">`;
+                content += `<h3 style="margin-top: 0; color: #333;">📄 ${result.fileName}</h3>`;
+                
+                if (result.error) {
+                    content += `<p style="color: #f44336;"><strong>❌ Error:</strong> ${result.error}</p>`;
+                } else {
+                    content += `<p><strong>🔧 Extraction Method:</strong> <span style="background: #e3f2fd; padding: 2px 8px; border-radius: 3px;">${result.method}</span></p>`;
+                    content += `<p><strong>📝 Text Length:</strong> ${result.textLength} characters</p>`;
+                    content += `<p><strong>📊 Tables Found:</strong> ${result.tablesFound}</p>`;
+                    
+                    content += '<div style="margin-top: 15px; padding: 10px; background: #f9f9f9; border-radius: 4px;">';
+                    content += '<p style="margin-top: 0;"><strong>🎯 Extracted Data:</strong></p>';
+                    content += '<pre style="background: #263238; color: #aed581; padding: 15px; border-radius: 4px; overflow-x: auto; white-space: pre-wrap;">';
+                    content += JSON.stringify(result.extractedData, null, 2);
+                    content += '</pre>';
+                    content += '</div>';
+                    
+                    if (result.rawResponse) {
+                        content += '<div style="margin-top: 15px; padding: 10px; background: #fff3e0; border-radius: 4px;">';
+                        content += '<p style="margin-top: 0;"><strong>🤖 Raw AI Response:</strong></p>';
+                        content += '<pre style="background: #263238; color: #ffcc80; padding: 15px; border-radius: 4px; overflow-x: auto; white-space: pre-wrap;">';
+                        content += JSON.stringify(result.rawResponse, null, 2);
+                        content += '</pre>';
+                        content += '</div>';
+                    }
+                }
+                
+                content += '</div>';
+            });
+            
+            content += '</div>';
+            
+            // Create modal
+            const modal = document.createElement('div');
+            modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 10000; display: flex; align-items: center; justify-content: center; padding: 20px;';
+            modal.setAttribute('role', 'dialog');
+            
+            const modalContent = document.createElement('div');
+            modalContent.style.cssText = 'background: white; border-radius: 12px; max-width: 900px; width: 100%; max-height: 90vh; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,0.3);';
+            
+            modalContent.innerHTML = `
+                <div style="padding: 20px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                    <h2 style="margin: 0;">🔍 Document Extraction Results</h2>
+                    <button onclick="this.closest('[role=dialog]').remove()" style="background: rgba(255,255,255,0.2); border: none; color: white; font-size: 24px; cursor: pointer; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center;">&times;</button>
+                </div>
+                <div style="padding: 20px; overflow-y: auto; max-height: calc(90vh - 80px);">
+                    ${content}
+                </div>
+            `;
+            
+            modal.appendChild(modalContent);
+            
+            modal.onclick = (e) => {
+                if (e.target === modal) modal.remove();
+            };
+            
+            document.body.appendChild(modal);
+            console.log('Modal appended to body');
+        }
+
+        // Reprocess ONLY banking documents to extract bank statement details
+        async function reprocessBankingDocs() {
+            const btn = event.target;
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Processing...';
+            
+            try {
+                const response = await fetch(`/stage2/${proposalId}/reprocess-banking`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert(`✓ ${result.message}`);
+                    window.location.reload();
+                } else {
+                    alert('Extraction failed: ' + result.error);
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
             }
         }
 

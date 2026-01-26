@@ -1293,3 +1293,92 @@ header h1 {
     background: #c0392b;
     transform: scale(1.1);
 }
+/* Partnership Information Styles */
+.partnership-info {
+    margin: 20px 0;
+}
+
+.partnership-info h2 {
+    color: #2c3e50;
+    margin-bottom: 15px;
+    font-size: 1.3em;
+    display: flex;
+    align-items: center;
+}
+
+.partnership-details {
+    background: #f8f9fa;
+    padding: 20px;
+    border-radius: 8px;
+    border-left: 4px solid #8e44ad;
+}
+
+.partnership-item {
+    margin-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.partnership-item:last-child {
+    margin-bottom: 0;
+}
+
+.partnership-item .label {
+    font-weight: 600;
+    color: #34495e;
+    font-size: 1.05em;
+}
+
+.partnership-item .value {
+    padding: 8px 12px;
+    border-radius: 5px;
+    font-size: 1em;
+}
+
+.partnership-extracted {
+    background: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+    padding: 8px 12px;
+    border-radius: 5px;
+    font-weight: 500;
+}
+
+.partnership-missing {
+    background: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeaa7;
+    padding: 8px 12px;
+    border-radius: 5px;
+    font-style: italic;
+}
+
+.shares-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.share-item {
+    padding: 10px 15px;
+    background: #d4edda;
+    border: 1px solid #c3e6cb;
+    border-radius: 5px;
+    color: #155724;
+    font-weight: 500;
+}
+
+.partnership-note {
+    margin-top: 15px;
+    padding: 12px;
+    background: #e3f2fd;
+    border-left: 4px solid #2196f3;
+    border-radius: 4px;
+    color: #1565c0;
+    font-size: 0.95em;
+}
+
+.partnership-note strong {
+    color: #0d47a1;
+}

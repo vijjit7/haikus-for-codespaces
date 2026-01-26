@@ -36,37 +36,49 @@
     "currentStage": 1,
     "documents": [
       {
-        "id": "documents-1769314790332-798887071.pdf",
-        "filename": "documents-1769314790332-798887071.pdf",
+        "id": "documents-1769358014568-612234393.pdf",
+        "filename": "documents-1769358014568-612234393.pdf",
         "originalName": "Partnership Amendment Deed 2025_compressed.pdf",
         "category": "incorporation",
         "autoCategorized": true,
         "size": 2925032,
-        "pages": null,
-        "extractedText": "",
-        "uploadedAt": "2026-01-25T04:19:50.959Z"
+        "pages": 12,
+        "extractedText": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+        "extractedDetails": {
+          "deedDate": null,
+          "partners": []
+        },
+        "uploadedAt": "2026-01-25T16:20:16.674Z"
       },
       {
-        "id": "documents-1769314790694-259231171.pdf",
-        "filename": "documents-1769314790694-259231171.pdf",
+        "id": "documents-1769358014910-664579608.pdf",
+        "filename": "documents-1769358014910-664579608.pdf",
         "originalName": "Pragati_Partnership Deed.pdf",
         "category": "incorporation",
         "autoCategorized": true,
         "size": 1208632,
-        "pages": null,
-        "extractedText": "",
-        "uploadedAt": "2026-01-25T04:19:50.960Z"
+        "pages": 10,
+        "extractedText": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+        "extractedDetails": {
+          "deedDate": null,
+          "partners": []
+        },
+        "uploadedAt": "2026-01-25T16:20:17.487Z"
       },
       {
-        "id": "documents-1769314790825-249045216.pdf",
-        "filename": "documents-1769314790825-249045216.pdf",
+        "id": "documents-1769358015041-468110234.pdf",
+        "filename": "documents-1769358015041-468110234.pdf",
         "originalName": "Pragati_Partnership Deed_1.pdf",
         "category": "incorporation",
         "autoCategorized": true,
         "size": 1208632,
-        "pages": null,
-        "extractedText": "",
-        "uploadedAt": "2026-01-25T04:19:50.960Z"
+        "pages": 10,
+        "extractedText": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+        "extractedDetails": {
+          "deedDate": null,
+          "partners": []
+        },
+        "uploadedAt": "2026-01-25T16:20:18.272Z"
       }
     ]
   }

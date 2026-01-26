@@ -6,7 +6,17 @@ const path = require('path');
 const multer = require('multer');
 const pdfParse = require('pdf-parse');
 const AdmZip = require('adm-zip');
+const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+const { createCanvas } = require('canvas');
+const axios = require('axios');
 const port = process.env.PORT || 3000;
+
+// Configure pdfjs-dist worker - disable worker to avoid errors
+pdfjsLib.GlobalWorkerOptions.workerSrc = false;
+
+// OpenRouter API Configuration for Document AI
+const OPENROUTER_API_KEY = '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';
+const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 // Middleware
 app.use(express.static('public'));
@@ -241,11 +251,304 @@ function autoCategorizeDocument(filename, extractedText = '') {
   return '';
 }
 
-// Extract partnership deed details from text
-function extractPartnershipDeedDetails(fullText) {
+// ============================================
+// TABLE-AWARE PDF PARSING (Camelot/Tabula-like)
+// ============================================
+
+// Enhanced PDF text extraction with table detection and structured data extraction
+async function extractPDFWithTableDetection(pdfPath) {
+  try {
+    const dataBuffer = fs.readFileSync(pdfPath);
+    const loadingTask = pdfjsLib.getDocument({
+      data: new Uint8Array(dataBuffer),
+      verbosity: 0
+    });
+    
+    const pdfDocument = await loadingTask.promise;
+    const numPages = pdfDocument.numPages;
+    let fullText = '';
+    let tables = [];
+    let structuredContent = [];
+    
+    // Extract text from each page with position tracking for table detection
+    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+      const page = await pdfDocument.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      
+      // Group text items by vertical position (Y-coordinate) for table detection
+      const lines = {};
+      textContent.items.forEach(item => {
+        const y = Math.round(item.transform[5]); // Y position
+        if (!lines[y]) {
+          lines[y] = [];
+        }
+        lines[y].push({
+          text: item.str,
+          x: item.transform[4], // X position
+          width: item.width
+        });
+      });
+      
+      // Sort lines by Y position (top to bottom) and items by X position (left to right)
+      const sortedYPositions = Object.keys(lines).sort((a, b) => b - a);
+      let pageText = '';
+      let pageLines = [];
+      
+      sortedYPositions.forEach(y => {
+        const lineItems = lines[y].sort((a, b) => a.x - b.x);
+        const lineText = lineItems.map(item => item.text).join(' ');
+        pageText += lineText + '\n';
+        pageLines.push({
+          y: parseFloat(y),
+          items: lineItems,
+          text: lineText
+        });
+      });
+      
+      fullText += pageText;
+      
+      // Detect tables on this page
+      const pageTables = detectAndExtractTables(pageLines, pageNum);
+      tables.push(...pageTables);
+      
+      structuredContent.push({
+        pageNum,
+        text: pageText,
+        hasTable: pageTables.length > 0,
+        tables: pageTables
+      });
+    }
+    
+    return {
+      text: fullText,
+      tables,
+      structuredContent,
+      numPages,
+      success: true,
+      method: 'pdfjs-table-aware'
+    };
+  } catch (error) {
+    console.error('Table-aware PDF extraction error:', error.message);
+    // Fallback to basic pdf-parse
+    try {
+      const dataBuffer = fs.readFileSync(pdfPath);
+      const pdfData = await pdfParse(dataBuffer);
+      return {
+        text: pdfData.text,
+        tables: [],
+        structuredContent: [],
+        numPages: pdfData.numpages,
+        success: true,
+        method: 'pdf-parse-fallback'
+      };
+    } catch (fallbackError) {
+      console.error('Fallback PDF extraction error:', fallbackError.message);
+      return {
+        text: '',
+        tables: [],
+        structuredContent: [],
+        numPages: null,
+        success: false,
+        method: 'failed'
+      };
+    }
+  }
+}
+
+// Detect and extract tables from page lines (Tabula/Camelot-like algorithm)
+function detectAndExtractTables(pageLines, pageNum) {
+  const tables = [];
+  let currentTable = [];
+  let inTable = false;
+  let columnPositions = [];
+  
+  pageLines.forEach((line, index) => {
+    const lineText = line.text.trim();
+    
+    // Detect table indicators: pipes, multiple columns, percentage signs
+    const hasPipes = lineText.includes('|');
+    const hasMultipleColumns = line.items.length >= 3;
+    const hasTableKeywords = /partner|name|profit|loss|ratio|percentage|account|bank|date|period/i.test(lineText);
+    const isLikelyTableRow = hasPipes || (hasMultipleColumns && line.items.some(item => /\d+(?:\.\d+)?%|\d{4}/.test(item.text)));
+    
+    if (isLikelyTableRow || (hasMultipleColumns && hasTableKeywords)) {
+      if (!inTable) {
+        inTable = true;
+        // Establish column positions from first row
+        columnPositions = line.items.map(item => ({ x: item.x, width: item.width }));
+      }
+      
+      // Extract cells based on pipe delimiters or position alignment
+      let cells = [];
+      if (hasPipes) {
+        cells = lineText.split('|').map(c => c.trim()).filter(c => c);
+      } else {
+        // Group items by proximity to column positions
+        cells = line.items.map(item => item.text.trim());
+      }
+      
+      currentTable.push(cells);
+    } else if (inTable && lineText === '') {
+      // Empty line ends table
+      if (currentTable.length > 1) {
+        tables.push({
+          pageNum,
+          headers: currentTable[0],
+          rows: currentTable.slice(1),
+          type: detectTableType(currentTable)
+        });
+      }
+      currentTable = [];
+      inTable = false;
+      columnPositions = [];
+    } else if (inTable && !isLikelyTableRow) {
+      // Non-table line while in table - end current table
+      if (currentTable.length > 1) {
+        tables.push({
+          pageNum,
+          headers: currentTable[0],
+          rows: currentTable.slice(1),
+          type: detectTableType(currentTable)
+        });
+      }
+      currentTable = [];
+      inTable = false;
+      columnPositions = [];
+    }
+  });
+  
+  // Add last table if exists
+  if (currentTable.length > 1) {
+    tables.push({
+      pageNum,
+      headers: currentTable[0],
+      rows: currentTable.slice(1),
+      type: detectTableType(currentTable)
+    });
+  }
+  
+  return tables;
+}
+
+// Detect table type for specialized extraction
+function detectTableType(tableData) {
+  const allText = JSON.stringify(tableData).toLowerCase();
+  
+  if (/partner.*profit.*loss|profit.*loss.*ratio/.test(allText)) {
+    return 'partnership-profit-loss';
+  } else if (/bank.*account|account.*holder/.test(allText)) {
+    return 'bank-statement';
+  } else if (/transaction|debit|credit/.test(allText)) {
+    return 'transaction-table';
+  }
+  
+  return 'general';
+}
+
+// ============================================
+// DOCUMENT AI SERVICE (OpenRouter)
+// ============================================
+
+// Use Document AI (via OpenRouter) for intelligent structured extraction
+async function extractWithDocumentAI(text, documentType, tables = []) {
+  try {
+    let prompt = '';
+    
+    if (documentType === 'partnership-deed') {
+      prompt = `You are a document extraction AI. Extract the following information from this partnership deed document:
+
+1. Date of Execution: Find the date when the deed was executed/signed
+2. Partners: Extract ALL partner names with their profit and loss sharing percentages
+
+Document Text:
+${text.substring(0, 4000)}
+
+${tables.length > 0 ? `\n\nDetected Tables:\n${JSON.stringify(tables, null, 2)}` : ''}
+
+Respond ONLY with valid JSON in this exact format:
+{
+  "dateOfExecution": "DD Month YYYY" or null,
+  "partners": [
+    {
+      "name": "Partner Name",
+      "profitPercentage": 50.0,
+      "lossPercentage": 50.0
+    }
+  ]
+}`;
+    } else if (documentType === 'bank-statement') {
+      prompt = `You are a document extraction AI. Extract the following from this bank statement:
+
+1. Bank Name
+2. Account Holder Name
+3. Account Number
+4. Statement Period (from date to date)
+
+Document Text:
+${text.substring(0, 4000)}
+
+${tables.length > 0 ? `\n\nDetected Tables:\n${JSON.stringify(tables, null, 2)}` : ''}
+
+Respond ONLY with valid JSON in this exact format:
+{
+  "bankName": "Bank Name" or null,
+  "accountHolder": "Account Holder Name" or null,
+  "accountNumber": "1234567890" or null,
+  "periodFrom": "DD/MM/YYYY" or null,
+  "periodTo": "DD/MM/YYYY" or null
+}`;
+    }
+    
+    const response = await axios.post(
+      OPENROUTER_API_URL,
+      {
+        model: 'google/gemini-2.0-flash-exp:free', // Fast and cost-effective Gemini model
+        messages: [
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        temperature: 0.1, // Low temperature for consistent extraction
+        max_tokens: 1000
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'http://localhost:3000',
+          'X-Title': 'Customer Profiling App'
+        },
+        timeout: 15000 // 15 second timeout
+      }
+    );
+    
+    const content = response.data.choices[0].message.content;
+    console.log('📄 Document AI Response:', content);
+    
+    // Parse JSON response
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const extracted = JSON.parse(jsonMatch[0]);
+      return {
+        success: true,
+        data: extracted,
+        method: 'openrouter-document-ai'
+      };
+    }
+    
+    return { success: false, error: 'No JSON found in response' };
+  } catch (error) {
+    console.error('Document AI extraction error:', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+// Extract partnership deed details from text or extracted tables
+function extractPartnershipDeedDetails(fullText, tables = []) {
   const details = {
     deedDate: null,
-    partnerShares: []
+    partners: []
   };
 
   if (!fullText) {
@@ -254,9 +557,46 @@ function extractPartnershipDeedDetails(fullText) {
   }
 
   console.log('Extracting from text length:', fullText.length);
+  
+  // STEP 0: Try Document AI first for most accurate extraction (async will be handled by caller)
+  // Note: This function remains synchronous, AI extraction called separately
+  
+  // STEP 1: Try extracting partners from detected tables first (table-aware approach)
+  if (tables && tables.length > 0) {
+    const partnershipTable = tables.find(t => t.type === 'partnership-profit-loss');
+    
+    if (partnershipTable) {
+      console.log('✓ Found partnership profit/loss table:', partnershipTable);
+      
+      // Extract partners from table rows
+      partnershipTable.rows.forEach(row => {
+        if (row.length >= 2) {
+          const name = row[0];
+          const profitText = row.find(cell => cell.includes('%')) || row[1] || '';
+          const lossText = row.find((cell, idx) => idx > 0 && cell.includes('%')) || row[2] || '';
+          
+          const profitMatch = profitText.match(/(\d+(?:\.\d+)?)%?/);
+          const lossMatch = lossText.match(/(\d+(?:\.\d+)?)%?/);
+          
+          if (name && name.length > 2 && (profitMatch || lossMatch)) {
+            details.partners.push({
+              name: name.trim(),
+              profitPercent: profitMatch ? parseFloat(profitMatch[1]) : 'Not specified',
+              lossPercent: lossMatch ? parseFloat(lossMatch[1]) : 'Not specified'
+            });
+          }
+        }
+      });
+      
+      if (details.partners.length > 0) {
+        console.log('✓ Extracted partners from table:', details.partners);
+      }
+    }
+  }
+  
   const lowerText = fullText.toLowerCase();
   
-  // Try to extract deed date - comprehensive patterns
+  // STEP 2: Extract deed date - comprehensive patterns
   const datePatterns = [
     /(?:dated|executed\s+on|dated\s+this|made\s+this|entered\s+into\s+on|deed\s+dated|this\s+deed\s+of\s+partnership\s+made\s+on)\s*(?:the\s*)?(\d{1,2}(?:st|nd|rd|th)?\s+(?:day\s+of\s+)?(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[,\s]+\d{4})/gi,
     /(?:deed\s+date|date\s+of\s+deed|execution\s+date|on\s+this|amendment\s+dated)[\s:]+(\d{1,2}[\s\/\-]\d{1,2}[\s\/\-]\d{2,4})/gi,
@@ -275,56 +615,58 @@ function extractPartnershipDeedDetails(fullText) {
     if (details.deedDate) break;
   }
 
-  // Enhanced profit/loss sharing extraction
-  const sharePatterns = [
-    // Pattern: "Partner Name - 50%"
-    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*[-:]\s*(\d+)\s*%/g,
-    // Pattern: "Partner Name shall have 50%"
-    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:shall|will)\s+(?:be\s+entitled\s+to|receive|have|get)\s+(\d+)\s*%/gi,
-    // Pattern: "50% to Partner Name"
-    /(\d+)\s*%\s+(?:to|for|of)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/g,
-    // Pattern: "profit sharing ratio: Partner1 50%, Partner2 50%"
-    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(\d+)\s*%/g,
-    // Pattern: "ratio of 50:50" or "50:50"
-    /(?:ratio|share|sharing)(?:\s+is|\s+shall\s+be)?[\s:]+(\d+)\s*:\s*(\d+)/gi,
-    // Pattern: "equally" or "equal shares"
-    /(?:share|profit|loss)(?:s)?\s+(?:shall\s+be\s+)?(?:equally|equal)/gi
-  ];
+  // STEP 3: Enhanced profit/loss sharing extraction (fallback if table extraction didn't find partners)
+  if (details.partners.length === 0) {
+    const sharePatterns = [
+      // Pattern: "Partner Name - 50%"
+      /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*[-:]\s*(\d+)\s*%/g,
+      // Pattern: "Partner Name shall have 50%"
+      /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:shall|will)\s+(?:be\s+entitled\s+to|receive|have|get)\s+(\d+)\s*%/gi,
+      // Pattern: "50% to Partner Name"
+      /(\d+)\s*%\s+(?:to|for|of)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/g,
+      // Pattern: "profit sharing ratio: Partner1 50%, Partner2 50%"
+      /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(\d+)\s*%/g,
+      // Pattern: "ratio of 50:50" or "50:50"
+      /(?:ratio|share|sharing)(?:\s+is|\s+shall\s+be)?[\s:]+(\d+)\s*:\s*(\d+)/gi,
+      // Pattern: "equally" or "equal shares"
+      /(?:share|profit|loss)(?:s)?\s+(?:shall\s+be\s+)?(?:equally|equal)/gi
+    ];
 
-  const foundShares = new Set();
+    const foundShares = new Set();
   
   for (const pattern of sharePatterns) {
     const matches = fullText.matchAll(pattern);
-    for (const match of matches) {
-      if (match[0] && match[0].length < 300 && match[0].length > 3) {
-        const shareText = match[0].trim();
-        // Avoid duplicate or very similar entries
-        if (!foundShares.has(shareText.toLowerCase())) {
-          foundShares.add(shareText.toLowerCase());
-          details.partnerShares.push(shareText);
-          console.log('Found share:', shareText);
+      for (const match of matches) {
+        if (match[0] && match[0].length < 300 && match[0].length > 3) {
+          const shareText = match[0].trim();
+          // Avoid duplicate or very similar entries
+          if (!foundShares.has(shareText.toLowerCase())) {
+            foundShares.add(shareText.toLowerCase());
+            details.partners.push({ name: shareText, profitPercent: 'See text', lossPercent: 'See text' });
+            console.log('Found share:', shareText);
+          }
+        }
+      }
+    }
+
+    // Look for common patterns in partnership deeds
+    const profitLossSection = fullText.match(/(?:profit\s+(?:and|&)\s+loss|sharing\s+ratio|distribution\s+of\s+profit)[\s\S]{0,500}/gi);
+    if (profitLossSection && profitLossSection.length > 0) {
+      console.log('Found profit/loss section:', profitLossSection[0].substring(0, 200));
+      
+      // Extract any percentage numbers from this section
+      const percentages = profitLossSection[0].match(/\d+\s*%/g);
+      if (percentages && percentages.length > 0) {
+        const percentText = `Profit sharing: ${percentages.join(', ')}`;
+        if (!foundShares.has(percentText.toLowerCase())) {
+          details.partners.push({ name: percentText, profitPercent: 'See text', lossPercent: 'See text' });
+          console.log('Found percentages in profit section:', percentText);
         }
       }
     }
   }
 
-  // Look for common patterns in partnership deeds
-  const profitLossSection = fullText.match(/(?:profit\s+(?:and|&)\s+loss|sharing\s+ratio|distribution\s+of\s+profit)[\s\S]{0,500}/gi);
-  if (profitLossSection && profitLossSection.length > 0) {
-    console.log('Found profit/loss section:', profitLossSection[0].substring(0, 200));
-    
-    // Extract any percentage numbers from this section
-    const percentages = profitLossSection[0].match(/\d+\s*%/g);
-    if (percentages && percentages.length > 0) {
-      const percentText = `Profit sharing: ${percentages.join(', ')}`;
-      if (!foundShares.has(percentText.toLowerCase())) {
-        details.partnerShares.push(percentText);
-        console.log('Found percentages in profit section:', percentText);
-      }
-    }
-  }
-
-  console.log('Extraction complete. Date:', details.deedDate, 'Shares:', details.partnerShares.length);
+  console.log('Extraction complete. Date:', details.deedDate, 'Partners:', details.partners.length);
   return details;
 }
 
@@ -547,11 +889,17 @@ app.post('/stage2/:proposalId/upload', upload.array('documents', 10), async (req
       
       if (file.mimetype === 'application/pdf') {
         try {
-          const dataBuffer = fs.readFileSync(file.path);
-          const pdfData = await pdfParse(dataBuffer);
-          fullText = pdfData.text;
-          extractedText = pdfData.text.substring(0, 500); // First 500 chars for preview
-          pageCount = pdfData.numpages; // Extract page count
+          // Use table-aware extraction
+          const pdfResult = await extractPDFWithTableDetection(file.path);
+          fullText = pdfResult.text;
+          extractedText = pdfResult.text.substring(0, 500);
+          pageCount = pdfResult.numPages;
+          
+          // Store extracted tables for later use
+          file.extractedTables = pdfResult.tables;
+          file.structuredContent = pdfResult.structuredContent;
+          
+          console.log(`✓ Extracted ${pdfResult.tables.length} tables from ${file.originalname} using ${pdfResult.method}`);
         } catch (err) {
           console.error('PDF parsing error:', err);
         }
@@ -563,7 +911,26 @@ app.post('/stage2/:proposalId/upload', upload.array('documents', 10), async (req
       // Extract specific details for incorporation documents (partnership deeds)
       if (autoCategory === 'incorporation' && fullText) {
         console.log('Processing incorporation document:', file.originalname);
-        extractedDetails = extractPartnershipDeedDetails(fullText);
+        
+        // Try Document AI first
+        const aiResult = await extractWithDocumentAI(fullText, 'partnership-deed', file.extractedTables || []);
+        if (aiResult.success && aiResult.data) {
+          console.log('✓ Document AI extraction successful:', aiResult.data);
+          // Transform AI result to match expected format
+          const partners = (aiResult.data.partners || []).map(p => ({
+            name: p.name,
+            profitPercent: p.profitPercentage !== null ? p.profitPercentage : 'Not specified',
+            lossPercent: p.lossPercentage !== null ? p.lossPercentage : 'Not specified'
+          }));
+          extractedDetails = {
+            deedDate: aiResult.data.dateOfExecution,
+            partners: partners
+          };
+        } else {
+          console.log('⚠ Document AI failed, using fallback extraction');
+          extractedDetails = extractPartnershipDeedDetails(fullText, file.extractedTables || []);
+        }
+        
         console.log('Extracted details:', JSON.stringify(extractedDetails));
       }
       
@@ -850,6 +1217,7 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
     
     let processedCount = 0;
     const proposalDir = path.join(UPLOADS_DIR, proposalId);
+    const extractionResults = [];
     
     // Process each incorporation document
     for (let i = 0; i < proposal.documents.length; i++) {
@@ -860,19 +1228,53 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
         
         if (fs.existsSync(filePath) && doc.originalName.toLowerCase().endsWith('.pdf')) {
           try {
-            const dataBuffer = fs.readFileSync(filePath);
-            const pdfData = await pdfParse(dataBuffer);
-            const fullText = pdfData.text;
+            // Use table-aware extraction for reprocessing
+            const pdfResult = await extractPDFWithTableDetection(filePath);
+            const fullText = pdfResult.text;
             
-            console.log('Reprocessing:', doc.originalName, 'Text length:', fullText.length);
+            console.log('Reprocessing:', doc.originalName, 'Text length:', fullText.length, 'Tables found:', pdfResult.tables.length);
             
-            const extractedDetails = extractPartnershipDeedDetails(fullText);
+            // Try Document AI first
+            const aiResult = await extractWithDocumentAI(fullText, 'partnership-deed', pdfResult.tables || []);
+            let extractedDetails;
+            let rawExtraction = { textLength: fullText.length, tablesFound: pdfResult.tables.length };
+            
+            if (aiResult.success && aiResult.data) {
+              console.log('✓ Document AI extraction successful for:', doc.originalName);
+              const partners = (aiResult.data.partners || []).map(p => ({
+                name: p.name,
+                profitPercent: p.profitPercentage !== null ? p.profitPercentage : 'Not specified',
+                lossPercent: p.lossPercentage !== null ? p.lossPercentage : 'Not specified'
+              }));
+              extractedDetails = {
+                deedDate: aiResult.data.dateOfExecution,
+                partners: partners
+              };
+              rawExtraction.method = 'AI (Gemini)';
+              rawExtraction.rawResponse = aiResult.data;
+            } else {
+              console.log('⚠ Document AI failed, using fallback for:', doc.originalName);
+              extractedDetails = extractPartnershipDeedDetails(fullText, pdfResult.tables || []);
+              rawExtraction.method = 'Fallback (Pattern Matching)';
+              rawExtraction.rawResponse = extractedDetails;
+            }
+            
             proposal.documents[i].extractedDetails = extractedDetails;
+            
+            extractionResults.push({
+              fileName: doc.originalName,
+              ...rawExtraction,
+              extractedData: extractedDetails
+            });
             
             console.log('Updated extractedDetails for:', doc.originalName);
             processedCount++;
           } catch (err) {
             console.error('Error reprocessing', doc.originalName, err);
+            extractionResults.push({
+              fileName: doc.originalName,
+              error: err.message
+            });
           }
         }
       }
@@ -882,7 +1284,12 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
       updateProposal(proposalId, { documents: proposal.documents });
     }
     
-    res.json({ success: true, processedCount, message: `Reprocessed ${processedCount} incorporation document(s)` });
+    res.json({ 
+      success: true, 
+      processedCount, 
+      message: `Reprocessed ${processedCount} incorporation document(s)`,
+      extractionResults
+    });
   } catch (error) {
     console.error('Reprocess error:', error);
     res.status(500).json({ success: false, error: error.message });
