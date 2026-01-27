@@ -879,6 +879,14 @@ header h1 {
     border-bottom: 1px solid #e0e0e0;
 }
 
+.files-table .actions-cell {
+    white-space: nowrap;
+    min-width: 280px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .files-table tr:hover {
     background: #f8f9fa;
 }
@@ -1082,16 +1090,18 @@ header h1 {
 }
 
 .category-select {
-    padding: 5px 10px;
+    padding: 5px 8px;
     border: 1px solid #bdc3c7;
     border-radius: 4px;
-    font-size: 0.85em;
+    font-size: 0.8em;
     cursor: pointer;
     background: white;
+    min-width: 120px;
 }
 
 .category-select:hover {
     border-color: #3498db;
+}
 
 /* Pending Documents Tabs */
 .pending-tab-content {
@@ -1381,4 +1391,37 @@ header h1 {
 
 .partnership-note strong {
     color: #0d47a1;
+}
+
+/* Classification Dropdown Styles */
+.classification-select {
+    padding: 6px 10px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    font-size: 0.85em;
+    background: #fff;
+    min-width: 200px;
+    max-width: 280px;
+    cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.classification-select:hover {
+    border-color: #3498db;
+}
+
+.classification-select:focus {
+    outline: none;
+    border-color: #2980b9;
+    box-shadow: 0 0 5px rgba(52, 152, 219, 0.3);
+}
+
+.classification-select option {
+    padding: 5px;
+}
+
+/* When classification is set */
+.classification-select.has-value {
+    background: #d4edda;
+    border-color: #28a745;
 }

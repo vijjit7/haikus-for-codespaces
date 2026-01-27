@@ -9,13 +9,19 @@ const AdmZip = require('adm-zip');
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 const { createCanvas } = require('canvas');
 const axios = require('axios');
+const { spawn } = require('child_process');
+const FormData = require('form-data');
 const port = process.env.PORT || 3000;
 
 // Configure pdfjs-dist worker - disable worker to avoid errors
 pdfjsLib.GlobalWorkerOptions.workerSrc = false;
 
+// PDF Extraction Service Configuration
+const PDF_SERVICE_URL = 'http://localhost:5001';
+const PDF_SERVICE_TIMEOUT = 30000; // 30 seconds
+
 // OpenRouter API Configuration for Document AI
-const OPENROUTER_API_KEY = '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';
+const OPENROUTER_API_KEY = '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';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 // Middleware
@@ -252,107 +258,205 @@ function autoCategorizeDocument(filename, extractedText = '') {
 }
 
 // ============================================
-// TABLE-AWARE PDF PARSING (Camelot/Tabula-like)
+// 3-TIER PDF EXTRACTION SYSTEM
 // ============================================
+// Tier 1: Python FastAPI service (PyMuPDF + pdfplumber)
+// Tier 2: Direct pdfplumber fallback
+// Tier 3: Node.js pdf-parse as final fallback
 
-// Enhanced PDF text extraction with table detection and structured data extraction
-async function extractPDFWithTableDetection(pdfPath) {
+/**
+ * Tier 1: Extract PDF using Python FastAPI service
+ * This service provides PyMuPDF (best quality) with pdfplumber fallback
+ */
+async function extractWithPythonService(pdfPath) {
   try {
-    const dataBuffer = fs.readFileSync(pdfPath);
-    const loadingTask = pdfjsLib.getDocument({
-      data: new Uint8Array(dataBuffer),
-      verbosity: 0
+    console.log('🔹 Tier 1: Attempting extraction via Python FastAPI service...');
+    
+    // Check if file exists
+    if (!fs.existsSync(pdfPath)) {
+      throw new Error(`File not found: ${pdfPath}`);
+    }
+    
+    // Create form data
+    const formData = new FormData();
+    formData.append('file', fs.createReadStream(pdfPath));
+    
+    // Call Python service
+    const response = await axios.post(`${PDF_SERVICE_URL}/extract`, formData, {
+      headers: formData.getHeaders(),
+      timeout: PDF_SERVICE_TIMEOUT,
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity
     });
     
-    const pdfDocument = await loadingTask.promise;
-    const numPages = pdfDocument.numPages;
-    let fullText = '';
-    let tables = [];
-    let structuredContent = [];
-    
-    // Extract text from each page with position tracking for table detection
-    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-      const page = await pdfDocument.getPage(pageNum);
-      const textContent = await page.getTextContent();
-      
-      // Group text items by vertical position (Y-coordinate) for table detection
-      const lines = {};
-      textContent.items.forEach(item => {
-        const y = Math.round(item.transform[5]); // Y position
-        if (!lines[y]) {
-          lines[y] = [];
-        }
-        lines[y].push({
-          text: item.str,
-          x: item.transform[4], // X position
-          width: item.width
-        });
-      });
-      
-      // Sort lines by Y position (top to bottom) and items by X position (left to right)
-      const sortedYPositions = Object.keys(lines).sort((a, b) => b - a);
-      let pageText = '';
-      let pageLines = [];
-      
-      sortedYPositions.forEach(y => {
-        const lineItems = lines[y].sort((a, b) => a.x - b.x);
-        const lineText = lineItems.map(item => item.text).join(' ');
-        pageText += lineText + '\n';
-        pageLines.push({
-          y: parseFloat(y),
-          items: lineItems,
-          text: lineText
-        });
-      });
-      
-      fullText += pageText;
-      
-      // Detect tables on this page
-      const pageTables = detectAndExtractTables(pageLines, pageNum);
-      tables.push(...pageTables);
-      
-      structuredContent.push({
-        pageNum,
-        text: pageText,
-        hasTable: pageTables.length > 0,
-        tables: pageTables
-      });
+    if (response.data && response.data.success) {
+      console.log(`✓ Python service extraction successful (${response.data.method}): ${response.data.total_chars} chars`);
+      return {
+        text: response.data.text,
+        numPages: response.data.num_pages,
+        method: `python-${response.data.method}`,
+        success: true
+      };
+    } else {
+      throw new Error('Python service returned unsuccessful result');
     }
+    
+  } catch (error) {
+    console.error('✗ Python service extraction failed:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Tier 2: Direct pdfplumber extraction (fallback)
+ * Now returns JSON with text and numPages
+ */
+async function extractWithPdfplumber(pdfPath) {
+  console.log('🔹 Tier 2: Attempting direct pdfplumber extraction...');
+  
+  return new Promise((resolve, reject) => {
+    const pythonProcess = spawn('python3', ['extract_pdf.py', pdfPath]);
+    
+    let resultText = '';
+    let errorText = '';
+    
+    pythonProcess.stdout.on('data', (data) => {
+      resultText += data.toString();
+    });
+    
+    pythonProcess.stderr.on('data', (data) => {
+      errorText += data.toString();
+      console.log(`pdfplumber: ${data}`);
+    });
+    
+    pythonProcess.on('close', (code) => {
+      if (code !== 0) {
+        console.error(`✗ pdfplumber process exited with code ${code}`);
+        reject(new Error(`pdfplumber failed with code ${code}`));
+      } else {
+        // Parse JSON output from Python script
+        try {
+          const result = JSON.parse(resultText);
+          console.log(`✓ pdfplumber extraction complete: ${result.text.length} chars, ${result.numPages} pages`);
+          resolve(result);
+        } catch (parseError) {
+          // Fallback: treat as plain text (backward compatibility)
+          console.log(`✓ pdfplumber extraction complete: ${resultText.length} chars (plain text)`);
+          resolve({ text: resultText, numPages: 1 });
+        }
+      }
+    });
+    
+    pythonProcess.on('error', (err) => {
+      console.error('✗ Failed to start pdfplumber process:', err);
+      reject(err);
+    });
+  });
+}
+
+/**
+ * Tier 3: Node.js pdf-parse extraction (final fallback)
+ */
+async function extractWithPdfParse(pdfPath) {
+  console.log('🔹 Tier 3: Attempting Node.js pdf-parse extraction...');
+  
+  try {
+    const dataBuffer = fs.readFileSync(pdfPath);
+    const pdfData = await pdfParse(dataBuffer);
+    
+    console.log(`✓ pdf-parse extraction complete: ${pdfData.text.length} chars`);
     
     return {
-      text: fullText,
-      tables,
-      structuredContent,
-      numPages,
-      success: true,
-      method: 'pdfjs-table-aware'
+      text: pdfData.text,
+      numPages: pdfData.numpages,
+      method: 'nodejs-pdfparse',
+      success: true
     };
   } catch (error) {
-    console.error('Table-aware PDF extraction error:', error.message);
-    // Fallback to basic pdf-parse
-    try {
-      const dataBuffer = fs.readFileSync(pdfPath);
-      const pdfData = await pdfParse(dataBuffer);
+    console.error('✗ pdf-parse extraction failed:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Main PDF extraction function with 3-tier fallback system
+ */
+async function extractPDFWithFallback(pdfPath) {
+  console.log('\n========================================');
+  console.log('📄 STARTING 3-TIER PDF EXTRACTION');
+  console.log(`File: ${path.basename(pdfPath)}`);
+  console.log('========================================\n');
+  
+  // Tier 1: Try Python FastAPI service (PyMuPDF + pdfplumber)
+  try {
+    const result = await extractWithPythonService(pdfPath);
+    if (result.text && result.text.trim().length > 0) {
+      console.log('\n✓ SUCCESS: Python service extraction completed\n');
+      return result;
+    }
+  } catch (tier1Error) {
+    console.log('⚠ Tier 1 failed, falling back to Tier 2...\n');
+  }
+  
+  // Tier 2: Try direct pdfplumber (now returns JSON with text and numPages)
+  try {
+    const result = await extractWithPdfplumber(pdfPath);
+    if (result.text && result.text.trim().length > 0) {
+      console.log('\n✓ SUCCESS: pdfplumber extraction completed\n');
       return {
-        text: pdfData.text,
-        tables: [],
-        structuredContent: [],
-        numPages: pdfData.numpages,
-        success: true,
-        method: 'pdf-parse-fallback'
-      };
-    } catch (fallbackError) {
-      console.error('Fallback PDF extraction error:', fallbackError.message);
-      return {
-        text: '',
-        tables: [],
-        structuredContent: [],
-        numPages: null,
-        success: false,
-        method: 'failed'
+        text: result.text,
+        numPages: result.numPages || 1,
+        method: 'python-pdfplumber-direct',
+        success: true
       };
     }
+  } catch (tier2Error) {
+    console.log('⚠ Tier 2 failed, falling back to Tier 3...\n');
   }
+  
+  // Tier 3: Try Node.js pdf-parse
+  try {
+    const result = await extractWithPdfParse(pdfPath);
+    if (result.text && result.text.trim().length > 0) {
+      console.log('\n✓ SUCCESS: pdf-parse extraction completed\n');
+      return result;
+    }
+  } catch (tier3Error) {
+    console.log('✗ All tiers failed\n');
+  }
+  
+  // All tiers failed
+  console.log('========================================');
+  console.log('✗ EXTRACTION FAILED: All methods exhausted');
+  console.log('========================================\n');
+  
+  return {
+    text: '',
+    numPages: 0,
+    method: 'none',
+    success: false,
+    error: 'All extraction methods failed'
+  };
+}
+
+// Legacy function for backwards compatibility - redirects to new system
+async function extractPDFWithTableDetection(pdfPath) {
+  const result = await extractPDFWithFallback(pdfPath);
+  
+  // Convert to legacy format for backwards compatibility
+  return {
+    text: result.text,
+    tables: [],
+    structuredContent: [{
+      pageNum: 1,
+      text: result.text,
+      hasTable: false,
+      tables: []
+    }],
+    numPages: result.numPages,
+    success: result.success,
+    method: result.method
+  };
 }
 
 // Detect and extract tables from page lines (Tabula/Camelot-like algorithm)
@@ -457,13 +561,44 @@ async function extractWithDocumentAI(text, documentType, tables = []) {
     if (documentType === 'partnership-deed') {
       prompt = `You are a document extraction AI. Extract the following information from this partnership deed document:
 
-1. Date of Execution: Find the date when the deed was executed/signed
-2. Partners: Extract ALL partner names with their profit and loss sharing percentages
+1. Date of Execution: Find the date when the deed was executed/signed. Look for phrases like:
+   - "made and executed on this [day] of [month], [year]"
+   - "dated [day] [month] [year]"
+   - "executed on [date]"
+   - Extract the full date in format: "DD Month YYYY" (e.g., "11 June 2025")
+
+2. Partners: Extract ALL partner names with their profit and loss sharing percentages. 
+   
+   CRITICAL: Search through ALL numbered points/clauses in the document to find the clause that discusses:
+   - "Profit and Loss Sharing" or "Distribution of Profit and Loss"
+   - "Sharing Ratio" or "Profit Sharing Ratio"
+   - "Division of Profits" or "Loss Distribution"
+   
+   This information could be in ANY point number (e.g., Point 5, 10, 15, 20, etc.). 
+   Read the ENTIRE document and identify which clause contains the profit/loss sharing details.
+   
+   Also look for:
+   - Partner names in tables or lists
+   - Profit/loss sharing ratios (e.g., "50:50", "60% profit", "equal shares")
+   - Capital contributions with associated names
+   - Percentages associated with partner names (e.g., "Partner A: 60%, Partner B: 40%")
 
 Document Text:
-${text.substring(0, 4000)}
+${text.substring(0, 8000)}
 
 ${tables.length > 0 ? `\n\nDetected Tables:\n${JSON.stringify(tables, null, 2)}` : ''}
+
+IMPORTANT INSTRUCTIONS:
+- For dates like "11th day of JUNE, 2025" or "11" day of JUNE, 2025", extract as "11 June 2025"
+- Convert month names to proper case (e.g., JUNE → June)
+- SCAN ALL numbered clauses/points to find the one about "profit and loss sharing" - it could be anywhere
+- CAREFULLY READ the clause about profit and loss sharing and extract exact percentages
+- For profit/loss percentages, extract numeric values only (e.g., if it says "60% and 40%", extract 60.0 and 40.0)
+- If profit and loss ratios are mentioned as "60:40", extract profit as 60.0 and loss as 40.0
+- If "equal shares" or "equally" is mentioned, calculate equal percentages among all partners
+- Match each partner name with their specific profit and loss percentages
+- If profit/loss ratio is not explicitly stated, return null for those values
+- Include ALL partners mentioned in the document
 
 Respond ONLY with valid JSON in this exact format:
 {
@@ -499,48 +634,253 @@ Respond ONLY with valid JSON in this exact format:
 }`;
     }
     
-    const response = await axios.post(
-      OPENROUTER_API_URL,
-      {
-        model: 'google/gemini-2.0-flash-exp:free', // Fast and cost-effective Gemini model
-        messages: [
+    // Retry logic for rate limiting
+    let retries = 3;
+    let delay = 10000; // Start with 10 second delay for rate limits
+    
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        console.log(`🤖 AI Extraction attempt ${attempt}/${retries}...`);
+        
+        const response = await axios.post(
+          OPENROUTER_API_URL,
           {
-            role: 'user',
-            content: prompt
+            model: 'openai/gpt-4o', // GPT-4o for best quality document analysis
+            messages: [
+              {
+                role: 'user',
+                content: prompt
+              }
+            ],
+            temperature: 0.1, // Low temperature for consistent extraction
+            max_tokens: 1000
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+              'Content-Type': 'application/json',
+              'HTTP-Referer': 'http://localhost:3000',
+              'X-Title': 'Customer Profiling App'
+            },
+            timeout: 30000 // 30 second timeout for GPT-4o
           }
-        ],
-        temperature: 0.1, // Low temperature for consistent extraction
-        max_tokens: 1000
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'http://localhost:3000',
-          'X-Title': 'Customer Profiling App'
-        },
-        timeout: 15000 // 15 second timeout
+        );
+        
+        const content = response.data.choices[0].message.content;
+        console.log('📄 Document AI Response:', content);
+        
+        // Parse JSON response
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const extracted = JSON.parse(jsonMatch[0]);
+          return {
+            success: true,
+            data: extracted,
+            method: 'openrouter-document-ai'
+          };
+        }
+        
+        return { success: false, error: 'No JSON found in response' };
+      } catch (error) {
+        if (error.response && error.response.status === 429 && attempt < retries) {
+          console.log(`⚠️ Rate limit hit (429), waiting ${delay}ms before retry ${attempt + 1}/${retries}...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          delay *= 2; // Exponential backoff
+          continue;
+        }
+        
+        // If not a rate limit error or last attempt, throw
+        console.error('Document AI extraction error:', error.message);
+        return { 
+          success: false, 
+          error: error.response?.status === 429 
+            ? 'API rate limit reached. Please wait a moment and try again.' 
+            : error.message 
+        };
       }
-    );
-    
-    const content = response.data.choices[0].message.content;
-    console.log('📄 Document AI Response:', content);
-    
-    // Parse JSON response
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const extracted = JSON.parse(jsonMatch[0]);
-      return {
-        success: true,
-        data: extracted,
-        method: 'openrouter-document-ai'
-      };
     }
     
-    return { success: false, error: 'No JSON found in response' };
+    return { success: false, error: 'Max retries reached' };
   } catch (error) {
     console.error('Document AI extraction error:', error.message);
     return { success: false, error: error.message };
+  }
+}
+
+// Helper function to normalize deed date format
+function normalizeDeedDate(dateStr) {
+  if (!dateStr) return null;
+  
+  // Remove ordinal suffixes (st, nd, rd, th)
+  let normalized = dateStr.replace(/(\d+)(st|nd|rd|th)/gi, '$1');
+  
+  // Remove "day of" phrase
+  normalized = normalized.replace(/\s+day\s+of\s+/gi, ' ');
+  
+  // Clean up extra spaces
+  normalized = normalized.replace(/\s+/g, ' ').trim();
+  
+  // Try to parse and format as DD Month YYYY
+  const monthNames = {
+    'january': 'January', 'jan': 'January',
+    'february': 'February', 'feb': 'February',
+    'march': 'March', 'mar': 'March',
+    'april': 'April', 'apr': 'April',
+    'may': 'May',
+    'june': 'June', 'jun': 'June',
+    'july': 'July', 'jul': 'July',
+    'august': 'August', 'aug': 'August',
+    'september': 'September', 'sep': 'September',
+    'october': 'October', 'oct': 'October',
+    'november': 'November', 'nov': 'November',
+    'december': 'December', 'dec': 'December'
+  };
+  
+  // Match pattern: number month year
+  const match = normalized.match(/(\d{1,2})\s+([a-z]+)[,\s]+(\d{4})/i);
+  if (match) {
+    const day = match[1];
+    const month = monthNames[match[2].toLowerCase()] || match[2];
+    const year = match[3];
+    return `${day} ${month} ${year}`;
+  }
+  
+  return normalized;
+}
+
+// ============================================
+// IMAGE OCR SERVICE (OpenAI Vision via OpenRouter)
+// ============================================
+
+/**
+ * Extract text from images (JPG/PNG) using OpenAI Vision API via OpenRouter
+ * Used for banker policy documents and other image-based documents
+ */
+async function extractTextFromImage(imagePath) {
+  try {
+    console.log('🖼️ Starting image OCR extraction:', path.basename(imagePath));
+    
+    // Read image file and convert to base64
+    const imageBuffer = fs.readFileSync(imagePath);
+    const base64Image = imageBuffer.toString('base64');
+    
+    // Determine image MIME type
+    const ext = path.extname(imagePath).toLowerCase();
+    let mimeType = 'image/jpeg';
+    if (ext === '.png') {
+      mimeType = 'image/png';
+    } else if (ext === '.jpg' || ext === '.jpeg') {
+      mimeType = 'image/jpeg';
+    }
+    
+    console.log(`Image size: ${(imageBuffer.length / 1024).toFixed(2)} KB, Type: ${mimeType}`);
+    
+    // Retry logic for rate limiting
+    let retries = 3;
+    let delay = 10000;
+    
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        console.log(`🤖 Vision API attempt ${attempt}/${retries}...`);
+        
+        const response = await axios.post(
+          OPENROUTER_API_URL,
+          {
+            model: 'openai/gpt-4o', // GPT-4o with vision capabilities
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text: `Extract all text from this image. This is a document (possibly a banker policy, financial document, or business document). 
+                    
+Please:
+1. Extract ALL text visible in the image
+2. Maintain the document structure and formatting as much as possible
+3. Preserve tables, lists, and hierarchical information
+4. Include headers, footers, and any metadata
+5. If this is a banker policy or financial document, pay special attention to:
+   - Policy details
+   - Names and addresses
+   - Account numbers
+   - Dates
+   - Amounts and percentages
+   - Terms and conditions
+
+Return the extracted text in a clear, structured format.`
+                  },
+                  {
+                    type: 'image_url',
+                    image_url: {
+                      url: `data:${mimeType};base64,${base64Image}`
+                    }
+                  }
+                ]
+              }
+            ],
+            temperature: 0.1,
+            max_tokens: 4000
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+              'Content-Type': 'application/json',
+              'HTTP-Referer': 'http://localhost:3000',
+              'X-Title': 'Customer Profiling App'
+            },
+            timeout: 60000 // 60 second timeout for vision processing
+          }
+        );
+        
+        const extractedText = response.data.choices[0].message.content;
+        console.log(`✓ Vision OCR successful: ${extractedText.length} characters extracted`);
+        
+        return {
+          success: true,
+          text: extractedText,
+          method: 'openai-vision-ocr',
+          charCount: extractedText.length
+        };
+        
+      } catch (error) {
+        if (error.response && error.response.status === 429 && attempt < retries) {
+          console.log(`⚠️ Rate limit hit (429), waiting ${delay}ms before retry ${attempt + 1}/${retries}...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          delay *= 2;
+          continue;
+        }
+        
+        console.error(`✗ Vision OCR error (attempt ${attempt}):`, error.message);
+        
+        if (attempt === retries) {
+          return {
+            success: false,
+            text: '',
+            method: 'openai-vision-ocr',
+            error: error.response?.status === 429 
+              ? 'API rate limit reached. Please wait and try again.' 
+              : error.message
+          };
+        }
+      }
+    }
+    
+    return {
+      success: false,
+      text: '',
+      method: 'openai-vision-ocr',
+      error: 'Max retries reached'
+    };
+    
+  } catch (error) {
+    console.error('✗ Image OCR extraction failed:', error.message);
+    return {
+      success: false,
+      text: '',
+      method: 'openai-vision-ocr',
+      error: error.message
+    };
   }
 }
 
@@ -598,7 +938,7 @@ function extractPartnershipDeedDetails(fullText, tables = []) {
   
   // STEP 2: Extract deed date - comprehensive patterns
   const datePatterns = [
-    /(?:dated|executed\s+on|dated\s+this|made\s+this|entered\s+into\s+on|deed\s+dated|this\s+deed\s+of\s+partnership\s+made\s+on)\s*(?:the\s*)?(\d{1,2}(?:st|nd|rd|th)?\s+(?:day\s+of\s+)?(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[,\s]+\d{4})/gi,
+    /(?:dated|executed\s+on|dated\s+this|made\s+this|entered\s+into\s+on|deed\s+dated|this\s+deed\s+of\s+partnership\s+made\s+on|made\s+and\s+executed\s+on\s+this)\s*(?:the\s*)?(\d{1,2}(?:st|nd|rd|th)?\s+(?:day\s+of\s+)?(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[,\s]+\d{4})/gi,
     /(?:deed\s+date|date\s+of\s+deed|execution\s+date|on\s+this|amendment\s+dated)[\s:]+(\d{1,2}[\s\/\-]\d{1,2}[\s\/\-]\d{2,4})/gi,
     /(\d{1,2}[\s\/\-]\d{1,2}[\s\/\-]\d{4})/g
   ];
@@ -607,8 +947,10 @@ function extractPartnershipDeedDetails(fullText, tables = []) {
     const matches = fullText.matchAll(pattern);
     for (const match of matches) {
       if (match[1] || match[0]) {
-        details.deedDate = match[1] || match[0];
-        console.log('Found date:', details.deedDate);
+        const rawDate = match[1] || match[0];
+        details.deedDate = normalizeDeedDate(rawDate);
+        console.log('Found date (raw):', rawDate);
+        console.log('Found date (normalized):', details.deedDate);
         break;
       }
     }
@@ -668,6 +1010,110 @@ function extractPartnershipDeedDetails(fullText, tables = []) {
 
   console.log('Extraction complete. Date:', details.deedDate, 'Partners:', details.partners.length);
   return details;
+}
+
+// Background file processing function
+async function processFilesInBackground(files, proposalId, fileDetails) {
+  console.log(`🔄 Starting background processing for ${files.length} files...`);
+  
+  const proposal = getProposalById(proposalId);
+  if (!proposal || !proposal.documents) {
+    console.error('Proposal not found for background processing');
+    return;
+  }
+  
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const fileDetail = fileDetails[i];
+    
+    try {
+      let extractedText = '';
+      let fullText = '';
+      let pageCount = null;
+      let extractedDetails = null;
+      
+      // Process PDFs
+      if (file.mimetype === 'application/pdf') {
+        try {
+          console.log(`📄 Processing PDF: ${file.originalname}`);
+          // Use 3-tier fallback extraction
+          const pdfResult = await extractPDFWithTableDetection(file.path);
+          fullText = pdfResult.text;
+          extractedText = pdfResult.text.substring(0, 500);
+          pageCount = pdfResult.numPages;
+          
+          // Store extracted tables for later use
+          file.extractedTables = pdfResult.tables;
+          file.structuredContent = pdfResult.structuredContent;
+          
+          console.log(`✓ Extracted ${pdfResult.tables.length} tables from ${file.originalname}`);
+        } catch (err) {
+          console.error('PDF parsing error:', err);
+        }
+      }
+      // Process images (JPG/PNG) with Vision OCR
+      else if (file.mimetype && (file.mimetype.startsWith('image/jpeg') || 
+                                   file.mimetype.startsWith('image/png') ||
+                                   file.mimetype === 'image/jpg')) {
+        try {
+          console.log(`🖼️ Processing image: ${file.originalname}`);
+          const ocrResult = await extractTextFromImage(file.path);
+          
+          if (ocrResult.success && ocrResult.text) {
+            fullText = ocrResult.text;
+            extractedText = ocrResult.text.substring(0, 500);
+            console.log(`✓ OCR extracted ${ocrResult.charCount} characters from ${file.originalname}`);
+          } else {
+            console.error('Image OCR failed:', ocrResult.error);
+          }
+        } catch (err) {
+          console.error('Image OCR error:', err);
+        }
+      }
+      
+      // Extract specific details for incorporation documents (partnership deeds)
+      if (fileDetail.category === 'incorporation' && fullText) {
+        console.log('Processing incorporation document:', file.originalname);
+        
+        // Try Document AI first
+        const aiResult = await extractWithDocumentAI(fullText, 'partnership-deed', file.extractedTables || []);
+        if (aiResult.success && aiResult.data) {
+          console.log('✓ Document AI extraction successful:', aiResult.data);
+          // Transform AI result to match expected format
+          const partners = (aiResult.data.partners || []).map(p => ({
+            name: p.name,
+            profitPercent: p.profitPercentage !== null ? p.profitPercentage : 'Not specified',
+            lossPercent: p.lossPercentage !== null ? p.lossPercentage : 'Not specified'
+          }));
+          extractedDetails = {
+            deedDate: aiResult.data.dateOfExecution,
+            partners: partners
+          };
+        } else {
+          console.log('⚠ Document AI failed, using fallback extraction');
+          extractedDetails = extractPartnershipDeedDetails(fullText, file.extractedTables || []);
+        }
+        
+        console.log('Extracted details:', JSON.stringify(extractedDetails));
+      }
+      
+      // Find and update the document in the proposal
+      const docIndex = proposal.documents.findIndex(d => d.filename === fileDetail.filename);
+      if (docIndex !== -1) {
+        proposal.documents[docIndex].pages = pageCount;
+        proposal.documents[docIndex].extractedText = extractedText;
+        proposal.documents[docIndex].extractedDetails = extractedDetails;
+        
+        // Save the updated proposal
+        updateProposal(proposalId, { documents: proposal.documents });
+        console.log(`✓ Updated document: ${file.originalname}`);
+      }
+    } catch (error) {
+      console.error(`Error processing file ${file.originalname}:`, error);
+    }
+  }
+  
+  console.log(`✅ Background processing complete for proposal ${proposalId}`);
 }
 
 // Routes
@@ -762,8 +1208,11 @@ app.get('/stage2/:proposalId', (req, res) => {
       filename: doc.filename,
       originalName: doc.originalName,
       category: doc.category || '',
+      classification: doc.classification || '', // Specific document classification
       size: typeof doc.size === 'number' ? (doc.size / 1024).toFixed(2) + ' KB' : doc.size,
-      uploadedAt: doc.uploadedAt
+      pages: doc.pages, // Include page count
+      uploadedAt: doc.uploadedAt,
+      extractedDetails: doc.extractedDetails // Include extracted details
     }));
   } else {
     // Fallback: read from file system
@@ -879,60 +1328,11 @@ app.post('/stage2/:proposalId/upload', upload.array('documents', 10), async (req
       });
     }
     
-    // Parse PDF files and extract text
+    // Create basic file details immediately without processing
     const fileDetails = [];
     for (const file of allFiles) {
-      let extractedText = '';
-      let fullText = '';
-      let pageCount = null;
-      let extractedDetails = null;
-      
-      if (file.mimetype === 'application/pdf') {
-        try {
-          // Use table-aware extraction
-          const pdfResult = await extractPDFWithTableDetection(file.path);
-          fullText = pdfResult.text;
-          extractedText = pdfResult.text.substring(0, 500);
-          pageCount = pdfResult.numPages;
-          
-          // Store extracted tables for later use
-          file.extractedTables = pdfResult.tables;
-          file.structuredContent = pdfResult.structuredContent;
-          
-          console.log(`✓ Extracted ${pdfResult.tables.length} tables from ${file.originalname} using ${pdfResult.method}`);
-        } catch (err) {
-          console.error('PDF parsing error:', err);
-        }
-      }
-      
-      // Auto-categorize based on filename and extracted text
-      const autoCategory = autoCategorizeDocument(file.originalname, extractedText);
-      
-      // Extract specific details for incorporation documents (partnership deeds)
-      if (autoCategory === 'incorporation' && fullText) {
-        console.log('Processing incorporation document:', file.originalname);
-        
-        // Try Document AI first
-        const aiResult = await extractWithDocumentAI(fullText, 'partnership-deed', file.extractedTables || []);
-        if (aiResult.success && aiResult.data) {
-          console.log('✓ Document AI extraction successful:', aiResult.data);
-          // Transform AI result to match expected format
-          const partners = (aiResult.data.partners || []).map(p => ({
-            name: p.name,
-            profitPercent: p.profitPercentage !== null ? p.profitPercentage : 'Not specified',
-            lossPercent: p.lossPercentage !== null ? p.lossPercentage : 'Not specified'
-          }));
-          extractedDetails = {
-            deedDate: aiResult.data.dateOfExecution,
-            partners: partners
-          };
-        } else {
-          console.log('⚠ Document AI failed, using fallback extraction');
-          extractedDetails = extractPartnershipDeedDetails(fullText, file.extractedTables || []);
-        }
-        
-        console.log('Extracted details:', JSON.stringify(extractedDetails));
-      }
+      // Auto-categorize based on filename only (quick)
+      const autoCategory = autoCategorizeDocument(file.originalname, '');
       
       fileDetails.push({
         id: file.filename,
@@ -941,9 +1341,9 @@ app.post('/stage2/:proposalId/upload', upload.array('documents', 10), async (req
         category: autoCategory,
         autoCategorized: !!autoCategory,
         size: file.size,
-        pages: pageCount,
-        extractedText: extractedText,
-        extractedDetails: extractedDetails,
+        pages: null,
+        extractedText: '',
+        extractedDetails: null,
         uploadedAt: new Date().toISOString()
       });
     }
@@ -955,7 +1355,13 @@ app.post('/stage2/:proposalId/upload', upload.array('documents', 10), async (req
     proposal.documents.push(...fileDetails);
     updateProposal(proposalId, { documents: proposal.documents });
     
-    res.json({ success: true, files: fileDetails });
+    // Send immediate response
+    res.json({ success: true, files: fileDetails, message: 'Files uploaded successfully. Processing in background...' });
+    
+    // Process files in background (don't await)
+    processFilesInBackground(allFiles, proposalId, fileDetails).catch(err => {
+      console.error('Background processing error:', err);
+    });
   } catch (error) {
     console.error('Upload error:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -1190,6 +1596,8 @@ app.post('/stage2/:proposalId/categorize', (req, res) => {
     const fileIndex = proposal.documents.findIndex(doc => doc.id === fileId || doc.filename === fileId);
     if (fileIndex !== -1) {
       proposal.documents[fileIndex].category = category;
+      // Clear classification if category changes
+      proposal.documents[fileIndex].classification = '';
       updateProposal(proposalId, { documents: proposal.documents });
       res.json({ success: true });
     } else {
@@ -1197,6 +1605,36 @@ app.post('/stage2/:proposalId/categorize', (req, res) => {
     }
   } catch (error) {
     console.error('Categorize error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update document classification (specific document type within a category)
+app.post('/stage2/:proposalId/classify', (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const { fileId, classification } = req.body;
+    
+    const proposal = getProposalById(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ success: false, error: 'Proposal not found' });
+    }
+    
+    if (!proposal.documents) {
+      return res.status(400).json({ success: false, error: 'No documents found' });
+    }
+    
+    // Update the classification of the specific file
+    const fileIndex = proposal.documents.findIndex(doc => doc.id === fileId || doc.filename === fileId);
+    if (fileIndex !== -1) {
+      proposal.documents[fileIndex].classification = classification;
+      updateProposal(proposalId, { documents: proposal.documents });
+      res.json({ success: true });
+    } else {
+      res.status(404).json({ success: false, error: 'File not found' });
+    }
+  } catch (error) {
+    console.error('Classify error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -1232,7 +1670,26 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
             const pdfResult = await extractPDFWithTableDetection(filePath);
             const fullText = pdfResult.text;
             
-            console.log('Reprocessing:', doc.originalName, 'Text length:', fullText.length, 'Tables found:', pdfResult.tables.length);
+            console.log('\n========================================');
+            console.log('📄 EXTRACTING:', doc.originalName);
+            console.log('========================================');
+            console.log('Method:', pdfResult.method);
+            console.log('Text length:', fullText.length);
+            console.log('Tables found:', pdfResult.tables.length);
+            console.log('\n--- EXTRACTED TEXT START ---');
+            console.log(fullText);
+            console.log('--- EXTRACTED TEXT END ---\n');
+            
+            if (pdfResult.tables && pdfResult.tables.length > 0) {
+              console.log('📊 TABLES DETECTED:');
+              pdfResult.tables.forEach((table, idx) => {
+                console.log(`\nTable ${idx + 1}:`);
+                console.log('Headers:', table.headers);
+                console.log('Rows:', table.rows.length);
+                console.log('Type:', table.type);
+              });
+              console.log('');
+            }
             
             // Try Document AI first
             const aiResult = await extractWithDocumentAI(fullText, 'partnership-deed', pdfResult.tables || []);
@@ -1241,6 +1698,7 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
             
             if (aiResult.success && aiResult.data) {
               console.log('✓ Document AI extraction successful for:', doc.originalName);
+              console.log('AI Extracted Data:', JSON.stringify(aiResult.data, null, 2));
               const partners = (aiResult.data.partners || []).map(p => ({
                 name: p.name,
                 profitPercent: p.profitPercentage !== null ? p.profitPercentage : 'Not specified',
@@ -1255,11 +1713,17 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
             } else {
               console.log('⚠ Document AI failed, using fallback for:', doc.originalName);
               extractedDetails = extractPartnershipDeedDetails(fullText, pdfResult.tables || []);
+              console.log('Fallback Extracted Data:', JSON.stringify(extractedDetails, null, 2));
               rawExtraction.method = 'Fallback (Pattern Matching)';
               rawExtraction.rawResponse = extractedDetails;
             }
             
+            console.log('\n📋 FINAL EXTRACTED DETAILS:');
+            console.log(JSON.stringify(extractedDetails, null, 2));
+            console.log('========================================\n');
+            
             proposal.documents[i].extractedDetails = extractedDetails;
+            proposal.documents[i].pages = pdfResult.numPages; // Save page count
             
             extractionResults.push({
               fileName: doc.originalName,
@@ -1340,6 +1804,6 @@ app.post('/stage3/:proposalId/submit', (req, res) => {
   }
 });
 
-app.listen(port, () => {
+app.listen(port, '0.0.0.0', () => {
   console.log(`Customer Profiling & Banker Selection App running on port ${port}`);
 });

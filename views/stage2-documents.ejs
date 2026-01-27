@@ -96,7 +96,7 @@
                 <%
                     // Extract partnership details from documents
                     let partnershipDate = null;
-                    let partnershipShares = [];
+                    let partnershipPartners = [];
                     
                     if (proposal.documents && proposal.documents.length > 0) {
                         proposal.documents.forEach(doc => {
@@ -104,8 +104,8 @@
                                 if (doc.extractedDetails.deedDate && !partnershipDate) {
                                     partnershipDate = doc.extractedDetails.deedDate;
                                 }
-                                if (doc.extractedDetails.partnerShares && doc.extractedDetails.partnerShares.length > 0) {
-                                    partnershipShares = doc.extractedDetails.partnerShares;
+                                if (doc.extractedDetails.partners && doc.extractedDetails.partners.length > 0) {
+                                    partnershipPartners = doc.extractedDetails.partners;
                                 }
                             }
                         });
@@ -124,10 +124,20 @@
                     
                     <div class="partnership-item">
                         <span class="label">💰 Profit & Loss Sharing:</span>
-                        <% if (partnershipShares && partnershipShares.length > 0) { %>
+                        <% if (partnershipPartners && partnershipPartners.length > 0) { %>
                             <div class="shares-list">
-                                <% partnershipShares.forEach(share => { %>
-                                    <div class="share-item partnership-extracted">✓ <%= share %></div>
+                                <% partnershipPartners.forEach(partner => { %>
+                                    <div class="share-item partnership-extracted">
+                                        <% if (typeof partner.profitPercent === 'number') { %>
+                                            ✓ <strong><%= partner.name %></strong>: 
+                                            Profit <%= partner.profitPercent %>%
+                                            <% if (partner.lossPercent !== partner.profitPercent && typeof partner.lossPercent === 'number') { %>
+                                                | Loss <%= partner.lossPercent %>%
+                                            <% } %>
+                                        <% } else { %>
+                                            ✓ <%= partner.name %>
+                                        <% } %>
+                                    </div>
                                 <% }); %>
                             </div>
                         <% } else { %>
@@ -136,7 +146,7 @@
                     </div>
                 </div>
                 
-                <% if (!partnershipDate || !partnershipShares || partnershipShares.length === 0) { %>
+                <% if (!partnershipDate || !partnershipPartners || partnershipPartners.length === 0) { %>
                     <div class="partnership-note">
                         <strong>ℹ️ Note:</strong> Partnership date and profit/loss shares will be automatically extracted from your Partnership Deed PDF once uploaded.
                     </div>
@@ -407,11 +417,12 @@
                                         <th>Uploaded</th>
                                         <th>Status</th>
                                         <th>Actions</th>
+                                        <th>Classification</th>
                                     </tr>
                                 </thead>
                                 <tbody id="filesTableBody">
                                     <% uploadedFiles.forEach(file => { %>
-                                        <tr data-category="<%= file.category || 'all' %>">
+                                        <tr data-category="<%= file.category || 'all' %>" data-file-id="<%= file.id %>">
                                             <td><input type="checkbox" class="doc-checkbox" value="<%= file.id %>" onchange="updateBulkActions()"></td>
                                             <td>
                                                 <span class="badge"><%= file.category || 'Uncategorized' %></span>
@@ -428,7 +439,7 @@
                                             <td><span class="badge badge-success">✓ Uploaded</span></td>
                                             <td class="actions-cell">
                                                 <button class="btn-view" 
-                                                    onmouseenter="showPreview('<%= file.filename %>', '<%= file.originalName %>', '<%= proposalId %>', event)" 
+                                                    onmouseenter="showPreview('<%= file.filename %>', '<%= file.originalName %>', '<%= proposalId %>', this)" 
                                                     onmouseleave="scheduleHidePreview()"
                                                     title="View document">
                                                     👁️
@@ -451,23 +462,19 @@
                                                     🗑️
                                                 </button>
                                             </td>
+                                            <td>
+                                                <select class="classification-select" data-file-id="<%= file.id %>" data-category="<%= file.category %>" onchange="updateClassification('<%= file.id %>', this.value)">
+                                                    <option value="">Select document type...</option>
+                                                    <!-- Options will be populated by JavaScript based on category -->
+                                                </select>
+                                                <% if (file.classification) { %>
+                                                    <input type="hidden" class="current-classification" value="<%= file.classification %>">
+                                                <% } %>
+                                            </td>
                                         </tr>
                                     <% }); %>
                                 </tbody>
                             </table>
-                        </div>
-
-                        <!-- Document Preview Popup -->
-                        <div id="documentPreview" class="document-preview-popup" style="display: none;" 
-                             onmouseenter="cancelHidePreview()" 
-                             onmouseleave="hidePreview()">
-                            <div class="preview-content">
-                                <button class="preview-close" onclick="hidePreview()">✕</button>
-                                <div id="previewLoader" class="preview-loader">Loading preview...</div>
-                                <iframe id="previewFrame" style="display: none;"></iframe>
-                                <img id="previewImage" style="display: none;" alt="Document preview">
-                                <div id="previewText" style="display: none;"></div>
-                            </div>
                         </div>
                     <% } %>
                     </div>
@@ -487,8 +494,114 @@
                         function getUploadedCountInCategory(category) {
                             return uploadedFiles.filter(file => file.category === category).length;
                         }
+                        
+                        // Get all classifications that have been assigned
+                        function getClassifiedDocuments() {
+                            return uploadedFiles
+                                .filter(file => file.classification && file.classification.trim() !== '')
+                                .map(file => file.classification);
+                        }
+                        
+                        const classifiedDocs = getClassifiedDocuments();
+                        
+                        // All document types by category (for dropdown options)
+                        const allDocTypesByCategory = {
+                            personalId: [],
+                            businessId: [],
+                            incorporation: [],
+                            creditReports: [],
+                            financials: [],
+                            banking: [],
+                            turnover: [],
+                            debtProfile: [],
+                            collateral: []
+                        };
+                        
+                        // Populate ALL document types for each category (regardless of classification status)
+                        // Personal ID
+                        if (proposal.applicantType === 'Individual') {
+                            allDocTypesByCategory.personalId.push('PAN Card of ' + (proposal.applicantName || proposal.customerName));
+                            allDocTypesByCategory.personalId.push('Aadhar Card of ' + (proposal.applicantName || proposal.customerName));
+                        }
+                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                            proposal.coApplicants.forEach((co, idx) => {
+                                if (co.type === 'Individual') {
+                                    allDocTypesByCategory.personalId.push('PAN Card of ' + co.name);
+                                    allDocTypesByCategory.personalId.push('Aadhar Card of ' + co.name);
+                                }
+                            });
+                        }
+                        
+                        // Business ID
+                        if (proposal.applicantType !== 'Individual') {
+                            allDocTypesByCategory.businessId.push('PAN Card of ' + (proposal.applicantName || 'Applicant Name') + ' (Non Individual)');
+                            allDocTypesByCategory.businessId.push('GST Certificate of ' + (proposal.applicantName || 'Applicant Name'));
+                            allDocTypesByCategory.businessId.push('Labour License of ' + (proposal.applicantName || 'Applicant Name'));
+                            allDocTypesByCategory.businessId.push('UDYAM Certificate of ' + (proposal.applicantName || 'Applicant Name'));
+                        }
+                        
+                        // Incorporation
+                        if (proposal.applicantType === 'Partnership') {
+                            allDocTypesByCategory.incorporation.push('Partnership deed - Date of deed, Profit & Loss share of partners');
+                            allDocTypesByCategory.incorporation.push('Reconstituted partnership deed - Date of deed, Profit & Loss share of partners');
+                        } else if (proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') {
+                            allDocTypesByCategory.incorporation.push('Certificate of Incorporation');
+                            allDocTypesByCategory.incorporation.push('Memorandum of Association');
+                            allDocTypesByCategory.incorporation.push('Articles of Association');
+                        }
+                        
+                        // Credit Reports
+                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                            proposal.coApplicants.forEach((co, idx) => {
+                                if (co.type === 'Individual') {
+                                    allDocTypesByCategory.creditReports.push('Personal Credit Report of ' + co.name);
+                                }
+                            });
+                        }
+                        if (proposal.applicantType !== 'Individual') {
+                            allDocTypesByCategory.creditReports.push('Business Credit Report of ' + proposal.applicantName);
+                        }
+                        
+                        // Financials
+                        allDocTypesByCategory.financials.push('ITR of Current Year of ' + proposal.applicantName);
+                        allDocTypesByCategory.financials.push('ITR of Previous Year of ' + proposal.applicantName);
+                        allDocTypesByCategory.financials.push('ITR of Preceding previous year of ' + proposal.applicantName);
+                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                            proposal.coApplicants.forEach((co, idx) => {
+                                if (co.type === 'Individual') {
+                                    allDocTypesByCategory.financials.push('ITR of Current Year of ' + (co.name || 'CoApplicant ' + (idx + 1)));
+                                    allDocTypesByCategory.financials.push('ITR of Previous Year of ' + (co.name || 'coApplicant' + (idx + 1) + ' name'));
+                                    allDocTypesByCategory.financials.push('ITR of Preceding previous year of ' + (co.name || 'coApplicant' + (idx + 1) + ' name'));
+                                }
+                            });
+                        }
+                        
+                        // Banking
+                        allDocTypesByCategory.banking.push('Bank Statement of ' + proposal.applicantName);
+                        allDocTypesByCategory.banking.push('Overdraft Bank Statement of ' + proposal.applicantName);
+                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                            proposal.coApplicants.forEach((co, idx) => {
+                                if (co.type === 'Individual') {
+                                    allDocTypesByCategory.banking.push('Bank Statement of ' + (co.name || 'Coapplicant Name' + (idx + 1)));
+                                }
+                            });
+                        }
+                        
+                        // Turnover
+                        allDocTypesByCategory.turnover.push('GST 3B returns for last 12 months');
+                        allDocTypesByCategory.turnover.push('GST 1 returns for last 12 months');
+                        
+                        // Debt Profile
+                        allDocTypesByCategory.debtProfile.push('All Existing Loan Details');
+                        
+                        // Collateral
+                        allDocTypesByCategory.collateral.push('Title Documents');
+                        allDocTypesByCategory.collateral.push('Tax paid Receipts');
+                        allDocTypesByCategory.collateral.push('Approved Sanction Plan');
+                        allDocTypesByCategory.collateral.push('Encumberance Certificate');
+                        allDocTypesByCategory.collateral.push('Title Documents - Unregistered');
 
-                        // Categorize pending documents based on what's NOT uploaded
+                        // Categorize pending documents based on what's NOT uploaded OR not classified
                         const pendingByCategory = {
                             personalId: [],
                             businessId: [],
@@ -520,103 +633,122 @@
                         // Add pending personal ID docs
                         if (uploadedPersonalIdCount < requiredPersonalIdCount) {
                             if (proposal.applicantType === 'Individual') {
-                                pendingByCategory.personalId.push('PAN Card of ' + (proposal.applicantName || proposal.customerName));
-                                pendingByCategory.personalId.push('Aadhar Card of ' + (proposal.applicantName || proposal.customerName));
+                                const pan1 = 'PAN Card of ' + (proposal.applicantName || proposal.customerName);
+                                const aadhar1 = 'Aadhar Card of ' + (proposal.applicantName || proposal.customerName);
+                                if (!classifiedDocs.includes(pan1)) pendingByCategory.personalId.push(pan1);
+                                if (!classifiedDocs.includes(aadhar1)) pendingByCategory.personalId.push(aadhar1);
                             }
                             if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                                 proposal.coApplicants.forEach((co, idx) => {
                                     if (co.type === 'Individual') {
-                                        pendingByCategory.personalId.push('PAN Card of ' + co.name);
-                                        pendingByCategory.personalId.push('Aadhar Card of ' + co.name);
+                                        const pan = 'PAN Card of ' + co.name;
+                                        const aadhar = 'Aadhar Card of ' + co.name;
+                                        if (!classifiedDocs.includes(pan)) pendingByCategory.personalId.push(pan);
+                                        if (!classifiedDocs.includes(aadhar)) pendingByCategory.personalId.push(aadhar);
                                     }
                                 });
                             }
                         }
 
                         // Business ID (only for non-individual)
-                        if (proposal.applicantType !== 'Individual' && getUploadedCountInCategory('businessId') === 0) {
-                            pendingByCategory.businessId.push('PAN Card of ' + (proposal.applicantName || 'Applicant Name') + ' (Non Individual)');
-                            pendingByCategory.businessId.push('GST Certificate of ' + (proposal.applicantName || 'Applicant Name'));
-                            pendingByCategory.businessId.push('Labour License of ' + (proposal.applicantName || 'Applicant Name'));
-                            pendingByCategory.businessId.push('UDYAM Certificate of ' + (proposal.applicantName || 'Applicant Name'));
+                        if (proposal.applicantType !== 'Individual') {
+                            const bizPan = 'PAN Card of ' + (proposal.applicantName || 'Applicant Name') + ' (Non Individual)';
+                            const gst = 'GST Certificate of ' + (proposal.applicantName || 'Applicant Name');
+                            const labour = 'Labour License of ' + (proposal.applicantName || 'Applicant Name');
+                            const udyam = 'UDYAM Certificate of ' + (proposal.applicantName || 'Applicant Name');
+                            if (!classifiedDocs.includes(bizPan)) pendingByCategory.businessId.push(bizPan);
+                            if (!classifiedDocs.includes(gst)) pendingByCategory.businessId.push(gst);
+                            if (!classifiedDocs.includes(labour)) pendingByCategory.businessId.push(labour);
+                            if (!classifiedDocs.includes(udyam)) pendingByCategory.businessId.push(udyam);
                         }
 
                         // Incorporation - Always show for Partnership to display required details
                         if (proposal.applicantType === 'Partnership') {
                             // Always show partnership deed requirements with details to extract
-                            pendingByCategory.incorporation.push('Partnership deed - Date of deed, Profit & Loss share of partners');
-                            pendingByCategory.incorporation.push('Reconstituted partnership deed - Date of deed, Profit & Loss share of partners');
-                        } else if (!isDocumentUploaded('incorporation')) {
-                            // For other types, only show if not uploaded
-                            if (proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') {
-                                pendingByCategory.incorporation.push('Certificate of Incorporation');
-                                pendingByCategory.incorporation.push('Memorandum of Association');
-                                pendingByCategory.incorporation.push('Articles of Association');
-                            }
+                            const partnerDeed = 'Partnership deed - Date of deed, Profit & Loss share of partners';
+                            const reconstitutedDeed = 'Reconstituted partnership deed - Date of deed, Profit & Loss share of partners';
+                            if (!classifiedDocs.includes(partnerDeed)) pendingByCategory.incorporation.push(partnerDeed);
+                            if (!classifiedDocs.includes(reconstitutedDeed)) pendingByCategory.incorporation.push(reconstitutedDeed);
+                        } else if (proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') {
+                            const cert = 'Certificate of Incorporation';
+                            const moa = 'Memorandum of Association';
+                            const aoa = 'Articles of Association';
+                            if (!classifiedDocs.includes(cert)) pendingByCategory.incorporation.push(cert);
+                            if (!classifiedDocs.includes(moa)) pendingByCategory.incorporation.push(moa);
+                            if (!classifiedDocs.includes(aoa)) pendingByCategory.incorporation.push(aoa);
                         }
 
                         // Credit Reports
-                        if (!isDocumentUploaded('creditReports')) {
-                            if (proposal.coApplicants && proposal.coApplicants.length > 0) {
-                                proposal.coApplicants.forEach((co, idx) => {
-                                    if (co.type === 'Individual') {
-                                        pendingByCategory.creditReports.push('Personal Credit Report of ' + co.name);
-                                    }
-                                });
-                            }
-                            if (proposal.applicantType !== 'Individual') {
-                                pendingByCategory.creditReports.push('Business Credit Report of ' + proposal.applicantName);
-                            }
+                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                            proposal.coApplicants.forEach((co, idx) => {
+                                if (co.type === 'Individual') {
+                                    const creditReport = 'Personal Credit Report of ' + co.name;
+                                    if (!classifiedDocs.includes(creditReport)) pendingByCategory.creditReports.push(creditReport);
+                                }
+                            });
+                        }
+                        if (proposal.applicantType !== 'Individual') {
+                            const bizCreditReport = 'Business Credit Report of ' + proposal.applicantName;
+                            if (!classifiedDocs.includes(bizCreditReport)) pendingByCategory.creditReports.push(bizCreditReport);
                         }
 
                         // Financials
-                        if (!isDocumentUploaded('financials')) {
-                            pendingByCategory.financials.push('ITR of Current Year of ' + proposal.applicantName);
-                            pendingByCategory.financials.push('ITR of Previous Year of ' + proposal.applicantName);
-                            pendingByCategory.financials.push('ITR of Preceding previous year of ' + proposal.applicantName);
-                            if (proposal.coApplicants && proposal.coApplicants.length > 0) {
-                                proposal.coApplicants.forEach((co, idx) => {
-                                    if (co.type === 'Individual') {
-                                        pendingByCategory.financials.push('ITR of Current Year of ' + (co.name || 'CoApplicant ' + (idx + 1)));
-                                        pendingByCategory.financials.push('ITR of Previous Year of ' + (co.name || 'coApplicant' + (idx + 1) + ' name'));
-                                        pendingByCategory.financials.push('ITR of Preceding previous year of ' + (co.name || 'coApplicant' + (idx + 1) + ' name'));
-                                    }
-                                });
-                            }
+                        const itrCurrent = 'ITR of Current Year of ' + proposal.applicantName;
+                        const itrPrevious = 'ITR of Previous Year of ' + proposal.applicantName;
+                        const itrPreceding = 'ITR of Preceding previous year of ' + proposal.applicantName;
+                        if (!classifiedDocs.includes(itrCurrent)) pendingByCategory.financials.push(itrCurrent);
+                        if (!classifiedDocs.includes(itrPrevious)) pendingByCategory.financials.push(itrPrevious);
+                        if (!classifiedDocs.includes(itrPreceding)) pendingByCategory.financials.push(itrPreceding);
+                        
+                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                            proposal.coApplicants.forEach((co, idx) => {
+                                if (co.type === 'Individual') {
+                                    const coItrCurrent = 'ITR of Current Year of ' + (co.name || 'CoApplicant ' + (idx + 1));
+                                    const coItrPrevious = 'ITR of Previous Year of ' + (co.name || 'coApplicant' + (idx + 1) + ' name');
+                                    const coItrPreceding = 'ITR of Preceding previous year of ' + (co.name || 'coApplicant' + (idx + 1) + ' name');
+                                    if (!classifiedDocs.includes(coItrCurrent)) pendingByCategory.financials.push(coItrCurrent);
+                                    if (!classifiedDocs.includes(coItrPrevious)) pendingByCategory.financials.push(coItrPrevious);
+                                    if (!classifiedDocs.includes(coItrPreceding)) pendingByCategory.financials.push(coItrPreceding);
+                                }
+                            });
                         }
 
                         // Banking
-                        if (!isDocumentUploaded('banking')) {
-                            pendingByCategory.banking.push('Bank Statement of ' + proposal.applicantName);
-                            pendingByCategory.banking.push('Overdraft Bank Statement of ' + proposal.applicantName);
-                            if (proposal.coApplicants && proposal.coApplicants.length > 0) {
-                                proposal.coApplicants.forEach((co, idx) => {
-                                    if (co.type === 'Individual') {
-                                        pendingByCategory.banking.push('Bank Statement of ' + (co.name || 'Coapplicant Name' + (idx + 1)));
-                                    }
-                                });
-                            }
+                        const bankStmt = 'Bank Statement of ' + proposal.applicantName;
+                        const odStmt = 'Overdraft Bank Statement of ' + proposal.applicantName;
+                        if (!classifiedDocs.includes(bankStmt)) pendingByCategory.banking.push(bankStmt);
+                        if (!classifiedDocs.includes(odStmt)) pendingByCategory.banking.push(odStmt);
+                        
+                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                            proposal.coApplicants.forEach((co, idx) => {
+                                if (co.type === 'Individual') {
+                                    const coStmt = 'Bank Statement of ' + (co.name || 'Coapplicant Name' + (idx + 1));
+                                    if (!classifiedDocs.includes(coStmt)) pendingByCategory.banking.push(coStmt);
+                                }
+                            });
                         }
 
                         // Turnover
-                        if (!isDocumentUploaded('turnover')) {
-                            pendingByCategory.turnover.push('GST 3B returns for last 12 months');
-                            pendingByCategory.turnover.push('GST 1 returns for last 12 months');
-                        }
+                        const gst3b = 'GST 3B returns for last 12 months';
+                        const gst1 = 'GST 1 returns for last 12 months';
+                        if (!classifiedDocs.includes(gst3b)) pendingByCategory.turnover.push(gst3b);
+                        if (!classifiedDocs.includes(gst1)) pendingByCategory.turnover.push(gst1);
 
                         // Debt Profile
-                        if (!isDocumentUploaded('debtProfile')) {
-                            pendingByCategory.debtProfile.push('All Existing Loan Details');
-                        }
+                        const debtDoc = 'All Existing Loan Details';
+                        if (!classifiedDocs.includes(debtDoc)) pendingByCategory.debtProfile.push(debtDoc);
 
                         // Collateral
-                        if (!isDocumentUploaded('collateral')) {
-                            pendingByCategory.collateral.push('Title Documents');
-                            pendingByCategory.collateral.push('Tax paid Receipts');
-                            pendingByCategory.collateral.push('Approved Sanction Plan');
-                            pendingByCategory.collateral.push('Encumberance Certificate');
-                            pendingByCategory.collateral.push('Title Documents - Unregistered');
-                        }
+                        const titleDocs = 'Title Documents';
+                        const taxReceipts = 'Tax paid Receipts';
+                        const sanctionPlan = 'Approved Sanction Plan';
+                        const encumbCert = 'Encumberance Certificate';
+                        const titleUnreg = 'Title Documents - Unregistered';
+                        if (!classifiedDocs.includes(titleDocs)) pendingByCategory.collateral.push(titleDocs);
+                        if (!classifiedDocs.includes(taxReceipts)) pendingByCategory.collateral.push(taxReceipts);
+                        if (!classifiedDocs.includes(sanctionPlan)) pendingByCategory.collateral.push(sanctionPlan);
+                        if (!classifiedDocs.includes(encumbCert)) pendingByCategory.collateral.push(encumbCert);
+                        if (!classifiedDocs.includes(titleUnreg)) pendingByCategory.collateral.push(titleUnreg);
 
                         // Calculate all pending documents
                         let allPending = [];
@@ -751,8 +883,8 @@
                             
                             <!-- Show extracted details from uploaded partnership deeds -->
                             <% 
-                            const incorporationDocs = uploadedFiles.filter(f => f.category === 'incorporation');
-                            if (incorporationDocs.length > 0 && proposal.applicantType === 'Partnership') { %>
+                            const incorporationDocsForDisplay = uploadedFiles.filter(f => f.category === 'incorporation');
+                            if (incorporationDocsForDisplay.length > 0 && proposal.applicantType === 'Partnership') { %>
                                 <div style="margin-top: 20px; padding: 15px; background: #e8f5e9; border-radius: 8px; border-left: 4px solid #4caf50;">
                                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                                         <h4 style="margin: 0; color: #2e7d32;">📄 Extracted Partnership Information</h4>
@@ -761,8 +893,8 @@
                                         </button>
                                     </div>
                                     
-                                    <% incorporationDocs.forEach(doc => { %>
-                                        <div style="margin-bottom: 20px; padding: 15px; background: white; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                                    <% incorporationDocsForDisplay.forEach(doc => { %>
+                                        <div style="margin-bottom: 20px; padding: 15px; background: white; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);";>
                                             <strong style="color: #1976d2; font-size: 1.05em;">📋 <%= doc.originalName %></strong>
                                             
                                             <% if (doc.extractedDetails) { %>
@@ -1080,6 +1212,19 @@
         </div>
     </div>
 
+    <!-- Document Preview Popup (placed at body level for proper fixed positioning) -->
+    <div id="documentPreview" class="document-preview-popup" style="display: none;" 
+         onmouseenter="cancelHidePreview()" 
+         onmouseleave="hidePreview()">
+        <div class="preview-content">
+            <button class="preview-close" onclick="hidePreview()">✕</button>
+            <div id="previewLoader" class="preview-loader">Loading preview...</div>
+            <iframe id="previewFrame" style="display: none;"></iframe>
+            <img id="previewImage" style="display: none;" alt="Document preview">
+            <div id="previewText" style="display: none;"></div>
+        </div>
+    </div>
+
     <script>
         const proposalId = '<%= proposal.id %>';
         const bulkFileInput = document.getElementById('bulkDocuments');
@@ -1152,27 +1297,43 @@
             }
             formData.append('proposalId', proposalId);
             
+            // Show progress with better messaging
             uploadProgress.style.display = 'block';
+            const progressText = uploadProgress.querySelector('.progress-text');
+            progressText.textContent = `Uploading ${files.length} file(s)... This may take a few minutes for PDF processing.`;
+            
+            // Disable submit button to prevent double submission
+            const submitBtn = bulkUploadForm.querySelector('button[type="submit"]');
+            submitBtn.disabled = true;
+            submitBtn.style.opacity = '0.5';
             
             try {
+                console.log('Starting upload...');
                 const response = await fetch(`/stage2/${proposalId}/upload`, {
                     method: 'POST',
                     body: formData
                 });
                 
+                console.log('Response received:', response.status);
                 const result = await response.json();
+                console.log('Result:', result);
                 
                 if (result.success) {
                     uploadProgress.style.display = 'none';
-                    alert('Documents uploaded successfully!');
+                    alert('Documents uploaded and processed successfully!');
                     window.location.reload();
                 } else {
                     uploadProgress.style.display = 'none';
+                    submitBtn.disabled = false;
+                    submitBtn.style.opacity = '1';
                     alert('Upload failed: ' + result.error);
                 }
             } catch (error) {
+                console.error('Upload error:', error);
                 uploadProgress.style.display = 'none';
-                alert('Upload error: ' + error.message);
+                submitBtn.disabled = false;
+                submitBtn.style.opacity = '1';
+                alert('Upload error: ' + error.message + '. Please try again or check your network connection.');
             }
         });
 
@@ -1517,21 +1678,15 @@
                 console.log('Reprocess result:', result);
                 
                 if (result.success) {
-                    // Show extraction details in a popup window
+                    alert(`Successfully extracted data from ${result.processedCount} document(s)! Page will reload to show the results.`);
+                    
+                    // Log extraction details to console
                     if (result.extractionResults && result.extractionResults.length > 0) {
-                        console.log('Showing extraction details...');
-                        showExtractionDetails(result.extractionResults);
-                        
-                        // Give user time to view the modal before reloading
-                        setTimeout(() => {
-                            if (confirm('Close extraction details and reload page?')) {
-                                window.location.reload();
-                            }
-                        }, 1000);
-                    } else {
-                        alert(`Successfully reprocessed ${result.processedCount} document(s)!`);
-                        window.location.reload();
+                        console.log('Extraction Results:', result.extractionResults);
                     }
+                    
+                    // Reload page immediately to show updated data
+                    window.location.reload();
                 } else {
                     alert('Reprocess failed: ' + result.error);
                 }
@@ -1666,7 +1821,7 @@
         // Document preview functions
         let hideTimeout = null;
         
-        function showPreview(filename, originalName, proposalId, event) {
+        function showPreview(filename, originalName, proposalId, buttonElement) {
             // Cancel any pending hide
             if (hideTimeout) {
                 clearTimeout(hideTimeout);
@@ -1685,45 +1840,45 @@
             image.style.display = 'none';
             text.style.display = 'none';
             
-            // Show preview popup first
-            preview.style.display = 'block';
-            
-            // Position preview near the button
-            const button = event ? event.target : null;
-            if (button) {
-                const rect = button.getBoundingClientRect();
+            // Get button position using getBoundingClientRect (gives viewport-relative coords)
+            if (buttonElement) {
+                const rect = buttonElement.getBoundingClientRect();
                 const previewWidth = 600;
                 const previewHeight = 500;
+                const viewportWidth = window.innerWidth;
+                const viewportHeight = window.innerHeight;
                 
+                // Calculate position - place to the left of button if space, else center
+                let leftPos = rect.left - previewWidth - 30;
+                // Align top of preview with button position
+                let topPos = rect.top;
+                
+                // If doesn't fit on left, center horizontally
+                if (leftPos < 20) {
+                    leftPos = (viewportWidth - previewWidth) / 2;
+                    if (leftPos < 20) leftPos = 20;
+                }
+                
+                // Ensure preview stays within viewport vertically
+                if (topPos + previewHeight > viewportHeight - 20) {
+                    topPos = viewportHeight - previewHeight - 20;
+                }
+                if (topPos < 20) {
+                    topPos = 20;
+                }
+                
+                // Apply position with fixed positioning
                 preview.style.position = 'fixed';
-                
-                // Try to place on the right side of button
-                let leftPos = rect.right + 5;
-                let topPos = rect.top - 10;
-                
-                // Check if preview goes off screen to the right
-                if (leftPos + previewWidth > window.innerWidth - 10) {
-                    // Place on left side instead
-                    leftPos = rect.left - previewWidth - 5;
-                }
-                
-                // Make sure left position is not negative
-                if (leftPos < 10) {
-                    leftPos = 10;
-                }
-                
-                // Check if preview goes off screen at bottom
-                if (topPos + previewHeight > window.innerHeight - 10) {
-                    topPos = window.innerHeight - previewHeight - 10;
-                }
-                
-                // Make sure top position is not negative
-                if (topPos < 10) {
-                    topPos = 10;
-                }
-                
                 preview.style.left = leftPos + 'px';
                 preview.style.top = topPos + 'px';
+                preview.style.display = 'block';
+            } else {
+                // Fallback: center in viewport
+                preview.style.position = 'fixed';
+                preview.style.left = '50%';
+                preview.style.top = '50%';
+                preview.style.transform = 'translate(-50%, -50%)';
+                preview.style.display = 'block';
             }
             
             // Determine file type from original name
@@ -1732,7 +1887,8 @@
             
             // Load appropriate preview based on file type
             if (ext === 'pdf') {
-                iframe.src = fileUrl;
+                // Add PDF viewer parameters to show single page without sidebar
+                iframe.src = fileUrl + '#view=FitH&toolbar=0&navpanes=0&scrollbar=0';
                 iframe.onload = function() {
                     loader.style.display = 'none';
                     iframe.style.display = 'block';
@@ -1770,9 +1926,96 @@
             const image = document.getElementById('previewImage');
             
             preview.style.display = 'none';
+            preview.style.transform = 'none';
             iframe.src = '';
             image.src = '';
         }
+
+        // Classification dropdown functions
+        const allDocTypesByCategory = <%- JSON.stringify(allDocTypesByCategory) %>;
+        const pendingDocsByCategory = <%- JSON.stringify(pendingByCategory) %>;
+        const existingClassifications = {};
+        <% uploadedFiles.forEach(file => { %>
+            existingClassifications['<%= file.id %>'] = '<%= file.classification || '' %>';
+        <% }); %>
+        
+        // Populate classification dropdowns on page load
+        function populateClassificationDropdowns() {
+            const dropdowns = document.querySelectorAll('.classification-select');
+            dropdowns.forEach(select => {
+                const category = select.getAttribute('data-category');
+                const fileId = select.getAttribute('data-file-id');
+                const currentValue = existingClassifications[fileId] || '';
+                
+                // Clear existing options except the first one
+                while (select.options.length > 1) {
+                    select.remove(1);
+                }
+                
+                // Get ALL document types for this category (not just pending)
+                const docs = allDocTypesByCategory[category] || [];
+                
+                // Also include the current classification even if not in the list
+                if (currentValue && !docs.includes(currentValue)) {
+                    const option = document.createElement('option');
+                    option.value = currentValue;
+                    option.textContent = currentValue;
+                    option.selected = true;
+                    select.appendChild(option);
+                }
+                
+                docs.forEach(doc => {
+                    const option = document.createElement('option');
+                    option.value = doc;
+                    option.textContent = doc;
+                    // Mark if this is pending (not yet classified by any document)
+                    if (pendingDocsByCategory[category] && pendingDocsByCategory[category].includes(doc)) {
+                        option.textContent = '⚠️ ' + doc; // Indicate it's still pending
+                    } else {
+                        option.textContent = '✓ ' + doc; // Indicate it's already assigned
+                    }
+                    if (doc === currentValue) {
+                        option.selected = true;
+                    }
+                    select.appendChild(option);
+                });
+                
+                // Add has-value class if there's a current value
+                if (currentValue) {
+                    select.classList.add('has-value');
+                }
+            });
+        }
+        
+        async function updateClassification(fileId, classification) {
+            try {
+                const response = await fetch(`/stage2/${proposalId}/classify`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ fileId, classification })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Update the local tracking
+                    existingClassifications[fileId] = classification;
+                    // Reload the page to update pending documents list
+                    location.reload();
+                } else {
+                    alert('Error updating classification: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error updating classification: ' + error.message);
+            }
+        }
+        
+        // Initialize dropdowns when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            populateClassificationDropdowns();
+        });
     </script>
 </body>
 </html>

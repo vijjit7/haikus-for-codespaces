@@ -1,0 +1,17 @@
+# PDF Extraction Service Requirements
+# Python 3.8+ required
+
+# Web Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# PDF Extraction Libraries
+# Primary: PyMuPDF (fitz) - Best quality text extraction
+PyMuPDF>=1.23.0
+
+# Secondary: pdfplumber - Fallback extraction
+pdfplumber>=0.10.0
+
+# Supporting libraries
+python-multipart>=0.0.6  # For file uploads in FastAPI
+Pillow>=10.0.0           # Image processing support
