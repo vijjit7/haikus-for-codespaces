@@ -188,9 +188,14 @@
                         </div>
                     </div>
                     <div id="bulkFilePreview" class="file-preview"></div>
-                    <button type="submit" class="btn btn-primary">
-                        <span class="upload-icon">⬆️</span> Upload Files
-                    </button>
+                    <div class="upload-buttons">
+                        <button type="submit" class="btn btn-primary">
+                            <span class="upload-icon">⬆️</span> Upload Files
+                        </button>
+                        <button type="button" class="btn btn-secondary" id="clearAllFilesBtn" onclick="clearAllFiles()" style="display: none;">
+                            🗑️ Clear All
+                        </button>
+                    </div>
                 </form>
                 <div id="uploadProgress" class="upload-progress" style="display: none;">
                     <div class="progress-bar">
@@ -383,6 +388,7 @@
                     <!-- Sub-Tab Navigation for Uploaded -->
                     <div class="tab-navigation">
                         <button class="tab-btn active" onclick="showTab('all')">ALL</button>
+                        <button class="tab-btn" onclick="showTab('unclassified')">Unclassified</button>
                         <button class="tab-btn" onclick="showTab('personalId')">Personal ID</button>
                         <button class="tab-btn" onclick="showTab('businessId')">Business ID</button>
                         <button class="tab-btn" onclick="showTab('incorporation')">Incorporation</button>
@@ -405,7 +411,7 @@
                             <span id="selectedCount">0</span> document(s) selected
                             <button class="btn btn-danger" onclick="deleteSelectedDocuments()">🗑️ Delete Selected</button>
                         </div>
-                        <div class="files-table-wrapper">
+                        <div class="files-table-wrapper" id="filesTableWrapper">
                             <table class="files-table">
                                 <thead>
                                     <tr>
@@ -422,7 +428,7 @@
                                 </thead>
                                 <tbody id="filesTableBody">
                                     <% uploadedFiles.forEach(file => { %>
-                                        <tr data-category="<%= file.category || 'all' %>" data-file-id="<%= file.id %>">
+                                        <tr data-category="<%= file.category || 'all' %>" data-file-id="<%= file.id %>" data-classification="<%= file.classification || '' %>">
                                             <td><input type="checkbox" class="doc-checkbox" value="<%= file.id %>" onchange="updateBulkActions()"></td>
                                             <td>
                                                 <span class="badge"><%= file.category || 'Uncategorized' %></span>
@@ -436,7 +442,7 @@
                                             <td><%= file.size %></td>
                                             <td><%= file.pages ? file.pages : 'N/A' %></td>
                                             <td><%= new Date(file.uploadedAt).toLocaleString() %></td>
-                                            <td><span class="badge badge-success">✓ Uploaded</span></td>
+                                            <td title="Uploaded"><span class="badge badge-success">✓</span></td>
                                             <td class="actions-cell">
                                                 <button class="btn-view" 
                                                     onmouseenter="showPreview('<%= file.filename %>', '<%= file.originalName %>', '<%= proposalId %>', this)" 
@@ -1231,22 +1237,76 @@
         const bulkFilePreview = document.getElementById('bulkFilePreview');
         const bulkUploadForm = document.getElementById('bulkUploadForm');
         const uploadProgress = document.getElementById('uploadProgress');
+        
+        // Track selected files separately (since FileList is read-only)
+        let selectedFiles = [];
 
-        // File input preview
-        bulkFileInput.addEventListener('change', function(e) {
-            const files = Array.from(e.target.files);
+        // Function to render file preview with remove buttons
+        function renderFilePreview() {
             bulkFilePreview.innerHTML = '';
             
-            files.forEach(file => {
+            selectedFiles.forEach((file, index) => {
                 const fileItem = document.createElement('div');
                 fileItem.className = 'file-preview-item';
                 fileItem.innerHTML = `
                     <span class="file-icon">${file.type.includes('pdf') ? '📄' : file.type.includes('image') ? '🖼️' : file.name.endsWith('.zip') ? '📦' : '📝'}</span>
                     <span class="file-name">${file.name}</span>
                     <span class="file-size">${(file.size / 1024).toFixed(2)} KB</span>
+                    <button type="button" class="file-remove-btn" onclick="removeFile(${index})" title="Remove file">✕</button>
                 `;
                 bulkFilePreview.appendChild(fileItem);
             });
+            
+            // Update file count display
+            updateFileCount();
+        }
+        
+        // Function to remove a file from the selection
+        function removeFile(index) {
+            selectedFiles.splice(index, 1);
+            renderFilePreview();
+        }
+        
+        // Function to update file count
+        function updateFileCount() {
+            let countDisplay = document.getElementById('selectedFileCount');
+            if (!countDisplay) {
+                countDisplay = document.createElement('div');
+                countDisplay.id = 'selectedFileCount';
+                countDisplay.className = 'selected-file-count';
+                bulkFilePreview.parentNode.insertBefore(countDisplay, bulkFilePreview);
+            }
+            
+            const clearAllBtn = document.getElementById('clearAllFilesBtn');
+            
+            if (selectedFiles.length > 0) {
+                countDisplay.innerHTML = `<strong>${selectedFiles.length}</strong> file(s) selected`;
+                countDisplay.style.display = 'block';
+                if (clearAllBtn) clearAllBtn.style.display = 'inline-flex';
+            } else {
+                countDisplay.style.display = 'none';
+                if (clearAllBtn) clearAllBtn.style.display = 'none';
+            }
+        }
+        
+        // Function to clear all selected files
+        function clearAllFiles() {
+            selectedFiles = [];
+            bulkFileInput.value = ''; // Clear the file input
+            renderFilePreview();
+        }
+
+        // File input preview
+        bulkFileInput.addEventListener('change', function(e) {
+            const files = Array.from(e.target.files);
+            // Add new files to existing selection (avoid duplicates)
+            files.forEach(file => {
+                const exists = selectedFiles.some(f => f.name === file.name && f.size === file.size);
+                if (!exists) {
+                    selectedFiles.push(file);
+                }
+            });
+            renderFilePreview();
         });
 
         // Drag and drop
@@ -1275,9 +1335,15 @@
 
         fileInputWrapper.addEventListener('drop', function(e) {
             const dt = e.dataTransfer;
-            const files = dt.files;
-            bulkFileInput.files = files;
-            bulkFileInput.dispatchEvent(new Event('change'));
+            const files = Array.from(dt.files);
+            // Add dropped files to selection (avoid duplicates)
+            files.forEach(file => {
+                const exists = selectedFiles.some(f => f.name === file.name && f.size === file.size);
+                if (!exists) {
+                    selectedFiles.push(file);
+                }
+            });
+            renderFilePreview();
         });
 
         // Form submission
@@ -1285,14 +1351,13 @@
             e.preventDefault();
             
             const formData = new FormData();
-            const files = bulkFileInput.files;
             
-            if (files.length === 0) {
+            if (selectedFiles.length === 0) {
                 alert('Please select at least one file');
                 return;
             }
             
-            for (let file of files) {
+            for (let file of selectedFiles) {
                 formData.append('documents', file);
             }
             formData.append('proposalId', proposalId);
@@ -1300,7 +1365,7 @@
             // Show progress with better messaging
             uploadProgress.style.display = 'block';
             const progressText = uploadProgress.querySelector('.progress-text');
-            progressText.textContent = `Uploading ${files.length} file(s)... This may take a few minutes for PDF processing.`;
+            progressText.textContent = `Uploading ${selectedFiles.length} file(s)... This may take a few minutes for PDF processing.`;
             
             // Disable submit button to prevent double submission
             const submitBtn = bulkUploadForm.querySelector('button[type="submit"]');
@@ -1349,6 +1414,21 @@
             // Filter rows by category and uncheck hidden rows
             if (category === 'all') {
                 allRows.forEach(row => row.style.display = '');
+            } else if (category === 'unclassified') {
+                // Show only rows where classification is empty
+                allRows.forEach(row => {
+                    const rowClassification = row.getAttribute('data-classification');
+                    if (!rowClassification || rowClassification.trim() === '') {
+                        row.style.display = '';
+                    } else {
+                        row.style.display = 'none';
+                        // Uncheck checkboxes in hidden rows
+                        const checkbox = row.querySelector('.doc-checkbox');
+                        if (checkbox) {
+                            checkbox.checked = false;
+                        }
+                    }
+                });
             } else {
                 allRows.forEach(row => {
                     const rowCategory = row.getAttribute('data-category');
@@ -2002,6 +2082,16 @@
                 if (result.success) {
                     // Update the local tracking
                     existingClassifications[fileId] = classification;
+                    // Update the data-classification attribute on the row
+                    const row = document.querySelector(`tr[data-file-id="${fileId}"]`);
+                    if (row) {
+                        row.setAttribute('data-classification', classification);
+                    }
+                    // Save scroll position before reload
+                    const tableWrapper = document.getElementById('filesTableWrapper');
+                    if (tableWrapper) {
+                        sessionStorage.setItem('tableScrollLeft', tableWrapper.scrollLeft);
+                    }
                     // Reload the page to update pending documents list
                     location.reload();
                 } else {
@@ -2015,7 +2105,99 @@
         // Initialize dropdowns when page loads
         document.addEventListener('DOMContentLoaded', function() {
             populateClassificationDropdowns();
+            initTableAutoScroll();
+            restoreTableScrollPosition();
         });
+        
+        // Restore table scroll position after page reload
+        function restoreTableScrollPosition() {
+            const savedScrollLeft = sessionStorage.getItem('tableScrollLeft');
+            if (savedScrollLeft) {
+                const tableWrapper = document.getElementById('filesTableWrapper');
+                if (tableWrapper) {
+                    // Use setTimeout to ensure the table is fully rendered
+                    setTimeout(() => {
+                        tableWrapper.scrollLeft = parseInt(savedScrollLeft);
+                    }, 100);
+                }
+                // Clear the saved position
+                sessionStorage.removeItem('tableScrollLeft');
+            }
+        }
+        
+        // Auto-scroll table when mouse is near edges
+        function initTableAutoScroll() {
+            const tableWrapper = document.getElementById('filesTableWrapper');
+            if (!tableWrapper) return;
+            
+            let scrollInterval = null;
+            const scrollSpeed = 8; // pixels per frame
+            const edgeThreshold = 80; // pixels from edge to trigger scroll
+            
+            tableWrapper.addEventListener('mousemove', function(e) {
+                const rect = tableWrapper.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const wrapperWidth = rect.width;
+                const maxScrollLeft = tableWrapper.scrollWidth - tableWrapper.clientWidth;
+                
+                // Clear any existing scroll interval
+                if (scrollInterval) {
+                    clearInterval(scrollInterval);
+                    scrollInterval = null;
+                }
+                
+                // Check if mouse is near right edge
+                if (mouseX > wrapperWidth - edgeThreshold && tableWrapper.scrollLeft < maxScrollLeft) {
+                    const intensity = 1 - ((wrapperWidth - mouseX) / edgeThreshold);
+                    scrollInterval = setInterval(() => {
+                        tableWrapper.scrollLeft += scrollSpeed * intensity;
+                        if (tableWrapper.scrollLeft >= maxScrollLeft) {
+                            clearInterval(scrollInterval);
+                            scrollInterval = null;
+                        }
+                    }, 16);
+                }
+                // Check if mouse is near left edge
+                else if (mouseX < edgeThreshold && tableWrapper.scrollLeft > 0) {
+                    const intensity = 1 - (mouseX / edgeThreshold);
+                    scrollInterval = setInterval(() => {
+                        tableWrapper.scrollLeft -= scrollSpeed * intensity;
+                        if (tableWrapper.scrollLeft <= 0) {
+                            clearInterval(scrollInterval);
+                            scrollInterval = null;
+                        }
+                    }, 16);
+                }
+            });
+            
+            // When mouse leaves the wrapper, scroll to extreme right if leaving from right side
+            tableWrapper.addEventListener('mouseleave', function(e) {
+                if (scrollInterval) {
+                    clearInterval(scrollInterval);
+                    scrollInterval = null;
+                }
+                
+                const rect = tableWrapper.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const wrapperWidth = rect.width;
+                const maxScrollLeft = tableWrapper.scrollWidth - tableWrapper.clientWidth;
+                
+                // If mouse left from the right side, scroll to extreme right
+                if (mouseX >= wrapperWidth - 20) {
+                    tableWrapper.scrollTo({
+                        left: maxScrollLeft,
+                        behavior: 'smooth'
+                    });
+                }
+                // If mouse left from the left side, scroll to extreme left
+                else if (mouseX <= 20) {
+                    tableWrapper.scrollTo({
+                        left: 0,
+                        behavior: 'smooth'
+                    });
+                }
+            });
+        }
     </script>
 </body>
 </html>

@@ -257,6 +257,303 @@ function autoCategorizeDocument(filename, extractedText = '') {
   return '';
 }
 
+// Auto-classify document to specific document type within a category
+async function autoClassifyDocument(filename, extractedText, category, proposal) {
+  const lowerName = filename.toLowerCase();
+  const lowerText = extractedText ? extractedText.toLowerCase() : '';
+  
+  // Build list of available document types for this category based on proposal
+  const docTypes = getDocumentTypesForCategory(category, proposal);
+  
+  if (docTypes.length === 0) {
+    return ''; // No specific types for this category
+  }
+  
+  // Try rule-based classification first (faster)
+  const ruleBasedClass = ruleBasedClassification(lowerName, lowerText, category, docTypes);
+  if (ruleBasedClass) {
+    console.log(`📋 Rule-based classification: ${ruleBasedClass}`);
+    return ruleBasedClass;
+  }
+  
+  // If rule-based fails and we have extracted text, try AI classification
+  if (extractedText && extractedText.length > 50) {
+    try {
+      const aiClass = await aiClassifyDocument(extractedText, docTypes, filename);
+      if (aiClass) {
+        console.log(`🤖 AI classification: ${aiClass}`);
+        return aiClass;
+      }
+    } catch (err) {
+      console.error('AI classification error:', err.message);
+    }
+  }
+  
+  return '';
+}
+
+// Get all document types for a category based on proposal data
+function getDocumentTypesForCategory(category, proposal) {
+  const docTypes = [];
+  const applicantName = proposal.applicantName || proposal.customerName || 'Applicant';
+  
+  switch (category) {
+    case 'personalId':
+      if (proposal.applicantType === 'Individual') {
+        docTypes.push(`PAN Card of ${applicantName}`);
+        docTypes.push(`Aadhar Card of ${applicantName}`);
+      }
+      if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+        proposal.coApplicants.forEach(co => {
+          if (co.type === 'Individual' && co.name) {
+            docTypes.push(`PAN Card of ${co.name}`);
+            docTypes.push(`Aadhar Card of ${co.name}`);
+          }
+        });
+      }
+      break;
+      
+    case 'businessId':
+      if (proposal.applicantType !== 'Individual') {
+        docTypes.push(`PAN Card of ${applicantName} (Non Individual)`);
+        docTypes.push(`GST Certificate of ${applicantName}`);
+        docTypes.push(`Labour License of ${applicantName}`);
+        docTypes.push(`UDYAM Certificate of ${applicantName}`);
+      }
+      break;
+      
+    case 'incorporation':
+      if (proposal.applicantType === 'Partnership') {
+        docTypes.push('Partnership deed - Date of deed, Profit & Loss share of partners');
+        docTypes.push('Reconstituted partnership deed - Date of deed, Profit & Loss share of partners');
+      } else if (proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') {
+        docTypes.push('Certificate of Incorporation');
+        docTypes.push('Memorandum of Association');
+        docTypes.push('Articles of Association');
+      }
+      break;
+      
+    case 'creditReports':
+      if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+        proposal.coApplicants.forEach(co => {
+          if (co.type === 'Individual' && co.name) {
+            docTypes.push(`Personal Credit Report of ${co.name}`);
+          }
+        });
+      }
+      if (proposal.applicantType !== 'Individual') {
+        docTypes.push(`Business Credit Report of ${applicantName}`);
+      }
+      break;
+      
+    case 'financials':
+      docTypes.push(`ITR of Current Year of ${applicantName}`);
+      docTypes.push(`ITR of Previous Year of ${applicantName}`);
+      docTypes.push(`ITR of Preceding previous year of ${applicantName}`);
+      if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+        proposal.coApplicants.forEach(co => {
+          if (co.type === 'Individual' && co.name) {
+            docTypes.push(`ITR of Current Year of ${co.name}`);
+            docTypes.push(`ITR of Previous Year of ${co.name}`);
+            docTypes.push(`ITR of Preceding previous year of ${co.name}`);
+          }
+        });
+      }
+      break;
+      
+    case 'banking':
+      docTypes.push(`Bank Statement of ${applicantName}`);
+      docTypes.push(`Overdraft Bank Statement of ${applicantName}`);
+      if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+        proposal.coApplicants.forEach(co => {
+          if (co.type === 'Individual' && co.name) {
+            docTypes.push(`Bank Statement of ${co.name}`);
+          }
+        });
+      }
+      break;
+      
+    case 'turnover':
+      docTypes.push('GST 3B returns for last 12 months');
+      docTypes.push('GST 1 returns for last 12 months');
+      break;
+      
+    case 'debtProfile':
+      docTypes.push('All Existing Loan Details');
+      break;
+      
+    case 'collateral':
+      docTypes.push('Title Documents');
+      docTypes.push('Tax paid Receipts');
+      docTypes.push('Approved Sanction Plan');
+      docTypes.push('Encumberance Certificate');
+      docTypes.push('Title Documents - Unregistered');
+      break;
+  }
+  
+  return docTypes;
+}
+
+// Rule-based classification for quick matching
+function ruleBasedClassification(lowerName, lowerText, category, docTypes) {
+  switch (category) {
+    case 'personalId':
+      // Check for PAN Card
+      if (lowerName.includes('pan') || lowerText.includes('permanent account number') || lowerText.includes('income tax department')) {
+        // Try to match with a specific person's PAN
+        for (const docType of docTypes) {
+          if (docType.includes('PAN Card')) {
+            const personName = docType.replace('PAN Card of ', '').toLowerCase();
+            if (lowerName.includes(personName.split(' ')[0]) || lowerText.includes(personName)) {
+              return docType;
+            }
+          }
+        }
+        // Return first PAN card type if no specific match
+        return docTypes.find(d => d.includes('PAN Card')) || '';
+      }
+      // Check for Aadhar Card
+      if (lowerName.includes('aadhar') || lowerName.includes('aadhaar') || 
+          lowerText.includes('unique identification') || lowerText.includes('aadhaar')) {
+        for (const docType of docTypes) {
+          if (docType.includes('Aadhar Card')) {
+            const personName = docType.replace('Aadhar Card of ', '').toLowerCase();
+            if (lowerName.includes(personName.split(' ')[0]) || lowerText.includes(personName)) {
+              return docType;
+            }
+          }
+        }
+        return docTypes.find(d => d.includes('Aadhar Card')) || '';
+      }
+      break;
+      
+    case 'businessId':
+      if (lowerName.includes('pan') || lowerText.includes('permanent account number')) {
+        return docTypes.find(d => d.includes('PAN Card')) || '';
+      }
+      if (lowerName.includes('gst') || lowerText.includes('goods and services tax')) {
+        return docTypes.find(d => d.includes('GST Certificate')) || '';
+      }
+      if (lowerName.includes('labour') || lowerName.includes('labor')) {
+        return docTypes.find(d => d.includes('Labour License')) || '';
+      }
+      if (lowerName.includes('udyam') || lowerName.includes('msme')) {
+        return docTypes.find(d => d.includes('UDYAM')) || '';
+      }
+      break;
+      
+    case 'incorporation':
+      if (lowerName.includes('reconstitut') || lowerText.includes('reconstitution')) {
+        return docTypes.find(d => d.includes('Reconstituted')) || '';
+      }
+      if (lowerName.includes('partnership') || lowerText.includes('partnership deed')) {
+        return docTypes.find(d => d.includes('Partnership deed') && !d.includes('Reconstituted')) || '';
+      }
+      if (lowerName.includes('incorporation') || lowerName.includes('coi')) {
+        return 'Certificate of Incorporation';
+      }
+      if (lowerName.includes('moa') || lowerName.includes('memorandum')) {
+        return 'Memorandum of Association';
+      }
+      if (lowerName.includes('aoa') || lowerName.includes('articles')) {
+        return 'Articles of Association';
+      }
+      break;
+      
+    case 'turnover':
+      if (lowerName.includes('3b') || lowerName.includes('gstr3b') || lowerName.includes('gstr-3b')) {
+        return 'GST 3B returns for last 12 months';
+      }
+      if (lowerName.includes('gstr1') || lowerName.includes('gstr-1') || lowerName.includes('gst1')) {
+        return 'GST 1 returns for last 12 months';
+      }
+      break;
+      
+    case 'debtProfile':
+      return 'All Existing Loan Details';
+      
+    case 'collateral':
+      if (lowerName.includes('tax') && lowerName.includes('receipt')) {
+        return 'Tax paid Receipts';
+      }
+      if (lowerName.includes('sanction') || lowerName.includes('plan')) {
+        return 'Approved Sanction Plan';
+      }
+      if (lowerName.includes('encumbr') || lowerName.includes('ec')) {
+        return 'Encumberance Certificate';
+      }
+      if (lowerName.includes('unregist')) {
+        return 'Title Documents - Unregistered';
+      }
+      if (lowerName.includes('title') || lowerName.includes('deed')) {
+        return 'Title Documents';
+      }
+      break;
+  }
+  
+  return '';
+}
+
+// AI-based classification using OpenRouter
+async function aiClassifyDocument(extractedText, docTypes, filename) {
+  if (!process.env.OPENROUTER_API_KEY) {
+    return '';
+  }
+  
+  const prompt = `You are a document classifier for a loan application system.
+
+Based on the document content below, classify it into ONE of the following document types:
+${docTypes.map((d, i) => `${i + 1}. ${d}`).join('\n')}
+
+Document filename: ${filename}
+Document content (first 1500 characters):
+${extractedText.substring(0, 1500)}
+
+Respond with ONLY the exact document type from the list above that best matches this document. If you cannot determine the type, respond with "UNKNOWN".`;
+
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'HTTP-Referer': 'https://github.com/copilot',
+        'X-Title': 'Document Classifier'
+      },
+      body: JSON.stringify({
+        model: 'openai/gpt-4o',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 150,
+        temperature: 0.1
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    const result = data.choices[0]?.message?.content?.trim() || '';
+    
+    // Validate that the result is one of the expected types
+    if (result && result !== 'UNKNOWN' && docTypes.includes(result)) {
+      return result;
+    }
+    
+    // Try partial match
+    for (const docType of docTypes) {
+      if (result.toLowerCase().includes(docType.toLowerCase().substring(0, 20))) {
+        return docType;
+      }
+    }
+    
+    return '';
+  } catch (error) {
+    console.error('AI classification API error:', error.message);
+    return '';
+  }
+}
+
 // ============================================
 // 3-TIER PDF EXTRACTION SYSTEM
 // ============================================
@@ -1097,12 +1394,31 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
         console.log('Extracted details:', JSON.stringify(extractedDetails));
       }
       
+      // Auto-classify the document to a specific document type
+      let autoClassification = '';
+      if (fileDetail.category) {
+        try {
+          autoClassification = await autoClassifyDocument(
+            file.originalname, 
+            fullText, 
+            fileDetail.category, 
+            proposal
+          );
+          if (autoClassification) {
+            console.log(`📋 Auto-classified "${file.originalname}" as: ${autoClassification}`);
+          }
+        } catch (classErr) {
+          console.error('Auto-classification error:', classErr.message);
+        }
+      }
+      
       // Find and update the document in the proposal
       const docIndex = proposal.documents.findIndex(d => d.filename === fileDetail.filename);
       if (docIndex !== -1) {
         proposal.documents[docIndex].pages = pageCount;
         proposal.documents[docIndex].extractedText = extractedText;
         proposal.documents[docIndex].extractedDetails = extractedDetails;
+        proposal.documents[docIndex].classification = autoClassification;
         
         // Save the updated proposal
         updateProposal(proposalId, { documents: proposal.documents });
@@ -1759,6 +2075,183 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+// Reprocess banking documents to extract bank statement details
+app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    
+    const proposal = getProposalById(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ success: false, error: 'Proposal not found' });
+    }
+    
+    if (!proposal.documents || proposal.documents.length === 0) {
+      return res.status(400).json({ success: false, error: 'No documents found' });
+    }
+    
+    let processedCount = 0;
+    const proposalDir = path.join(UPLOADS_DIR, proposalId);
+    const extractionResults = [];
+    
+    // Process each banking document
+    for (let i = 0; i < proposal.documents.length; i++) {
+      const doc = proposal.documents[i];
+      
+      if (doc.category === 'banking') {
+        const filePath = path.join(proposalDir, doc.filename);
+        
+        if (fs.existsSync(filePath) && doc.originalName.toLowerCase().endsWith('.pdf')) {
+          try {
+            // Use table-aware extraction for bank statements
+            const pdfResult = await extractPDFWithTableDetection(filePath);
+            const fullText = pdfResult.text;
+            
+            console.log('\n========================================');
+            console.log('🏦 EXTRACTING BANK STATEMENT:', doc.originalName);
+            console.log('========================================');
+            console.log('Method:', pdfResult.method);
+            console.log('Text length:', fullText.length);
+            console.log('Tables found:', pdfResult.tables.length);
+            console.log('\n--- EXTRACTED TEXT START ---');
+            console.log(fullText.substring(0, 2000));
+            console.log('--- EXTRACTED TEXT END ---\n');
+            
+            // Try Document AI for bank statement extraction
+            const aiResult = await extractWithDocumentAI(fullText, 'bank-statement', pdfResult.tables || []);
+            let bankStatementDetails;
+            
+            if (aiResult.success && aiResult.data) {
+              console.log('✓ Document AI extraction successful for:', doc.originalName);
+              console.log('AI Extracted Data:', JSON.stringify(aiResult.data, null, 2));
+              
+              bankStatementDetails = {
+                bankName: aiResult.data.bankName || 'N/A',
+                accountHolder: aiResult.data.accountHolder || 'N/A',
+                accountNumber: aiResult.data.accountNumber || 'N/A',
+                periodFrom: aiResult.data.periodFrom || 'N/A',
+                periodTo: aiResult.data.periodTo || 'N/A',
+                period: (aiResult.data.periodFrom && aiResult.data.periodTo) 
+                  ? `${aiResult.data.periodFrom} to ${aiResult.data.periodTo}` 
+                  : 'N/A'
+              };
+            } else {
+              console.log('⚠ Document AI failed, using fallback for:', doc.originalName);
+              // Fallback pattern matching for bank statements
+              bankStatementDetails = extractBankStatementDetailsFallback(fullText);
+            }
+            
+            console.log('\n📋 FINAL EXTRACTED BANK DETAILS:');
+            console.log(JSON.stringify(bankStatementDetails, null, 2));
+            console.log('========================================\n');
+            
+            proposal.documents[i].extractedDetails = bankStatementDetails;
+            proposal.documents[i].pages = pdfResult.numPages;
+            
+            extractionResults.push({
+              fileName: doc.originalName,
+              ...bankStatementDetails
+            });
+            
+            processedCount++;
+          } catch (err) {
+            console.error('Error processing bank statement', doc.originalName, err);
+            extractionResults.push({
+              fileName: doc.originalName,
+              error: err.message
+            });
+          }
+        }
+      }
+    }
+    
+    if (processedCount > 0) {
+      updateProposal(proposalId, { documents: proposal.documents });
+    }
+    
+    res.json({ 
+      success: true, 
+      processedCount, 
+      message: `Extracted bank details from ${processedCount} statement(s)`,
+      extractionResults
+    });
+  } catch (error) {
+    console.error('Bank statement reprocess error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Fallback pattern matching for bank statement details
+function extractBankStatementDetailsFallback(text) {
+  const result = {
+    bankName: 'N/A',
+    accountHolder: 'N/A',
+    accountNumber: 'N/A',
+    periodFrom: 'N/A',
+    periodTo: 'N/A',
+    period: 'N/A'
+  };
+  
+  // Bank name patterns
+  const bankPatterns = [
+    /(?:HDFC|ICICI|SBI|STATE BANK|AXIS|KOTAK|PUNJAB NATIONAL|CANARA|BANK OF BARODA|INDIAN OVERSEAS|FEDERAL|BANDHAN|KARUR VYSYA|SOUTH INDIAN|KARNATAKA|UNION|CENTRAL|INDUSIND|YES|RBL|IDBI|DCB|CITY UNION|TMB|TAMILNAD MERCANTILE)\s*BANK/i,
+    /Bank\s+Name[:\s]+([A-Za-z\s]+(?:Bank|BANK))/i
+  ];
+  
+  for (const pattern of bankPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      result.bankName = match[0].trim();
+      break;
+    }
+  }
+  
+  // Account number patterns
+  const accountPatterns = [
+    /(?:Account\s*(?:No|Number|#)[:\s]*|A\/c\s*No[:\s]*|Acct\s*No[:\s]*)(\d{9,18})/i,
+    /(\d{9,18})/
+  ];
+  
+  for (const pattern of accountPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      result.accountNumber = match[1] || match[0];
+      break;
+    }
+  }
+  
+  // Account holder patterns
+  const holderPatterns = [
+    /(?:Account\s*Holder|Customer\s*Name|Name)[:\s]+([A-Z][A-Za-z\s]+)/i,
+    /(?:Mr\.|Mrs\.|Ms\.|M\/S)[.\s]+([A-Z][A-Za-z\s]+)/i
+  ];
+  
+  for (const pattern of holderPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      result.accountHolder = match[1].trim();
+      break;
+    }
+  }
+  
+  // Date period patterns
+  const periodPatterns = [
+    /(?:Statement\s*Period|Period)[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s*(?:to|[-–])\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+    /(?:From)[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s*(?:To)[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i
+  ];
+  
+  for (const pattern of periodPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      result.periodFrom = match[1];
+      result.periodTo = match[2];
+      result.period = `${match[1]} to ${match[2]}`;
+      break;
+    }
+  }
+  
+  return result;
+}
 
 app.post('/stage2/:proposalId/complete', (req, res) => {
   try {

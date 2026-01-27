@@ -748,6 +748,56 @@ header h1 {
     font-size: 0.9em;
 }
 
+.file-preview-item .file-remove-btn {
+    background: #e74c3c;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, transform 0.2s;
+    flex-shrink: 0;
+}
+
+.file-preview-item .file-remove-btn:hover {
+    background: #c0392b;
+    transform: scale(1.1);
+}
+
+.selected-file-count {
+    padding: 8px 12px;
+    background: #e8f4fd;
+    border-left: 3px solid #3498db;
+    margin-bottom: 10px;
+    border-radius: 4px;
+    color: #2980b9;
+    font-size: 0.95em;
+}
+
+/* Upload Buttons */
+.upload-buttons {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-top: 15px;
+}
+
+.upload-buttons .btn-secondary {
+    background: #95a5a6;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.upload-buttons .btn-secondary:hover {
+    background: #7f8c8d;
+}
+
 /* Upload Progress */
 .upload-progress {
     margin-top: 20px;
@@ -828,6 +878,8 @@ header h1 {
 
 .files-table-wrapper {
     overflow-x: auto;
+    scroll-behavior: smooth;
+    position: relative;
 }
 
 /* Bulk Actions Bar */
@@ -877,14 +929,23 @@ header h1 {
 .files-table td {
     padding: 12px;
     border-bottom: 1px solid #e0e0e0;
+    vertical-align: middle;
 }
 
-.files-table .actions-cell {
+.files-table td.actions-cell {
     white-space: nowrap;
     min-width: 280px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    vertical-align: bottom;
+}
+
+.files-table td.actions-cell > * {
+    display: inline-block;
+    vertical-align: bottom;
+    margin-right: 8px;
+}
+
+.files-table td.actions-cell > *:last-child {
+    margin-right: 0;
 }
 
 .files-table tr:hover {
