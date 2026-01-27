@@ -1010,9 +1010,9 @@
                                         bankName: doc.extractedDetails.bankName,
                                         accountHolder: doc.extractedDetails.accountHolder || 'N/A',
                                         accountNumber: doc.extractedDetails.accountNumber || 'N/A',
-                                        period: (doc.extractedDetails.periodStart && doc.extractedDetails.periodEnd) 
-                                            ? `${doc.extractedDetails.periodStart} - ${doc.extractedDetails.periodEnd}`
-                                            : 'N/A',
+                                        period: (doc.extractedDetails.periodFrom && doc.extractedDetails.periodTo) 
+                                            ? `${doc.extractedDetails.periodFrom} - ${doc.extractedDetails.periodTo}`
+                                            : (doc.extractedDetails.period || 'N/A'),
                                         filename: doc.originalName
                                     });
                                 }

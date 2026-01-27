@@ -26,8 +26,8 @@ const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 // Middleware
 app.use(express.static('public'));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 app.set('view engine', 'ejs');
 
 // Configure multer for file uploads
@@ -64,7 +64,7 @@ const upload = multer({
       cb(new Error('Only documents, images, and zip files are allowed!'));
     }
   },
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+  limits: { fileSize: 20 * 1024 * 1024 } // 20MB limit
 });
 
 // Data storage paths
