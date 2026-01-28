@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debt Profile - Pending</title>
+    <link rel="stylesheet" href="/css/main.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Debt Profile - Pending</h1>
+        </header>
+        <form action="/upload-debt-profile" method="POST" enctype="multipart/form-data">
+            <label for="excelFile">Upload Debt Profile Excel:</label>
+            <input type="file" name="excelFile" accept=".xls,.xlsx" required>
+            <button type="submit">Upload</button>
+        </form>
+        <hr>
+        <h2>Debt Profile Table</h2>
+        <table border="1">
+            <thead>
+                <tr>
+                    <th>S.No</th>
+                    <th>Loan Applicant</th>
+                    <th>Bank</th>
+                    <th>Loan Type</th>
+                    <th>Loan Amount</th>
+                    <th>EMI</th>
+                    <th>EMI Start Date</th>
+                    <th>Tenure</th>
+                    <th>EMI End Date</th>
+                    <th>ROI</th>
+                    <th>Current Outstanding</th>
+                </tr>
+            </thead>
+            <tbody>
+                <% if (debtProfiles && debtProfiles.length > 0) { %>
+                    <% debtProfiles.forEach(function(profile) { %>
+                        <tr>
+                            <td><%= profile.sNo %></td>
+                            <td><%= profile.loanApplicant %></td>
+                            <td><%= profile.bank %></td>
+                            <td><%= profile.loanType %></td>
+                            <td><%= profile.loanAmount %></td>
+                            <td><%= profile.emi %></td>
+                            <td><%= profile.emiStartDate %></td>
+                            <td><%= profile.tenure %></td>
+                            <td><%= profile.emiEndDate %></td>
+                            <td><%= profile.roi %></td>
+                            <td><%= profile.currentOutstanding %></td>
+                        </tr>
+                    <% }); %>
+                <% } else { %>
+                    <tr><td colspan="11">No data available.</td></tr>
+                <% } %>
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>

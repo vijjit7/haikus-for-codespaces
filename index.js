@@ -1,5 +1,8 @@
 let express = require('express');
 let app = express();
+const { execFile } = require('child_process');
+const mongoose = require('mongoose');
+const DebtProfile = require('./models/DebtProfile');
 let ejs = require('ejs');
 const fs = require('fs');
 const path = require('path');
@@ -11,6 +14,81 @@ const { createCanvas } = require('canvas');
 const axios = require('axios');
 const { spawn } = require('child_process');
 const FormData = require('form-data');
+const xlsx = require('xlsx');
+
+// Claude Agent API Endpoint
+app.post('/api/claude', (req, res) => {
+  const prompt = req.body.prompt;
+  if (!prompt) {
+    return res.status(400).json({ success: false, error: 'Prompt is required' });
+  }
+  execFile('python3', ['claude_agent.py'], { env: process.env }, (error, stdout, stderr) => {
+    if (error) {
+      return res.status(500).json({ success: false, error: stderr || error.message });
+    }
+    res.json({ success: true, response: stdout.trim() });
+  });
+});
+// Connect to MongoDB
+mongoose.connect('mongodb://localhost:27017/haikusdb')
+  .then(() => console.log('MongoDB connected'))
+  .catch(err => console.error('MongoDB connection error:', err));
+// Multer storage for Excel uploads
+const debtProfileStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'uploads/');
+  },
+  filename: function (req, file, cb) {
+    cb(null, 'debt_profile_' + Date.now() + '_' + file.originalname);
+  }
+});
+
+// Debt Profile Pending page
+app.get('/debt-profile/pending', async (req, res) => {
+  try {
+    const debtProfiles = await DebtProfile.find({});
+    res.render('debt-profile-pending', { debtProfiles });
+  } catch (err) {
+    res.status(500).send('Error loading debt profile data');
+  }
+});
+const debtProfileUpload = multer({ storage: debtProfileStorage });
+// Route to upload Excel and store debt profile data
+app.post('/upload-debt-profile', debtProfileUpload.single('excelFile'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+    const workbook = xlsx.readFile(req.file.path);
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const data = xlsx.utils.sheet_to_json(sheet, { defval: '' });
+
+    // Map Excel columns to DebtProfile fields
+    const mappedData = data.map((row, idx) => ({
+      sNo: row['S.No'] || idx + 1,
+      loanApplicant: row['Loan Applicant'] || '',
+      bank: row['Bank'] || '',
+      loanType: row['Loan Type'] || '',
+      loanAmount: Number(row['Loan Amount']) || 0,
+      emi: Number(row['EMI']) || 0,
+      emiStartDate: row['EMI Start Date'] || '',
+      tenure: row['Tenure'] || '',
+      emiEndDate: row['EMI End Date'] || '',
+      roi: Number(row['ROI']) || 0,
+      currentOutstanding: Number(row['Current Outstanding']) || 0
+    }));
+
+    // Remove all previous debt profiles and insert new
+    await DebtProfile.deleteMany({});
+    await DebtProfile.insertMany(mappedData);
+
+    res.json({ success: true, message: 'Debt profile data uploaded and saved.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Error processing file.' });
+  }
+});
 const port = process.env.PORT || 3000;
 
 // Configure pdfjs-dist worker - disable worker to avoid errors
@@ -1509,15 +1587,15 @@ app.post('/proposals/:proposalId/delete', (req, res) => {
 });
 
 // Stage 2: Document Upload & Proposal Perfection
-app.get('/stage2/:proposalId', (req, res) => {
+app.get('/stage2/:proposalId', async (req, res) => {
   const proposal = getProposalById(req.params.proposalId);
   if (!proposal) {
     return res.status(404).send('Proposal not found');
   }
-  
+
   // Get uploaded files from proposal data or fallback to file system
   let uploadedFiles = [];
-  
+
   if (proposal.documents && proposal.documents.length > 0) {
     uploadedFiles = proposal.documents.map(doc => ({
       id: doc.id || doc.filename,
@@ -1528,7 +1606,8 @@ app.get('/stage2/:proposalId', (req, res) => {
       size: typeof doc.size === 'number' ? (doc.size / 1024).toFixed(2) + ' KB' : doc.size,
       pages: doc.pages, // Include page count
       uploadedAt: doc.uploadedAt,
-      extractedDetails: doc.extractedDetails // Include extracted details
+      extractedDetails: doc.extractedDetails, // Include extracted details
+      extractedText: doc.extractedText // Ensure extractedText is available for GST dashboard
     }));
   } else {
     // Fallback: read from file system
@@ -1548,12 +1627,21 @@ app.get('/stage2/:proposalId', (req, res) => {
       });
     }
   }
-  
-  res.render('stage2-documents', { 
+
+  // Fetch debt profile data from MongoDB
+  let debtProfiles = [];
+  try {
+    debtProfiles = await DebtProfile.find({});
+  } catch (err) {
+    debtProfiles = [];
+  }
+
+  res.render('stage2-documents', {
     proposal,
     proposalId: req.params.proposalId,
     requiredDocuments: REQUIRED_DOCUMENTS,
-    uploadedFiles
+    uploadedFiles,
+    debtProfiles
   });
 });
 

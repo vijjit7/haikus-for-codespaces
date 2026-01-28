@@ -16,11 +16,13 @@
         "ejs": "^3.1.10",
         "express": "^4.22.1",
         "form-data": "^4.0.5",
+        "mongoose": "^9.1.5",
         "multer": "^2.0.2",
         "pdf-lib": "^1.17.1",
         "pdf-parse": "^1.1.1",
         "pdf-parse-fork": "^1.2.0",
-        "pdfjs-dist": "^2.16.105"
+        "pdfjs-dist": "^2.16.105",
+        "xlsx": "^0.18.5"
     },
     "devDependencies": {
         "nodemon": "^2.0.19"

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Ask Claude</title>
+  <script src="/js/claude_sample.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2em; }
+    #response { margin-top: 1em; padding: 1em; background: #f4f4f4; border-radius: 6px; }
+    button { padding: 0.5em 1.2em; font-size: 1em; }
+    input, textarea { width: 100%; padding: 0.5em; margin-top: 0.5em; }
+  </style>
+</head>
+<body>
+  <h2>Ask Claude (Anthropic)</h2>
+  <form id="claudeForm">
+    <label for="prompt">Prompt:</label>
+    <textarea id="prompt" rows="3" required placeholder="Type your question for Claude..."></textarea>
+    <button type="submit">Ask</button>
+  </form>
+  <div id="response"></div>
+  <script>
+    document.getElementById('claudeForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const prompt = document.getElementById('prompt').value;
+      const responseDiv = document.getElementById('response');
+      responseDiv.textContent = 'Waiting for Claude...';
+      try {
+        const result = await askClaude(prompt);
+        responseDiv.textContent = result;
+      } catch (err) {
+        responseDiv.textContent = 'Error: ' + err.message;
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1168,19 +1168,107 @@
                             <% } else { %>
                                 <p class="success-message">✓ All Turnover documents uploaded!</p>
                             <% } %>
+
+                            <!-- GST Dashboard: Returns by GSTIN and Month -->
+                            <div style="margin-top: 30px;">
+                                <h3>GST Returns Dashboard (Last 12 Months)</h3>
+                                <% 
+                                // Group GST 3B docs by GSTIN and month
+                                const gstDocs = uploadedFiles.filter(f => f.category === 'turnover' && f.extractedText && f.extractedText.includes('Form GSTR-3B'));
+                                const gstMap = {};
+                                gstDocs.forEach(doc => {
+                                    // Extract GSTIN and Period from text
+                                    const gstinMatch = doc.extractedText.match(/GSTIN of the supplier\s+([A-Z0-9]+)/);
+                                    const periodMatch = doc.extractedText.match(/Period\s+([A-Za-z]+)/);
+                                    const yearMatch = doc.extractedText.match(/Year\s+([0-9\-]+)/);
+                                    if (gstinMatch && periodMatch && yearMatch) {
+                                        const gstin = gstinMatch[1];
+                                        const period = periodMatch[1];
+                                        const year = yearMatch[1];
+                                        if (!gstMap[gstin]) gstMap[gstin] = {};
+                                        gstMap[gstin][`${period} ${year}`] = true;
+                                    }
+                                });
+                                const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+                                %>
+                                <% Object.keys(gstMap).forEach(gstin => { %>
+                                    <div style="margin-bottom: 24px;">
+                                        <h4 style="margin-bottom: 8px; color: #1976d2;">GSTIN: <%= gstin %></h4>
+                                        <table border="1" style="width:100%;border-collapse:collapse;background:#fafafa;">
+                                            <thead>
+                                                <tr style="background:#e3f2fd;">
+                                                    <th>Month</th>
+                                                    <th>Status</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <% months.forEach(month => { %>
+                                                    <% 
+                                                        // Find year for each month (simple: last year and this year)
+                                                        const years = [new Date().getFullYear()-1, new Date().getFullYear()];
+                                                        let found = false;
+                                                        let foundYear = '';
+                                                        years.forEach(y => {
+                                                            if (gstMap[gstin][`${month} ${y}`]) {
+                                                                found = true;
+                                                                foundYear = y;
+                                                            }
+                                                        });
+                                                    %>
+                                                    <tr>
+                                                        <td><%= month %> <%= foundYear %></td>
+                                                        <td style="color:<%= found ? '#2e7d32' : '#d32f2f' %>;font-weight:600;">
+                                                            <%= found ? '✔ Submitted' : '✗ Missing' %>
+                                                        </td>
+                                                    </tr>
+                                                <% }); %>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                <% }); %>
+                            </div>
                         </div>
 
                         <!-- Debt Profile Pending -->
                         <div class="pending-category-content" data-pending-category="debtProfile" style="display: none;">
-                            <% if (pendingByCategory.debtProfile.length > 0) { %>
-                                <ul class="pending-list">
-                                    <% pendingByCategory.debtProfile.forEach(doc => { %>
-                                        <li class="pending-item">
-                                            <span class="warning-icon">⚠️</span>
-                                            <%= doc %>
-                                        </li>
+                            <h3>Debt Profile Table</h3>
+                            <% if (debtProfiles && debtProfiles.length > 0) { %>
+                            <div style="overflow-x:auto;">
+                            <table border="1" style="width:100%;border-collapse:collapse;">
+                                <thead>
+                                    <tr>
+                                        <th>S.No</th>
+                                        <th>Loan Applicant</th>
+                                        <th>Bank</th>
+                                        <th>Loan Type</th>
+                                        <th>Loan Amount</th>
+                                        <th>EMI</th>
+                                        <th>EMI Start Date</th>
+                                        <th>Tenure</th>
+                                        <th>EMI End Date</th>
+                                        <th>ROI</th>
+                                        <th>Current Outstanding</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <% debtProfiles.forEach(function(profile) { %>
+                                        <tr>
+                                            <td><%= profile.sNo %></td>
+                                            <td><%= profile.loanApplicant %></td>
+                                            <td><%= profile.bank %></td>
+                                            <td><%= profile.loanType %></td>
+                                            <td><%= profile.loanAmount %></td>
+                                            <td><%= profile.emi %></td>
+                                            <td><%= profile.emiStartDate %></td>
+                                            <td><%= profile.tenure %></td>
+                                            <td><%= profile.emiEndDate %></td>
+                                            <td><%= profile.roi %></td>
+                                            <td><%= profile.currentOutstanding %></td>
+                                        </tr>
                                     <% }); %>
-                                </ul>
+                                </tbody>
+                            </table>
+                            </div>
                             <% } else { %>
                                 <p class="success-message">✓ All Debt Profile documents uploaded!</p>
                             <% } %>
