@@ -1156,6 +1156,135 @@
 
                         <!-- Turnover Pending -->
                         <div class="pending-category-content" data-pending-category="turnover" style="display: none;">
+                            <%
+                            // Get all GST returns and group by GSTIN
+                            const allGstReturns = uploadedFiles.filter(f =>
+                                f.category === 'turnover' &&
+                                f.extractedText &&
+                                (f.extractedText.includes('GSTR-3B') || f.extractedText.includes('GSTR-1') ||
+                                 f.extractedText.includes('Form GSTR'))
+                            );
+
+                            // Group by GSTIN and track uploaded months
+                            const gstReturnsByGstin = {};
+                            const uploadedMonthsByGstin = {};
+                            const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+                            // Helper function to get financial year for a given month and calendar year
+                            // FY runs from April to March: April 2024 - March 2025 = FY 2024-25
+                            function getFinancialYear(monthIndex, calendarYear) {
+                                // monthIndex: 0=Jan, 1=Feb, 2=Mar, 3=Apr, ... 11=Dec
+                                // Jan, Feb, Mar (0,1,2) belong to previous FY
+                                // Apr to Dec (3-11) belong to current FY
+                                if (monthIndex <= 2) { // Jan, Feb, Mar
+                                    return `${calendarYear - 1}-${String(calendarYear).slice(-2)}`;
+                                } else { // Apr to Dec
+                                    return `${calendarYear}-${String(calendarYear + 1).slice(-2)}`;
+                                }
+                            }
+
+                            allGstReturns.forEach(doc => {
+                                const gstinMatch = doc.extractedText.match(/GSTIN of the supplier\s+([A-Z0-9]+)/);
+                                const gstin = gstinMatch ? gstinMatch[1] : 'Unknown GSTIN';
+                                if (!gstReturnsByGstin[gstin]) {
+                                    gstReturnsByGstin[gstin] = [];
+                                    uploadedMonthsByGstin[gstin] = {};
+                                }
+                                gstReturnsByGstin[gstin].push(doc);
+
+                                // Determine form type
+                                let formType = '';
+                                if (doc.extractedText.includes('GSTR-3B') || doc.extractedText.includes('Form GSTR-3B')) {
+                                    formType = 'GSTR-3B';
+                                } else if (doc.extractedText.includes('GSTR-1')) {
+                                    formType = 'GSTR-1';
+                                }
+
+                                // Track uploaded month-year combinations with form types
+                                const periodMatch = doc.extractedText.match(/Period\s+([A-Za-z]+)/i);
+                                // Try to match financial year format (2024-25) or calendar year (2024)
+                                const fyMatch = doc.extractedText.match(/Year\s+(\d{4})-(\d{2})/i);
+                                const yearMatch = doc.extractedText.match(/Year\s+(\d{4})/i);
+
+                                if (periodMatch) {
+                                    const monthName = periodMatch[1];
+                                    const monthIndex = monthNames.findIndex(m => m.toLowerCase() === monthName.toLowerCase());
+
+                                    let fy = '';
+                                    if (fyMatch) {
+                                        // Financial year directly from document (e.g., 2024-25)
+                                        fy = `${fyMatch[1]}-${fyMatch[2]}`;
+                                    } else if (yearMatch && monthIndex !== -1) {
+                                        // Calculate FY from calendar year
+                                        fy = getFinancialYear(monthIndex, parseInt(yearMatch[1]));
+                                    }
+
+                                    if (fy) {
+                                        const monthKey = `${monthName}-${fy}`;
+                                        if (!uploadedMonthsByGstin[gstin][monthKey]) {
+                                            uploadedMonthsByGstin[gstin][monthKey] = { gstr1: false, gstr3b: false };
+                                        }
+                                        if (formType === 'GSTR-1') {
+                                            uploadedMonthsByGstin[gstin][monthKey].gstr1 = true;
+                                        } else if (formType === 'GSTR-3B') {
+                                            uploadedMonthsByGstin[gstin][monthKey].gstr3b = true;
+                                        }
+                                    }
+                                }
+                            });
+
+                            // Calculate last 12 months (from previous month going back)
+                            const today = new Date();
+                            const last12Months = [];
+                            for (let i = 1; i <= 12; i++) {
+                                const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+                                const monthIndex = d.getMonth();
+                                const calYear = d.getFullYear();
+                                const fy = getFinancialYear(monthIndex, calYear);
+                                last12Months.push({
+                                    month: monthNames[monthIndex],
+                                    year: calYear,
+                                    fy: fy,
+                                    key: `${monthNames[monthIndex]}-${fy}`
+                                });
+                            }
+
+                            // Find missing/partial returns for each GSTIN
+                            const missingReturnsByGstin = {};
+                            Object.keys(uploadedMonthsByGstin).forEach(gstin => {
+                                if (gstin !== 'Unknown GSTIN') {
+                                    missingReturnsByGstin[gstin] = [];
+                                    last12Months.forEach(m => {
+                                        const uploaded = uploadedMonthsByGstin[gstin][m.key];
+                                        if (!uploaded) {
+                                            // Neither form uploaded
+                                            missingReturnsByGstin[gstin].push({
+                                                ...m,
+                                                status: 'missing',
+                                                gstr1: false,
+                                                gstr3b: false
+                                            });
+                                        } else if (!uploaded.gstr1 || !uploaded.gstr3b) {
+                                            // At least one form missing
+                                            missingReturnsByGstin[gstin].push({
+                                                ...m,
+                                                status: 'partial',
+                                                gstr1: uploaded.gstr1,
+                                                gstr3b: uploaded.gstr3b
+                                            });
+                                        }
+                                    });
+                                }
+                            });
+
+                            // Check if there are any missing returns
+                            let totalMissingReturns = 0;
+                            Object.values(missingReturnsByGstin).forEach(arr => {
+                                totalMissingReturns += arr.length;
+                            });
+                            %>
+
+                            <!-- Existing pending items -->
                             <% if (pendingByCategory.turnover.length > 0) { %>
                                 <ul class="pending-list">
                                     <% pendingByCategory.turnover.forEach(doc => { %>
@@ -1165,67 +1294,102 @@
                                         </li>
                                     <% }); %>
                                 </ul>
-                            <% } else { %>
+                            <% } %>
+
+                            <!-- Missing GST Returns Warning -->
+                            <% if (Object.keys(missingReturnsByGstin).length > 0 && totalMissingReturns > 0) { %>
+                                <div style="margin-top: 15px; margin-bottom: 20px;">
+                                    <h4 style="color: #d32f2f; margin-bottom: 10px;">⚠️ Missing GST Returns (Last 12 Months)</h4>
+                                    <% Object.keys(missingReturnsByGstin).forEach(gstin => { %>
+                                        <% if (missingReturnsByGstin[gstin].length > 0) { %>
+                                            <div style="margin-bottom: 15px; padding: 10px; background: #fff3e0; border-left: 4px solid #ff9800; border-radius: 4px;">
+                                                <strong style="color: #e65100;">GSTIN: <%= gstin %></strong>
+                                                <ul style="margin: 8px 0 0 20px; padding: 0;">
+                                                    <% missingReturnsByGstin[gstin].forEach(m => { %>
+                                                        <li style="margin: 4px 0;">
+                                                            <strong><%= m.month %> (FY <%= m.fy %>)</strong>:
+                                                            <% if (m.status === 'missing') { %>
+                                                                <span style="color: #d32f2f;">GSTR-1 - Not uploaded, GSTR-3B - Not uploaded</span>
+                                                            <% } else { %>
+                                                                <% if (m.gstr1) { %>
+                                                                    <span style="color: #2e7d32;">GSTR-1 received</span>,
+                                                                <% } else { %>
+                                                                    <span style="color: #d32f2f;">GSTR-1 - Not uploaded</span>,
+                                                                <% } %>
+                                                                <% if (m.gstr3b) { %>
+                                                                    <span style="color: #2e7d32;">GSTR-3B received</span>
+                                                                <% } else { %>
+                                                                    <span style="color: #d32f2f;">GSTR-3B - Not uploaded</span>
+                                                                <% } %>
+                                                            <% } %>
+                                                        </li>
+                                                    <% }); %>
+                                                </ul>
+                                            </div>
+                                        <% } %>
+                                    <% }); %>
+                                </div>
+                            <% } else if (pendingByCategory.turnover.length === 0 && Object.keys(gstReturnsByGstin).length > 0) { %>
+                                <p class="success-message">✓ All GST Returns for last 12 months uploaded!</p>
+                            <% } else if (pendingByCategory.turnover.length === 0) { %>
                                 <p class="success-message">✓ All Turnover documents uploaded!</p>
                             <% } %>
 
-                            <!-- GST Dashboard: Returns by GSTIN and Month -->
-                            <div style="margin-top: 30px;">
-                                <h3>GST Returns Dashboard (Last 12 Months)</h3>
-                                <% 
-                                // Group GST 3B docs by GSTIN and month
-                                const gstDocs = uploadedFiles.filter(f => f.category === 'turnover' && f.extractedText && f.extractedText.includes('Form GSTR-3B'));
-                                const gstMap = {};
-                                gstDocs.forEach(doc => {
-                                    // Extract GSTIN and Period from text
-                                    const gstinMatch = doc.extractedText.match(/GSTIN of the supplier\s+([A-Z0-9]+)/);
-                                    const periodMatch = doc.extractedText.match(/Period\s+([A-Za-z]+)/);
-                                    const yearMatch = doc.extractedText.match(/Year\s+([0-9\-]+)/);
-                                    if (gstinMatch && periodMatch && yearMatch) {
-                                        const gstin = gstinMatch[1];
-                                        const period = periodMatch[1];
-                                        const year = yearMatch[1];
-                                        if (!gstMap[gstin]) gstMap[gstin] = {};
-                                        gstMap[gstin][`${period} ${year}`] = true;
-                                    }
-                                });
-                                const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-                                %>
-                                <% Object.keys(gstMap).forEach(gstin => { %>
-                                    <div style="margin-bottom: 24px;">
-                                        <h4 style="margin-bottom: 8px; color: #1976d2;">GSTIN: <%= gstin %></h4>
-                                        <table border="1" style="width:100%;border-collapse:collapse;background:#fafafa;">
-                                            <thead>
-                                                <tr style="background:#e3f2fd;">
-                                                    <th>Month</th>
-                                                    <th>Status</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <% months.forEach(month => { %>
-                                                    <% 
-                                                        // Find year for each month (simple: last year and this year)
-                                                        const years = [new Date().getFullYear()-1, new Date().getFullYear()];
-                                                        let found = false;
-                                                        let foundYear = '';
-                                                        years.forEach(y => {
-                                                            if (gstMap[gstin][`${month} ${y}`]) {
-                                                                found = true;
-                                                                foundYear = y;
-                                                            }
-                                                        });
+                            <!-- Uploaded GST Returns List -->
+                            <div style="margin-top: 20px; margin-bottom: 30px;">
+                                <h3>Uploaded GST Returns</h3>
+                                <% if (allGstReturns.length > 0) { %>
+                                    <% Object.keys(gstReturnsByGstin).forEach(gstin => { %>
+                                        <div style="margin-bottom: 24px;">
+                                            <h4 style="margin-bottom: 8px; color: #1976d2;">GSTIN: <%= gstin %></h4>
+                                            <table border="1" style="width:100%;border-collapse:collapse;background:#fff;">
+                                                <thead>
+                                                    <tr style="background:#e8f5e9;">
+                                                        <th style="padding:10px;">S.No</th>
+                                                        <th style="padding:10px;">Document</th>
+                                                        <th style="padding:10px;">Form Type</th>
+                                                        <th style="padding:10px;">Month</th>
+                                                        <th style="padding:10px;">Financial Year</th>
+                                                        <th style="padding:10px;">Uploaded On</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <% gstReturnsByGstin[gstin].forEach((doc, index) => {
+                                                        // Extract form type
+                                                        let formType = 'GST Return';
+                                                        if (doc.extractedText.includes('GSTR-3B') || doc.extractedText.includes('Form GSTR-3B')) {
+                                                            formType = 'GSTR-3B';
+                                                        } else if (doc.extractedText.includes('GSTR-1')) {
+                                                            formType = 'GSTR-1';
+                                                        }
+
+                                                        // Extract period/month
+                                                        const periodMatch = doc.extractedText.match(/Period\s+([A-Za-z]+)/i);
+                                                        const month = periodMatch ? periodMatch[1] : '-';
+
+                                                        // Extract year
+                                                        const yearMatch = doc.extractedText.match(/Year\s+([0-9\-]+)/i);
+                                                        const year = yearMatch ? yearMatch[1] : '-';
+
+                                                        // Format upload date
+                                                        const uploadDate = doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleDateString() : '-';
                                                     %>
                                                     <tr>
-                                                        <td><%= month %> <%= foundYear %></td>
-                                                        <td style="color:<%= found ? '#2e7d32' : '#d32f2f' %>;font-weight:600;">
-                                                            <%= found ? '✔ Submitted' : '✗ Missing' %>
-                                                        </td>
+                                                        <td style="padding:8px;text-align:center;"><%= index + 1 %></td>
+                                                        <td style="padding:8px;"><%= doc.originalName %></td>
+                                                        <td style="padding:8px;text-align:center;"><%= formType %></td>
+                                                        <td style="padding:8px;text-align:center;"><%= month %></td>
+                                                        <td style="padding:8px;text-align:center;"><%= year %></td>
+                                                        <td style="padding:8px;text-align:center;"><%= uploadDate %></td>
                                                     </tr>
-                                                <% }); %>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                <% }); %>
+                                                    <% }); %>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    <% }); %>
+                                <% } else { %>
+                                    <p style="color:#666;font-style:italic;">No GST returns uploaded yet.</p>
+                                <% } %>
                             </div>
                         </div>
 
