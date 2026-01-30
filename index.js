@@ -1,5 +1,10 @@
 let express = require('express');
 let app = express();
+
+// IMPORTANT: JSON body parser must be before routes
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+
 const { execFile } = require('child_process');
 const mongoose = require('mongoose');
 const DebtProfile = require('./models/DebtProfile');
@@ -413,8 +418,6 @@ const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 // Middleware
 app.use(express.static('public'));
-app.use(express.json({ limit: '20mb' }));
-app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 app.set('view engine', 'ejs');
 
 // Configure multer for file uploads
@@ -1803,7 +1806,13 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
       const docIndex = proposal.documents.findIndex(d => d.filename === fileDetail.filename);
       if (docIndex !== -1) {
         proposal.documents[docIndex].pages = pageCount;
-        proposal.documents[docIndex].extractedText = extractedText;
+        // Store full text for financial documents to detect all components (ITR, Computation, Balance Sheet, P&L)
+        // For other documents, store truncated text to save space
+        if (fileDetail.category === 'financials') {
+          proposal.documents[docIndex].extractedText = fullText; // Full text for financials
+        } else {
+          proposal.documents[docIndex].extractedText = extractedText; // Truncated for others
+        }
         proposal.documents[docIndex].extractedDetails = extractedDetails;
         proposal.documents[docIndex].classification = autoClassification;
         
@@ -2578,6 +2587,104 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
   }
 });
 
+// Reprocess financial documents to extract full text for component detection
+app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+
+    const proposal = getProposalById(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ success: false, error: 'Proposal not found' });
+    }
+
+    if (!proposal.documents || proposal.documents.length === 0) {
+      return res.status(400).json({ success: false, error: 'No documents found' });
+    }
+
+    let processedCount = 0;
+    const proposalDir = path.join(UPLOADS_DIR, proposalId);
+    const extractionResults = [];
+
+    // Process each financial document
+    for (let i = 0; i < proposal.documents.length; i++) {
+      const doc = proposal.documents[i];
+
+      if (doc.category === 'financials') {
+        const filePath = path.join(proposalDir, doc.filename);
+
+        if (fs.existsSync(filePath) && doc.originalName.toLowerCase().endsWith('.pdf')) {
+          try {
+            // Extract full text from PDF
+            const pdfResult = await extractPDFWithTableDetection(filePath);
+            const fullText = pdfResult.text;
+
+            console.log('\n========================================');
+            console.log('📊 EXTRACTING FINANCIAL DOC:', doc.originalName);
+            console.log('========================================');
+            console.log('Text length:', fullText.length);
+            console.log('Pages:', pdfResult.numPages);
+
+            // Check for each component with flexible keyword matching
+            const textLower = fullText.toLowerCase();
+            const components = {
+              itrAck: textLower.includes('indian income tax return acknowledgement') ||
+                      textLower.includes('itr acknowledgement') ||
+                      textLower.includes('acknowledgement number'),
+              computation: textLower.includes('computation of total income') ||
+                          textLower.includes('computation of income') ||
+                          (textLower.includes('computation') && textLower.includes('total income')),
+              balanceSheet: textLower.includes('balance sheet') ||
+                           textLower.includes('balancesheet'),
+              profitLoss: textLower.includes('profit and loss account') ||
+                         textLower.includes('profit & loss account') ||
+                         textLower.includes('profit and loss a/c') ||
+                         textLower.includes('trading and profit') ||
+                         (textLower.includes('profit') && textLower.includes('loss') && textLower.includes('account'))
+            };
+
+            console.log('Components detected:', JSON.stringify(components));
+            console.log('========================================\n');
+
+            // Store full text and components
+            proposal.documents[i].extractedText = fullText;
+            proposal.documents[i].pages = pdfResult.numPages;
+            proposal.documents[i].financialComponents = components;
+
+            extractionResults.push({
+              fileName: doc.originalName,
+              classification: doc.classification,
+              textLength: fullText.length,
+              components: components
+            });
+
+            processedCount++;
+          } catch (err) {
+            console.error('Error processing financial doc', doc.originalName, err);
+            extractionResults.push({
+              fileName: doc.originalName,
+              error: err.message
+            });
+          }
+        }
+      }
+    }
+
+    if (processedCount > 0) {
+      updateProposal(proposalId, { documents: proposal.documents });
+    }
+
+    res.json({
+      success: true,
+      processedCount,
+      message: `Processed ${processedCount} financial document(s)`,
+      extractionResults
+    });
+  } catch (error) {
+    console.error('Financial docs reprocess error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Fallback pattern matching for bank statement details
 function extractBankStatementDetailsFallback(text) {
   const result = {
@@ -2617,16 +2724,22 @@ function extractBankStatementDetailsFallback(text) {
     }
   }
   
-  // Account holder patterns
+  // Account holder patterns - limit to avoid capturing address
   const holderPatterns = [
-    /(?:Account\s*Holder|Customer\s*Name|Name)[:\s]+([A-Z][A-Za-z\s]+)/i,
-    /(?:Mr\.|Mrs\.|Ms\.|M\/S)[.\s]+([A-Z][A-Za-z\s]+)/i
+    /(?:Account\s*Holder|Customer\s*Name|Name)[:\s]+([A-Z][A-Za-z\s&.]+?)(?:\s+(?:Plot|Door|No\.|House|Flat|Building|Street|Road|Lane|Address|Branch|A\/c|Account|\d|,|\n))/i,
+    /(?:Account\s*Holder|Customer\s*Name|Name)[:\s]+([A-Z][A-Za-z\s&.]{2,50})/i,
+    /(?:Mr\.|Mrs\.|Ms\.|M\/S)[.\s]+([A-Z][A-Za-z\s&.]+?)(?:\s+(?:Plot|Door|No\.|House|Flat|Building|Street|Road|Lane|Address|\d|,|\n))/i,
+    /(?:Mr\.|Mrs\.|Ms\.|M\/S)[.\s]+([A-Z][A-Za-z\s&.]{2,50})/i
   ];
-  
+
   for (const pattern of holderPatterns) {
     const match = text.match(pattern);
     if (match) {
-      result.accountHolder = match[1].trim();
+      // Clean up the account holder name - remove trailing common words
+      let holder = match[1].trim();
+      // Remove trailing address-related words if any slipped through
+      holder = holder.replace(/\s+(Plot|Door|No|House|Flat|Building|Street|Road|Lane|Address|Branch).*$/i, '').trim();
+      result.accountHolder = holder;
       break;
     }
   }

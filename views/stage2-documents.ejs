@@ -708,17 +708,165 @@
                             });
                         }
 
-                        // Banking
+                        // Banking - Calculate 12 month period requirement
+                        const today = new Date();
+                        const oneYearAgo = new Date(today);
+                        oneYearAgo.setFullYear(today.getFullYear() - 1);
+                        const formatDate = (d) => String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
+                        const requiredFromDate = oneYearAgo;
+                        const requiredToDate = today;
+                        const periodFrom = formatDate(oneYearAgo);
+                        const periodTo = formatDate(today);
+
+                        // Helper to parse date from dd/mm/yyyy or dd-mm-yyyy format
+                        const parseDate = (dateStr) => {
+                            if (!dateStr || dateStr === 'N/A') return null;
+                            const parts = dateStr.split(/[\/\-]/);
+                            if (parts.length === 3) {
+                                const day = parseInt(parts[0]);
+                                const month = parseInt(parts[1]) - 1;
+                                const year = parseInt(parts[2].length === 2 ? '20' + parts[2] : parts[2]);
+                                return new Date(year, month, day);
+                            }
+                            return null;
+                        };
+
+                        // Get all banking docs for this proposal
+                        const bankingDocsForPending = uploadedFiles.filter(f => f.category === 'banking');
+
+                        // Get banking docs with extracted details (bank name, account number, period)
+                        const bankingDocsWithDetails = bankingDocsForPending.filter(f =>
+                            f.extractedDetails &&
+                            f.extractedDetails.bankName &&
+                            f.extractedDetails.bankName !== 'N/A'
+                        );
+
                         const bankStmt = 'Bank Statement of ' + proposal.applicantName;
                         const odStmt = 'Overdraft Bank Statement of ' + proposal.applicantName;
-                        if (!classifiedDocs.includes(bankStmt)) pendingByCategory.banking.push(bankStmt);
+
+                        // Group bank statements by account (bankName + accountNumber)
+                        const accountGroups = {};
+                        bankingDocsWithDetails.forEach(doc => {
+                            const details = doc.extractedDetails || {};
+                            const bankName = details.bankName || 'Unknown Bank';
+                            const acNo = details.accountNumber && details.accountNumber !== 'N/A' ? details.accountNumber : 'XXXX';
+                            const holderName = details.accountHolder && details.accountHolder !== 'N/A' ? details.accountHolder : proposal.applicantName;
+                            const key = bankName + '_' + acNo;
+
+                            if (!accountGroups[key]) {
+                                accountGroups[key] = {
+                                    bankName: bankName,
+                                    accountNumber: acNo,
+                                    holderName: holderName,
+                                    periods: []
+                                };
+                            }
+
+                            const docFrom = parseDate(details.periodFrom);
+                            const docTo = parseDate(details.periodTo);
+                            if (docFrom && docTo) {
+                                accountGroups[key].periods.push({ from: docFrom, to: docTo });
+                            }
+                        });
+
+                        // Check if there are any bank statements uploaded with details
+                        const accountKeys = Object.keys(accountGroups);
+                        if (accountKeys.length > 0) {
+                            // Process each account group
+                            accountKeys.forEach(key => {
+                                const account = accountGroups[key];
+
+                                if (account.periods.length === 0) {
+                                    // No valid periods extracted
+                                    pendingByCategory.banking.push(`Bank Statement(${account.bankName}) of ${account.holderName} of AC no ${account.accountNumber} for period missing`);
+                                    return;
+                                }
+
+                                // Sort periods by start date
+                                account.periods.sort((a, b) => a.from - b.from);
+
+                                // Merge overlapping/adjacent periods
+                                const mergedPeriods = [];
+                                account.periods.forEach(period => {
+                                    if (mergedPeriods.length === 0) {
+                                        mergedPeriods.push({ from: period.from, to: period.to });
+                                    } else {
+                                        const last = mergedPeriods[mergedPeriods.length - 1];
+                                        // Check if periods overlap or are adjacent (within 1 day)
+                                        if (period.from <= new Date(last.to.getTime() + 86400000)) {
+                                            // Extend the last period if this one goes further
+                                            if (period.to > last.to) {
+                                                last.to = period.to;
+                                            }
+                                        } else {
+                                            mergedPeriods.push({ from: period.from, to: period.to });
+                                        }
+                                    }
+                                });
+
+                                // Find gaps in coverage
+                                const gaps = [];
+
+                                // Gap at start?
+                                if (mergedPeriods[0].from > requiredFromDate) {
+                                    gaps.push({
+                                        from: requiredFromDate,
+                                        to: new Date(mergedPeriods[0].from.getTime() - 86400000)
+                                    });
+                                }
+
+                                // Gaps between periods?
+                                for (let i = 0; i < mergedPeriods.length - 1; i++) {
+                                    const gapStart = new Date(mergedPeriods[i].to.getTime() + 86400000);
+                                    const gapEnd = new Date(mergedPeriods[i + 1].from.getTime() - 86400000);
+                                    if (gapStart <= gapEnd) {
+                                        gaps.push({ from: gapStart, to: gapEnd });
+                                    }
+                                }
+
+                                // Gap at end?
+                                const lastPeriod = mergedPeriods[mergedPeriods.length - 1];
+                                if (lastPeriod.to < requiredToDate) {
+                                    gaps.push({
+                                        from: new Date(lastPeriod.to.getTime() + 86400000),
+                                        to: requiredToDate
+                                    });
+                                }
+
+                                // Add pending items for each gap
+                                gaps.forEach(gap => {
+                                    const missingDays = Math.ceil((gap.to - gap.from) / (1000 * 60 * 60 * 24)) + 1;
+                                    pendingByCategory.banking.push(`Bank Statement(${account.bankName}) of ${account.holderName} of AC no ${account.accountNumber} for period ${formatDate(gap.from)} to ${formatDate(gap.to)} (${missingDays} days)`);
+                                });
+                            });
+                        } else if (bankingDocsForPending.length > 0) {
+                            // Banking docs exist but no extracted details - prompt for extraction
+                            pendingByCategory.banking.push(`Bank Statement details not extracted - click "Re-extract Bank Statement Details" to extract period information`);
+                        } else if (!classifiedDocs.includes(bankStmt)) {
+                            // No bank statement uploaded at all
+                            pendingByCategory.banking.push(`Bank Statement of ${proposal.applicantName} from ${periodFrom} to ${periodTo} (12 months bank statement)`);
+                        }
+
                         if (!classifiedDocs.includes(odStmt)) pendingByCategory.banking.push(odStmt);
-                        
+
+                        // Check coapplicants - only if they don't have bank statements in the uploaded docs
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
                                 if (co.type === 'Individual') {
-                                    const coStmt = 'Bank Statement of ' + (co.name || 'Coapplicant Name' + (idx + 1));
-                                    if (!classifiedDocs.includes(coStmt)) pendingByCategory.banking.push(coStmt);
+                                    const coName = co.name || 'Coapplicant ' + (idx + 1);
+                                    const coStmt = 'Bank Statement of ' + coName;
+
+                                    // Check if this coapplicant already has statements in accountGroups
+                                    const coFirstName = coName.toLowerCase().split(' ')[0];
+                                    const hasStatements = accountKeys.some(key => {
+                                        const acc = accountGroups[key];
+                                        return acc.holderName.toLowerCase().includes(coFirstName);
+                                    });
+
+                                    if (!hasStatements && !classifiedDocs.includes(coStmt)) {
+                                        // No bank statement for this coapplicant
+                                        pendingByCategory.banking.push(`Bank Statement of ${coName} from ${periodFrom} to ${periodTo} (12 months bank statement)`);
+                                    }
                                 }
                             });
                         }
@@ -732,6 +880,30 @@
                         // Debt Profile
                         const debtDoc = 'All Existing Loan Details';
                         if (!classifiedDocs.includes(debtDoc)) pendingByCategory.debtProfile.push(debtDoc);
+
+                        // EMI Verification for Debt Profile
+                        if (debtProfiles && debtProfiles.length > 0) {
+                            // EMI Calculation function
+                            const calcEMI = (principal, annualRate, tenureMonths) => {
+                                if (!principal || !annualRate || !tenureMonths || principal <= 0 || tenureMonths <= 0) return null;
+                                const monthlyRate = annualRate / 12 / 100;
+                                if (monthlyRate === 0) return Math.round(principal / tenureMonths);
+                                return Math.round(principal * monthlyRate * Math.pow(1 + monthlyRate, tenureMonths) / (Math.pow(1 + monthlyRate, tenureMonths) - 1));
+                            };
+
+                            debtProfiles.forEach(profile => {
+                                const calculatedEMI = calcEMI(profile.loanAmount, profile.roi, profile.tenure);
+                                if (calculatedEMI && profile.emi) {
+                                    const tolerance = calculatedEMI * 0.02; // 2% tolerance
+                                    if (Math.abs(profile.emi - calculatedEMI) > tolerance) {
+                                        const diff = Math.abs(profile.emi - calculatedEMI);
+                                        pendingByCategory.debtProfile.push(
+                                            `EMI Mismatch: ${profile.bank} ${profile.loanType} - Entered EMI ₹${profile.emi.toLocaleString('en-IN')} vs Calculated EMI ₹${calculatedEMI.toLocaleString('en-IN')} (Diff: ₹${diff.toLocaleString('en-IN')})`
+                                        );
+                                    }
+                                }
+                            });
+                        }
 
                         // Collateral
                         const titleDocs = 'Title Documents';
@@ -970,7 +1142,236 @@
 
                         <!-- Financials Pending -->
                         <div class="pending-category-content" data-pending-category="financials" style="display: none;">
+                            <%
+                            // Get all financial documents
+                            const financialDocs = uploadedFiles.filter(f => f.category === 'financials');
+
+                            // Define financial years (current and previous 2 years)
+                            const currentYear = new Date().getFullYear();
+                            const currentMonth = new Date().getMonth(); // 0-11
+                            // If before April, current FY is previous year
+                            const currentFYStart = currentMonth < 3 ? currentYear - 1 : currentYear;
+                            const financialYears = [
+                                `FY ${currentFYStart}-${String(currentFYStart + 1).slice(-2)}`,
+                                `FY ${currentFYStart - 1}-${String(currentFYStart).slice(-2)}`,
+                                `FY ${currentFYStart - 2}-${String(currentFYStart - 1).slice(-2)}`
+                            ];
+
+                            // Get all applicants (main applicant + coapplicants)
+                            const allFinancialApplicants = [proposal.applicantName];
+                            if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                                proposal.coApplicants.forEach((co, idx) => {
+                                    if (co.type === 'Individual') {
+                                        allFinancialApplicants.push(co.name || 'Coapplicant ' + (idx + 1));
+                                    }
+                                });
+                            }
+
+                            // Parse each financial document to extract info
+                            const parsedFinancialDocs = financialDocs.map(doc => {
+                                const classification = (doc.classification || doc.docType || '').toLowerCase();
+                                const extractedText = (doc.extractedText || '').toLowerCase();
+                                const filename = (doc.originalName || '').toLowerCase();
+
+                                // Extract financial year from classification (e.g., "ITR of FY2023-24 of pragathi")
+                                // Also check filename for year patterns like "IT 2024", "IT-2025", "2023-24"
+                                let fy = null;
+                                const fyMatch = classification.match(/fy\s*(\d{4})-?(\d{2,4})/i) ||
+                                                filename.match(/it[- ]?(\d{4})/i) ||
+                                                filename.match(/(\d{4})-(\d{2,4})/i) ||
+                                                extractedText.match(/assessment\s*year[:\s]*(\d{4})-(\d{2,4})/i) ||
+                                                extractedText.match(/accounting\s*year[:\s]*(\d{4})\s*-\s*(\d{4})/i);
+
+                                if (fyMatch) {
+                                    let year1, year2;
+                                    if (fyMatch[2]) {
+                                        year1 = fyMatch[1];
+                                        year2 = fyMatch[2].length === 2 ? fyMatch[2] : fyMatch[2].slice(-2);
+                                    } else {
+                                        // Single year like "IT 2024" means FY 2023-24
+                                        const singleYear = parseInt(fyMatch[1]);
+                                        year1 = String(singleYear - 1);
+                                        year2 = String(singleYear).slice(-2);
+                                    }
+                                    fy = `FY ${year1}-${year2}`;
+                                }
+
+                                // Extract applicant name from classification
+                                let applicantName = null;
+                                allFinancialApplicants.forEach(app => {
+                                    const appLower = app.toLowerCase();
+                                    const appFirst = appLower.split(' ')[0];
+                                    // Check classification and filename
+                                    if (classification.includes(appLower) || classification.includes(appFirst) ||
+                                        filename.includes(appLower) || filename.includes(appFirst)) {
+                                        applicantName = app;
+                                    }
+                                });
+
+                                // Use pre-stored components if available (from reprocess), otherwise check extracted text
+                                let components;
+                                if (doc.financialComponents) {
+                                    // Use pre-computed components from reprocessing
+                                    components = doc.financialComponents;
+                                } else {
+                                    // Check for keywords with flexible matching
+                                    components = {
+                                        itrAck: extractedText.includes('indian income tax return acknowledgement') ||
+                                                extractedText.includes('itr acknowledgement') ||
+                                                extractedText.includes('acknowledgement number'),
+                                        computation: extractedText.includes('computation of total income') ||
+                                                    extractedText.includes('computation of income') ||
+                                                    (extractedText.includes('computation') && extractedText.includes('total income')),
+                                        balanceSheet: extractedText.includes('balance sheet') ||
+                                                     extractedText.includes('balancesheet'),
+                                        profitLoss: extractedText.includes('profit and loss account') ||
+                                                   extractedText.includes('profit & loss account') ||
+                                                   extractedText.includes('profit and loss a/c') ||
+                                                   extractedText.includes('trading and profit') ||
+                                                   (extractedText.includes('profit') && extractedText.includes('loss') && extractedText.includes('account'))
+                                    };
+                                }
+
+                                // Check if this is an ITR document based on classification or filename
+                                const isITRDoc = classification.includes('itr') ||
+                                                 filename.includes('it ') || filename.includes('it-') || filename.includes('it_');
+
+                                return {
+                                    filename: doc.originalName,
+                                    fy: fy,
+                                    applicant: applicantName,
+                                    components: components,
+                                    classification: doc.classification || doc.docType,
+                                    isITRDoc: isITRDoc,
+                                    hasStoredComponents: !!doc.financialComponents
+                                };
+                            });
+
+                            // Helper function to check if document component exists
+                            function hasFinancialComponent(applicant, year, componentType) {
+                                return parsedFinancialDocs.some(doc => {
+                                    // Match applicant (check first name match if full name doesn't match)
+                                    const appMatch = doc.applicant === applicant ||
+                                        (doc.applicant && applicant &&
+                                         doc.applicant.toLowerCase().split(' ')[0] === applicant.toLowerCase().split(' ')[0]);
+
+                                    // Match year
+                                    const yearMatch = doc.fy === year;
+
+                                    // Match component
+                                    let componentMatch = false;
+                                    if (componentType === 'ITR Acknowledgement') componentMatch = doc.components.itrAck;
+                                    else if (componentType === 'Computation') componentMatch = doc.components.computation;
+                                    else if (componentType === 'Balance Sheet') componentMatch = doc.components.balanceSheet;
+                                    else if (componentType === 'Profit & Loss') componentMatch = doc.components.profitLoss;
+
+                                    return appMatch && yearMatch && componentMatch;
+                                });
+                            }
+
+                            const docTypes = ['ITR Acknowledgement', 'Computation', 'Balance Sheet', 'Profit & Loss'];
+                            %>
+
+                            <!-- Reprocess Financial Documents Button -->
+                            <% if (financialDocs.length > 0) { %>
+                                <div style="margin-bottom: 15px; display: flex; justify-content: flex-end;">
+                                    <button onclick="reprocessFinancialDocs()" class="btn btn-primary" style="font-size: 0.9em; padding: 8px 16px;">
+                                        🔄 Re-extract Financial Documents
+                                    </button>
+                                </div>
+                            <% } %>
+
+                            <!-- Uploaded Financial Documents List -->
+                            <% if (parsedFinancialDocs.length > 0) { %>
+                                <div style="margin-bottom: 20px; padding: 15px; background: #e8f5e9; border-radius: 8px; border-left: 4px solid #4caf50;">
+                                    <h4 style="margin: 0 0 10px 0; color: #2e7d32;">📄 Uploaded Financial Documents (<%= parsedFinancialDocs.length %>)</h4>
+                                    <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                                        <% parsedFinancialDocs.forEach(doc => { %>
+                                            <div style="padding: 8px 12px; background: white; border-radius: 4px; font-size: 0.85em; border: 1px solid #c8e6c9;" title="<%= doc.filename %>">
+                                                <div style="font-weight: 600; color: #1976d2;"><%= doc.fy || 'FY ?' %></div>
+                                                <div style="color: #333;"><%= doc.applicant || 'Unknown Applicant' %></div>
+                                                <div style="font-size: 0.8em; margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap;">
+                                                    <% if (doc.components.itrAck) { %><span style="background:#e8f5e9;color:#2e7d32;padding:2px 6px;border-radius:3px;">✓ ITR Ack</span><% } else { %><span style="background:#ffebee;color:#c62828;padding:2px 6px;border-radius:3px;">✗ ITR Ack</span><% } %>
+                                                    <% if (doc.components.computation) { %><span style="background:#e3f2fd;color:#1565c0;padding:2px 6px;border-radius:3px;">✓ Comp</span><% } else { %><span style="background:#ffebee;color:#c62828;padding:2px 6px;border-radius:3px;">✗ Comp</span><% } %>
+                                                    <% if (doc.components.balanceSheet) { %><span style="background:#fff3e0;color:#e65100;padding:2px 6px;border-radius:3px;">✓ BS</span><% } else { %><span style="background:#ffebee;color:#c62828;padding:2px 6px;border-radius:3px;">✗ BS</span><% } %>
+                                                    <% if (doc.components.profitLoss) { %><span style="background:#f3e5f5;color:#7b1fa2;padding:2px 6px;border-radius:3px;">✓ P&L</span><% } else { %><span style="background:#ffebee;color:#c62828;padding:2px 6px;border-radius:3px;">✗ P&L</span><% } %>
+                                                </div>
+                                                <div style="font-size: 0.7em; color: #666; margin-top: 4px;">📁 <%= doc.filename %></div>
+                                            </div>
+                                        <% }); %>
+                                    </div>
+                                </div>
+                            <% } else { %>
+                                <div style="margin-bottom: 20px; padding: 15px; background: #fff3e0; border-radius: 8px; border-left: 4px solid #ff9800;">
+                                    <h4 style="margin: 0; color: #e65100;">⚠️ No Financial Documents Uploaded</h4>
+                                    <p style="margin: 10px 0 0 0; color: #666;">Please upload ITR documents for the applicant and co-applicants.</p>
+                                </div>
+                            <% } %>
+
+                            <!-- Financial Documents Summary Table -->
+                            <% allFinancialApplicants.forEach((applicant, appIdx) => { %>
+                                <div style="margin-bottom: 25px; padding: 15px; background: #fff; border-radius: 10px; border: 2px solid #1976d2; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                                    <h4 style="margin: 0 0 15px 0; color: #1976d2; display: flex; align-items: center; gap: 10px;">
+                                        <span style="font-size: 1.2em;">👤</span>
+                                        <%= applicant %>
+                                        <% if (appIdx === 0) { %><span style="font-size: 0.8em; color: #666;">(Applicant)</span><% } else { %><span style="font-size: 0.8em; color: #666;">(Co-Applicant)</span><% } %>
+                                    </h4>
+
+                                    <div style="overflow-x: auto;">
+                                        <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+                                            <thead>
+                                                <tr style="background: #e3f2fd;">
+                                                    <th style="padding: 10px; border: 1px solid #ddd; text-align: left; font-weight: 600;">Financial Year</th>
+                                                    <% docTypes.forEach(docType => { %>
+                                                        <th style="padding: 10px; border: 1px solid #ddd; text-align: center; font-weight: 600;"><%= docType %></th>
+                                                    <% }); %>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <% financialYears.forEach((fy, fyIdx) => { %>
+                                                    <tr style="<%= fyIdx % 2 === 0 ? 'background: #fafafa;' : 'background: #fff;' %>">
+                                                        <td style="padding: 10px; border: 1px solid #ddd; font-weight: 500;"><%= fy %></td>
+                                                        <% docTypes.forEach(docType => {
+                                                            const hasDoc = hasFinancialComponent(applicant, fy, docType);
+                                                        %>
+                                                            <td style="padding: 10px; border: 1px solid #ddd; text-align: center; <%= hasDoc ? 'background: #e8f5e9;' : 'background: #ffebee;' %>">
+                                                                <% if (hasDoc) { %>
+                                                                    <span style="color: #4caf50; font-size: 1.3em;" title="Uploaded">✓</span>
+                                                                <% } else { %>
+                                                                    <span style="color: #d32f2f; font-size: 1.3em;" title="Missing">✗</span>
+                                                                <% } %>
+                                                            </td>
+                                                        <% }); %>
+                                                    </tr>
+                                                <% }); %>
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    <%
+                                    // Count missing documents for this applicant
+                                    let missingFinCount = 0;
+                                    financialYears.forEach(fy => {
+                                        docTypes.forEach(docType => {
+                                            if (!hasFinancialComponent(applicant, fy, docType)) {
+                                                missingFinCount++;
+                                            }
+                                        });
+                                    });
+                                    %>
+                                    <div style="margin-top: 10px; padding: 8px; background: <%= missingFinCount === 0 ? '#e8f5e9' : '#fff3e0' %>; border-radius: 4px;">
+                                        <% if (missingFinCount === 0) { %>
+                                            <span style="color: #2e7d32;">✓ All financial documents uploaded for <%= applicant %></span>
+                                        <% } else { %>
+                                            <span style="color: #e65100;">⚠️ <%= missingFinCount %> document(s) missing for <%= applicant %></span>
+                                        <% } %>
+                                    </div>
+                                </div>
+                            <% }); %>
+
+                            <!-- Pending List -->
                             <% if (pendingByCategory.financials.length > 0) { %>
+                                <h4 style="margin: 20px 0 10px 0; color: #d32f2f;">📋 Pending Financial Documents:</h4>
                                 <ul class="pending-list">
                                     <% pendingByCategory.financials.forEach(doc => { %>
                                         <li class="pending-item">
@@ -1059,14 +1460,75 @@
                                         </table>
                                     </div>
                                     
-                                    <% 
-                                    // Calculate coverage (simple version for now)
-                                    const requiredStart = '25/01/2025';
-                                    const requiredEnd = '25/01/2026';
-                                    
+                                    <%
+                                    // Calculate coverage - use same period as pending documents
+                                    const coverageToday = new Date();
+                                    const coverageOneYearAgo = new Date(coverageToday);
+                                    coverageOneYearAgo.setFullYear(coverageToday.getFullYear() - 1);
+                                    const formatCoverageDate = (d) => String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
+                                    const requiredStart = formatCoverageDate(coverageOneYearAgo);
+                                    const requiredEnd = formatCoverageDate(coverageToday);
+
+                                    // Helper to parse date for coverage calculation
+                                    const parseCoverageDate = (dateStr) => {
+                                        if (!dateStr || dateStr === 'N/A') return null;
+                                        const parts = dateStr.split(/[\/\-]/);
+                                        if (parts.length === 3) {
+                                            const day = parseInt(parts[0]);
+                                            const month = parseInt(parts[1]) - 1;
+                                            const year = parseInt(parts[2].length === 2 ? '20' + parts[2] : parts[2]);
+                                            return new Date(year, month, day);
+                                        }
+                                        return null;
+                                    };
+
                                     // Count how many statements have valid period information
                                     const validStatements = bankStatements.filter(s => s.period !== 'N/A');
-                                    const coveragePercentage = validStatements.length > 0 ? 52 : 0; // Placeholder percentage
+
+                                    // Calculate actual coverage percentage based on periods
+                                    let totalCoveredDays = 0;
+                                    const totalRequiredDays = Math.ceil((coverageToday - coverageOneYearAgo) / (1000 * 60 * 60 * 24));
+                                    let earliestDate = null;
+                                    let latestDate = null;
+
+                                    validStatements.forEach(stmt => {
+                                        const periodParts = stmt.period.split(' - ');
+                                        if (periodParts.length === 2) {
+                                            const fromDate = parseCoverageDate(periodParts[0].trim());
+                                            const toDate = parseCoverageDate(periodParts[1].trim());
+                                            if (fromDate && toDate) {
+                                                if (!earliestDate || fromDate < earliestDate) earliestDate = fromDate;
+                                                if (!latestDate || toDate > latestDate) latestDate = toDate;
+                                            }
+                                        }
+                                    });
+
+                                    if (earliestDate && latestDate) {
+                                        // Clamp to required period
+                                        const effectiveStart = earliestDate < coverageOneYearAgo ? coverageOneYearAgo : earliestDate;
+                                        const effectiveEnd = latestDate > coverageToday ? coverageToday : latestDate;
+                                        totalCoveredDays = Math.ceil((effectiveEnd - effectiveStart) / (1000 * 60 * 60 * 24));
+                                        if (totalCoveredDays < 0) totalCoveredDays = 0;
+                                    }
+
+                                    const coveragePercentage = totalRequiredDays > 0 ? Math.round((totalCoveredDays / totalRequiredDays) * 100) : 0;
+
+                                    // Calculate missing periods
+                                    let missingPeriodStart = null;
+                                    let missingPeriodEnd = null;
+                                    let missingDays = 0;
+
+                                    if (earliestDate && latestDate) {
+                                        if (earliestDate > coverageOneYearAgo) {
+                                            missingPeriodStart = coverageOneYearAgo;
+                                            missingPeriodEnd = new Date(earliestDate.getTime() - 86400000);
+                                            missingDays = Math.ceil((earliestDate - coverageOneYearAgo) / (1000 * 60 * 60 * 24));
+                                        } else if (latestDate < coverageToday) {
+                                            missingPeriodStart = new Date(latestDate.getTime() + 86400000);
+                                            missingPeriodEnd = coverageToday;
+                                            missingDays = Math.ceil((coverageToday - latestDate) / (1000 * 60 * 60 * 24));
+                                        }
+                                    }
                                     %>
                                     
                                     <!-- Bank Statement Coverage -->
@@ -1101,12 +1563,12 @@
                                                     </span>
                                                 </div>
                                                 
-                                                <% if (coveragePercentage < 100) { %>
+                                                <% if (coveragePercentage < 100 && missingPeriodStart && missingPeriodEnd) { %>
                                                     <div style="margin-top: 8px; padding: 10px; background: #fff3e0; border-left: 3px solid #f57c00; border-radius: 4px;">
                                                         <div style="display: flex; align-items: center; gap: 8px; color: #e65100;">
                                                             <span style="font-size: 1.2em;">⚠</span>
-                                                            <strong>Missing:</strong> 
-                                                            <span>01/08/2025 to 25/01/2026 (178 days)</span>
+                                                            <strong>Missing:</strong>
+                                                            <span><%= formatCoverageDate(missingPeriodStart) %> to <%= formatCoverageDate(missingPeriodEnd) %> (<%= missingDays %> days)</span>
                                                         </div>
                                                     </div>
                                                 <% } %>
@@ -1132,56 +1594,80 @@
                             <%
                             // EMI Verification against Bank Statements
                             const missingEmiBankStatements = [];
+                            let emiVerificationPossible = false;
 
-                            if (debtProfiles && debtProfiles.length > 0) {
+                            if (debtProfiles && debtProfiles.length > 0 && bankingDocs.length > 0) {
                                 // Get all bank statement extracted texts
                                 const allBankStatementTexts = bankingDocs
                                     .filter(doc => doc.extractedText)
                                     .map(doc => doc.extractedText.toLowerCase());
                                 const combinedBankText = allBankStatementTexts.join(' ');
 
-                                // Check each EMI from debt profiles
-                                debtProfiles.forEach(profile => {
-                                    if (profile.emi && profile.emi > 0) {
-                                        const emiAmount = Math.round(profile.emi);
-                                        const emiVariations = [
-                                            emiAmount.toString(),
-                                            emiAmount.toLocaleString('en-IN'),
-                                            (emiAmount - 1).toString(), // Allow ±1 variance
-                                            (emiAmount + 1).toString()
-                                        ];
+                                // Only perform EMI verification if bank statements have transaction data
+                                // (more than 5000 characters indicates actual transaction content)
+                                if (combinedBankText.length > 5000) {
+                                    emiVerificationPossible = true;
 
-                                        // Check if EMI appears in any bank statement
-                                        const emiFound = emiVariations.some(emi => combinedBankText.includes(emi));
+                                    // Check each EMI from debt profiles
+                                    debtProfiles.forEach(profile => {
+                                        if (profile.emi && profile.emi > 0) {
+                                            const emiAmount = Math.round(profile.emi);
+                                            const emiVariations = [
+                                                emiAmount.toString(),
+                                                emiAmount.toLocaleString('en-IN'),
+                                                (emiAmount - 1).toString(), // Allow ±1 variance
+                                                (emiAmount + 1).toString(),
+                                                // Also check without commas and with different formats
+                                                String(emiAmount).replace(/,/g, ''),
+                                                emiAmount.toFixed(2),
+                                                emiAmount.toLocaleString('en-IN', {minimumFractionDigits: 2})
+                                            ];
 
-                                        if (!emiFound) {
-                                            // Calculate required period
-                                            let requiredPeriod = 'last 12 months';
-                                            if (profile.emiStartDate) {
-                                                const startParts = profile.emiStartDate.split('/');
-                                                if (startParts.length === 3) {
-                                                    const startDate = new Date(startParts[2], startParts[1] - 1, startParts[0]);
-                                                    const monthsAgo = Math.floor((new Date() - startDate) / (30 * 24 * 60 * 60 * 1000));
-                                                    if (monthsAgo < 12) {
-                                                        requiredPeriod = `from ${profile.emiStartDate} (${monthsAgo} months)`;
+                                            // Check if EMI appears in any bank statement
+                                            const emiFound = emiVariations.some(emi => combinedBankText.includes(emi.toLowerCase()));
+
+                                            if (!emiFound) {
+                                                // Calculate required period
+                                                let requiredPeriod = 'last 12 months';
+                                                if (profile.emiStartDate) {
+                                                    const startParts = profile.emiStartDate.split('/');
+                                                    if (startParts.length === 3) {
+                                                        const startDate = new Date(startParts[2], startParts[1] - 1, startParts[0]);
+                                                        const monthsAgo = Math.floor((new Date() - startDate) / (30 * 24 * 60 * 60 * 1000));
+                                                        if (monthsAgo < 12) {
+                                                            requiredPeriod = `from ${profile.emiStartDate} (${monthsAgo} months)`;
+                                                        }
                                                     }
                                                 }
-                                            }
 
-                                            missingEmiBankStatements.push({
-                                                bank: profile.bank,
-                                                emi: emiAmount,
-                                                loanType: profile.loanType,
-                                                applicant: profile.loanApplicant,
-                                                requiredPeriod: requiredPeriod
-                                            });
+                                                missingEmiBankStatements.push({
+                                                    bank: profile.bank,
+                                                    emi: emiAmount,
+                                                    loanType: profile.loanType,
+                                                    applicant: profile.loanApplicant,
+                                                    requiredPeriod: requiredPeriod
+                                                });
+                                            }
                                         }
-                                    }
-                                });
+                                    });
+                                }
                             }
                             %>
 
-                            <% if (missingEmiBankStatements.length > 0) { %>
+                            <% if (debtProfiles && debtProfiles.length > 0 && bankingDocs.length > 0 && !emiVerificationPossible) { %>
+                                <!-- EMI Verification Not Possible -->
+                                <div style="margin-bottom: 20px; padding: 15px; background: #e3f2fd; border-radius: 8px; border-left: 4px solid #1976d2;">
+                                    <h4 style="margin: 0 0 10px 0; color: #1565c0;">
+                                        ℹ️ EMI Verification
+                                    </h4>
+                                    <p style="margin: 0; color: #666; font-size: 0.9em;">
+                                        EMI verification requires bank statements with full transaction data.
+                                        The current bank statements have limited extracted text (headers only).
+                                        Please click "Re-extract Bank Statement Details" above to extract full transaction data,
+                                        or manually verify that EMIs from the Debt Profile are reflecting in the bank statements.
+                                    </p>
+                                </div>
+                            <% } else if (missingEmiBankStatements.length > 0) { %>
                                 <!-- Missing EMI Bank Statements -->
                                 <div style="margin-bottom: 20px; padding: 15px; background: #fff3e0; border-radius: 8px; border-left: 4px solid #ff9800;">
                                     <h4 style="margin: 0 0 15px 0; color: #e65100;">
@@ -1204,6 +1690,13 @@
                                             </li>
                                         <% }); %>
                                     </ul>
+                                </div>
+                            <% } else if (debtProfiles && debtProfiles.length > 0 && emiVerificationPossible) { %>
+                                <!-- All EMIs Verified -->
+                                <div style="margin-bottom: 20px; padding: 15px; background: #e8f5e9; border-radius: 8px; border-left: 4px solid #4caf50;">
+                                    <h4 style="margin: 0; color: #2e7d32;">
+                                        ✓ EMI Verification - All EMIs from Debt Profile are reflecting in bank statements
+                                    </h4>
                                 </div>
                             <% } %>
 
@@ -1501,6 +1994,50 @@
                             </div>
 
                             <% if (debtProfiles && debtProfiles.length > 0) { %>
+                            <%
+                            // EMI Calculation function: EMI = P × r × (1+r)^n / ((1+r)^n - 1)
+                            function calculateEMI(principal, annualRate, tenureMonths) {
+                                if (!principal || !annualRate || !tenureMonths || principal <= 0 || tenureMonths <= 0) {
+                                    return null;
+                                }
+                                const monthlyRate = annualRate / 12 / 100;
+                                if (monthlyRate === 0) {
+                                    return Math.round(principal / tenureMonths);
+                                }
+                                const emi = principal * monthlyRate * Math.pow(1 + monthlyRate, tenureMonths) / (Math.pow(1 + monthlyRate, tenureMonths) - 1);
+                                return Math.round(emi);
+                            }
+
+                            // POS (Principal Outstanding) Calculation: POS = P × [(1+r)^n - (1+r)^k] / [(1+r)^n - 1]
+                            // Where k = months completed
+                            function calculatePOS(principal, annualRate, tenureMonths, monthsCompleted) {
+                                if (!principal || !tenureMonths || principal <= 0 || tenureMonths <= 0) {
+                                    return null;
+                                }
+                                if (!monthsCompleted || monthsCompleted <= 0) {
+                                    return principal; // No EMIs paid yet, full principal outstanding
+                                }
+                                if (monthsCompleted >= tenureMonths) {
+                                    return 0; // Loan fully paid
+                                }
+                                const monthlyRate = annualRate / 12 / 100;
+                                if (monthlyRate === 0) {
+                                    // Simple interest case
+                                    return Math.round(principal - (principal / tenureMonths) * monthsCompleted);
+                                }
+                                const n = tenureMonths;
+                                const k = monthsCompleted;
+                                const pos = principal * (Math.pow(1 + monthlyRate, n) - Math.pow(1 + monthlyRate, k)) / (Math.pow(1 + monthlyRate, n) - 1);
+                                return Math.round(pos);
+                            }
+
+                            // Check EMI tolerance (allow 2% variance for rounding differences)
+                            function isEMIMatching(enteredEMI, calculatedEMI) {
+                                if (!enteredEMI || !calculatedEMI) return true; // Can't verify if missing data
+                                const tolerance = calculatedEMI * 0.02; // 2% tolerance
+                                return Math.abs(enteredEMI - calculatedEMI) <= tolerance;
+                            }
+                            %>
                             <div style="overflow-x:auto; margin-top: 15px;">
                             <table border="1" style="width:100%;border-collapse:collapse;background:#fff;font-size:0.9em;">
                                 <thead>
@@ -1510,7 +2047,9 @@
                                         <th style="padding:8px;">Bank Name</th>
                                         <th style="padding:8px;">Loan Type</th>
                                         <th style="padding:8px;">Loan Amount</th>
-                                        <th style="padding:8px;">EMI</th>
+                                        <th style="padding:8px;">POS</th>
+                                        <th style="padding:8px;">EMI (Entered)</th>
+                                        <th style="padding:8px;">EMI (Calculated)</th>
                                         <th style="padding:8px;">ROI %</th>
                                         <th style="padding:8px;">Sanction Date</th>
                                         <th style="padding:8px;">Tenure (Months)</th>
@@ -1525,9 +2064,20 @@
                                     <%
                                     let totalLoanAmount = 0;
                                     let totalEmi = 0;
+                                    let totalCalculatedEmi = 0;
+                                    let totalPOS = 0;
                                     debtProfiles.forEach(function(profile) {
                                         totalLoanAmount += profile.loanAmount || 0;
                                         totalEmi += profile.emi || 0;
+
+                                        // Calculate expected EMI
+                                        const calculatedEMI = calculateEMI(profile.loanAmount, profile.roi, profile.tenure);
+                                        if (calculatedEMI) totalCalculatedEmi += calculatedEMI;
+                                        const emiMatches = isEMIMatching(profile.emi, calculatedEMI);
+
+                                        // Calculate POS (Principal Outstanding)
+                                        const pos = calculatePOS(profile.loanAmount, profile.roi, profile.tenure, profile.monthsCompleted);
+                                        if (pos !== null) totalPOS += pos;
                                     %>
                                         <tr>
                                             <td style="padding:8px;text-align:center;"><%= profile.sNo %></td>
@@ -1535,7 +2085,40 @@
                                             <td style="padding:8px;"><%= profile.bank %></td>
                                             <td style="padding:8px;"><%= profile.loanType %></td>
                                             <td style="padding:8px;text-align:right;"><%= profile.loanAmount ? profile.loanAmount.toLocaleString('en-IN') : '' %></td>
-                                            <td style="padding:8px;text-align:right;"><%= profile.emi ? profile.emi.toLocaleString('en-IN') : '' %></td>
+                                            <td style="padding:8px;text-align:right;background:#fff8e1;">
+                                                <% if (pos !== null) { %>
+                                                    <strong>₹<%= pos.toLocaleString('en-IN') %></strong>
+                                                    <% if (profile.loanAmount && pos > 0) { %>
+                                                        <div style="font-size:0.7em;color:#666;">
+                                                            (<%= Math.round((pos / profile.loanAmount) * 100) %>% remaining)
+                                                        </div>
+                                                    <% } %>
+                                                <% } else { %>
+                                                    <span style="color:#999;font-size:0.8em;">N/A</span>
+                                                <% } %>
+                                            </td>
+                                            <td style="padding:8px;text-align:right;<%= !emiMatches ? 'background:#ffebee;' : '' %>">
+                                                <div style="display:flex;align-items:center;justify-content:flex-end;gap:5px;">
+                                                    <span><%= profile.emi ? profile.emi.toLocaleString('en-IN') : '' %></span>
+                                                    <% if (!emiMatches && calculatedEMI) { %>
+                                                        <span style="color:#d32f2f;font-weight:bold;" title="EMI mismatch! Expected: ₹<%= calculatedEMI.toLocaleString('en-IN') %>">❌</span>
+                                                    <% } else if (emiMatches && calculatedEMI && profile.emi) { %>
+                                                        <span style="color:#4caf50;" title="EMI verified">✓</span>
+                                                    <% } %>
+                                                </div>
+                                            </td>
+                                            <td style="padding:8px;text-align:right;<%= !emiMatches ? 'background:#e8f5e9;font-weight:bold;' : '' %>">
+                                                <% if (calculatedEMI) { %>
+                                                    <%= calculatedEMI.toLocaleString('en-IN') %>
+                                                    <% if (!emiMatches && profile.emi) { %>
+                                                        <div style="font-size:0.75em;color:#d32f2f;">
+                                                            (Diff: ₹<%= Math.abs(profile.emi - calculatedEMI).toLocaleString('en-IN') %>)
+                                                        </div>
+                                                    <% } %>
+                                                <% } else { %>
+                                                    <span style="color:#999;font-size:0.8em;">N/A</span>
+                                                <% } %>
+                                            </td>
                                             <td style="padding:8px;text-align:center;"><%= profile.roi %><%= profile.roi ? '%' : '' %></td>
                                             <td style="padding:8px;text-align:center;"><%= profile.sanctionDate %></td>
                                             <td style="padding:8px;text-align:center;"><%= profile.tenure %></td>
@@ -1561,7 +2144,9 @@
                                     <tr style="background:#e8f5e9; font-weight:bold;">
                                         <td style="padding:10px;text-align:center;" colspan="4"><strong>TOTAL</strong></td>
                                         <td style="padding:10px;text-align:right;"><strong>₹<%= totalLoanAmount.toLocaleString('en-IN') %></strong></td>
+                                        <td style="padding:10px;text-align:right;background:#fff8e1;"><strong>₹<%= totalPOS.toLocaleString('en-IN') %></strong></td>
                                         <td style="padding:10px;text-align:right;"><strong>₹<%= totalEmi.toLocaleString('en-IN') %></strong></td>
+                                        <td style="padding:10px;text-align:right;"><strong>₹<%= totalCalculatedEmi.toLocaleString('en-IN') %></strong></td>
                                         <td style="padding:10px;" colspan="8"></td>
                                     </tr>
                                 </tfoot>
@@ -2199,81 +2784,119 @@
 
         // Edit debt profile entry
         async function editDebtProfile(id) {
+            if (!id) {
+                alert('Invalid profile ID');
+                return;
+            }
+
             // Fetch current data
             try {
                 const response = await fetch(`/api/debt-profile/${id}`);
+                if (!response.ok) {
+                    alert('Error fetching profile: ' + response.status);
+                    return;
+                }
+
                 const profile = await response.json();
 
                 if (!profile.success) {
-                    alert('Error fetching profile data');
+                    alert('Error fetching profile data: ' + (profile.message || 'Unknown error'));
                     return;
                 }
 
                 const data = profile.data;
 
+                // Helper function to escape HTML
+                const escapeHtml = (str) => {
+                    if (str === null || str === undefined) return '';
+                    return String(str).replace(/[&<>"']/g, (m) => ({
+                        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+                    })[m]);
+                };
+
                 // Create edit modal
-                const modalHtml = `
-                    <div id="editDebtModal" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999;">
-                        <div style="background:white;padding:25px;border-radius:10px;width:90%;max-width:600px;max-height:90vh;overflow-y:auto;">
-                            <h3 style="margin:0 0 20px 0;color:#1976d2;">Edit Loan Details</h3>
-                            <form id="editDebtForm">
-                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
-                                    <div>
-                                        <label style="display:block;margin-bottom:5px;font-weight:500;">Applicant</label>
-                                        <input type="text" name="loanApplicant" value="${data.loanApplicant || ''}" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
-                                    </div>
-                                    <div>
-                                        <label style="display:block;margin-bottom:5px;font-weight:500;">Bank Name</label>
-                                        <input type="text" name="bank" value="${data.bank || ''}" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
-                                    </div>
-                                    <div>
-                                        <label style="display:block;margin-bottom:5px;font-weight:500;">Loan Type</label>
-                                        <input type="text" name="loanType" value="${data.loanType || ''}" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
-                                    </div>
-                                    <div>
-                                        <label style="display:block;margin-bottom:5px;font-weight:500;">Loan Amount</label>
-                                        <input type="number" name="loanAmount" value="${data.loanAmount || ''}" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
-                                    </div>
-                                    <div>
-                                        <label style="display:block;margin-bottom:5px;font-weight:500;">EMI</label>
-                                        <input type="number" name="emi" value="${data.emi || ''}" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
-                                    </div>
-                                    <div>
-                                        <label style="display:block;margin-bottom:5px;font-weight:500;">ROI %</label>
-                                        <input type="number" step="0.01" name="roi" value="${data.roi || ''}" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
-                                    </div>
-                                    <div>
-                                        <label style="display:block;margin-bottom:5px;font-weight:500;">Sanction Date</label>
-                                        <input type="text" name="sanctionDate" value="${data.sanctionDate || ''}" placeholder="DD/MM/YYYY" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
-                                    </div>
-                                    <div>
-                                        <label style="display:block;margin-bottom:5px;font-weight:500;">Tenure (Months)</label>
-                                        <input type="number" name="tenure" value="${data.tenure || ''}" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
-                                    </div>
-                                    <div>
-                                        <label style="display:block;margin-bottom:5px;font-weight:500;">EMI Start Date</label>
-                                        <input type="text" name="emiStartDate" value="${data.emiStartDate || ''}" placeholder="DD/MM/YYYY" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
-                                    </div>
-                                    <div>
-                                        <label style="display:block;margin-bottom:5px;font-weight:500;">EMI End Date</label>
-                                        <input type="text" name="emiEndDate" value="${data.emiEndDate || ''}" placeholder="DD/MM/YYYY" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
-                                    </div>
+                const modal = document.createElement('div');
+                modal.id = 'editDebtModal';
+                modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999;';
+
+                modal.innerHTML = `
+                    <div style="background:white;padding:25px;border-radius:10px;width:90%;max-width:600px;max-height:90vh;overflow-y:auto;">
+                        <h3 style="margin:0 0 20px 0;color:#1976d2;">Edit Loan Details</h3>
+                        <form id="editDebtForm">
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                                <div>
+                                    <label style="display:block;margin-bottom:5px;font-weight:500;">Applicant</label>
+                                    <input type="text" name="loanApplicant" id="edit_loanApplicant" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
                                 </div>
-                                <div style="margin-top:20px;display:flex;gap:10px;justify-content:flex-end;">
-                                    <button type="button" onclick="closeEditModal()" style="padding:10px 20px;background:#9e9e9e;color:white;border:none;border-radius:4px;cursor:pointer;">Cancel</button>
-                                    <button type="submit" style="padding:10px 20px;background:#1976d2;color:white;border:none;border-radius:4px;cursor:pointer;">Save Changes</button>
+                                <div>
+                                    <label style="display:block;margin-bottom:5px;font-weight:500;">Bank Name</label>
+                                    <input type="text" name="bank" id="edit_bank" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
                                 </div>
-                            </form>
-                        </div>
+                                <div>
+                                    <label style="display:block;margin-bottom:5px;font-weight:500;">Loan Type</label>
+                                    <input type="text" name="loanType" id="edit_loanType" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
+                                </div>
+                                <div>
+                                    <label style="display:block;margin-bottom:5px;font-weight:500;">Loan Amount</label>
+                                    <input type="number" name="loanAmount" id="edit_loanAmount" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
+                                </div>
+                                <div>
+                                    <label style="display:block;margin-bottom:5px;font-weight:500;">EMI</label>
+                                    <input type="number" name="emi" id="edit_emi" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
+                                </div>
+                                <div>
+                                    <label style="display:block;margin-bottom:5px;font-weight:500;">ROI %</label>
+                                    <input type="number" step="0.01" name="roi" id="edit_roi" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
+                                </div>
+                                <div>
+                                    <label style="display:block;margin-bottom:5px;font-weight:500;">Sanction Date</label>
+                                    <input type="text" name="sanctionDate" id="edit_sanctionDate" placeholder="DD/MM/YYYY" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
+                                </div>
+                                <div>
+                                    <label style="display:block;margin-bottom:5px;font-weight:500;">Tenure (Months)</label>
+                                    <input type="number" name="tenure" id="edit_tenure" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
+                                </div>
+                                <div>
+                                    <label style="display:block;margin-bottom:5px;font-weight:500;">EMI Start Date</label>
+                                    <input type="text" name="emiStartDate" id="edit_emiStartDate" placeholder="DD/MM/YYYY" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
+                                </div>
+                                <div>
+                                    <label style="display:block;margin-bottom:5px;font-weight:500;">EMI End Date</label>
+                                    <input type="text" name="emiEndDate" id="edit_emiEndDate" placeholder="DD/MM/YYYY" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
+                                </div>
+                            </div>
+                            <div style="margin-top:20px;display:flex;gap:10px;justify-content:flex-end;">
+                                <button type="button" onclick="closeEditModal()" style="padding:10px 20px;background:#9e9e9e;color:white;border:none;border-radius:4px;cursor:pointer;">Cancel</button>
+                                <button type="submit" style="padding:10px 20px;background:#1976d2;color:white;border:none;border-radius:4px;cursor:pointer;">Save Changes</button>
+                            </div>
+                        </form>
                     </div>
                 `;
 
-                document.body.insertAdjacentHTML('beforeend', modalHtml);
+                document.body.appendChild(modal);
+
+                // Set values after DOM is created (avoids escaping issues)
+                document.getElementById('edit_loanApplicant').value = data.loanApplicant || '';
+                document.getElementById('edit_bank').value = data.bank || '';
+                document.getElementById('edit_loanType').value = data.loanType || '';
+                document.getElementById('edit_loanAmount').value = data.loanAmount || '';
+                document.getElementById('edit_emi').value = data.emi || '';
+                document.getElementById('edit_roi').value = data.roi || '';
+                document.getElementById('edit_sanctionDate').value = data.sanctionDate || '';
+                document.getElementById('edit_tenure').value = data.tenure || '';
+                document.getElementById('edit_emiStartDate').value = data.emiStartDate || '';
+                document.getElementById('edit_emiEndDate').value = data.emiEndDate || '';
 
                 document.getElementById('editDebtForm').onsubmit = async (e) => {
                     e.preventDefault();
                     const formData = new FormData(e.target);
                     const updateData = Object.fromEntries(formData.entries());
+
+                    // Convert numeric fields
+                    updateData.loanAmount = Number(updateData.loanAmount) || 0;
+                    updateData.emi = Number(updateData.emi) || 0;
+                    updateData.roi = Number(updateData.roi) || 0;
+                    updateData.tenure = Number(updateData.tenure) || 0;
 
                     try {
                         const updateResponse = await fetch(`/api/debt-profile/${id}`, {
@@ -2288,13 +2911,14 @@
                             closeEditModal();
                             window.location.reload();
                         } else {
-                            alert('Update failed: ' + result.message);
+                            alert('Update failed: ' + (result.message || 'Unknown error'));
                         }
                     } catch (err) {
                         alert('Error updating: ' + err.message);
                     }
                 };
             } catch (error) {
+                console.error('Edit debt profile error:', error);
                 alert('Error: ' + error.message);
             }
         }
@@ -2400,7 +3024,7 @@
             const originalHtml = btn.innerHTML;
             btn.disabled = true;
             btn.innerHTML = '⏳ Processing...';
-            
+
             try {
                 const response = await fetch(`/stage2/${proposalId}/reprocess-banking`, {
                     method: 'POST',
@@ -2408,11 +3032,56 @@
                         'Content-Type': 'application/json'
                     }
                 });
-                
+
                 const result = await response.json();
-                
+
                 if (result.success) {
                     alert(`✓ ${result.message}`);
+                    window.location.reload();
+                } else {
+                    alert('Extraction failed: ' + result.error);
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        }
+
+        // Reprocess financial documents to extract full text and detect components
+        async function reprocessFinancialDocs() {
+            const btn = event.target;
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Processing Financial Documents...';
+
+            try {
+                const response = await fetch(`/stage2/${proposalId}/reprocess-financials`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    let message = `✓ ${result.message}\n\n`;
+                    if (result.extractionResults && result.extractionResults.length > 0) {
+                        message += 'Components found:\n';
+                        result.extractionResults.forEach(r => {
+                            if (r.components) {
+                                message += `\n${r.fileName}:\n`;
+                                message += `  - ITR Acknowledgement: ${r.components.itrAck ? '✓' : '✗'}\n`;
+                                message += `  - Computation: ${r.components.computation ? '✓' : '✗'}\n`;
+                                message += `  - Balance Sheet: ${r.components.balanceSheet ? '✓' : '✗'}\n`;
+                                message += `  - Profit & Loss: ${r.components.profitLoss ? '✓' : '✗'}\n`;
+                            }
+                        });
+                    }
+                    alert(message);
                     window.location.reload();
                 } else {
                     alert('Extraction failed: ' + result.error);
