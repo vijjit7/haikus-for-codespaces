@@ -7,11 +7,14 @@ const DebtProfileSchema = new mongoose.Schema({
   loanType: String,
   loanAmount: Number,
   emi: Number,
-  emiStartDate: String,
-  tenure: String,
-  emiEndDate: String,
   roi: Number,
-  currentOutstanding: Number
+  sanctionDate: String,
+  tenure: Number,
+  emiStartDate: String,
+  emiEndDate: String,
+  monthsCompleted: Number,
+  percentTenureCompleted: Number,
+  proposalId: String
 });
 
 module.exports = mongoose.model('DebtProfile', DebtProfileSchema);

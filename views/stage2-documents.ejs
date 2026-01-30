@@ -89,70 +89,6 @@
                 </div>
             </div>
 
-            <% if (proposal.applicantType === 'Partnership') { %>
-            <!-- Partnership Information Section -->
-            <div class="partnership-info card">
-                <h2>🤝 Partnership Information</h2>
-                <%
-                    // Extract partnership details from documents
-                    let partnershipDate = null;
-                    let partnershipPartners = [];
-                    
-                    if (proposal.documents && proposal.documents.length > 0) {
-                        proposal.documents.forEach(doc => {
-                            if (doc.extractedDetails) {
-                                if (doc.extractedDetails.deedDate && !partnershipDate) {
-                                    partnershipDate = doc.extractedDetails.deedDate;
-                                }
-                                if (doc.extractedDetails.partners && doc.extractedDetails.partners.length > 0) {
-                                    partnershipPartners = doc.extractedDetails.partners;
-                                }
-                            }
-                        });
-                    }
-                %>
-                
-                <div class="partnership-details">
-                    <div class="partnership-item">
-                        <span class="label">📅 Partnership Date:</span>
-                        <% if (partnershipDate) { %>
-                            <span class="value partnership-extracted"><%= partnershipDate %> ✓</span>
-                        <% } else { %>
-                            <span class="value partnership-missing">Not extracted yet - Please upload Partnership Deed</span>
-                        <% } %>
-                    </div>
-                    
-                    <div class="partnership-item">
-                        <span class="label">💰 Profit & Loss Sharing:</span>
-                        <% if (partnershipPartners && partnershipPartners.length > 0) { %>
-                            <div class="shares-list">
-                                <% partnershipPartners.forEach(partner => { %>
-                                    <div class="share-item partnership-extracted">
-                                        <% if (typeof partner.profitPercent === 'number') { %>
-                                            ✓ <strong><%= partner.name %></strong>: 
-                                            Profit <%= partner.profitPercent %>%
-                                            <% if (partner.lossPercent !== partner.profitPercent && typeof partner.lossPercent === 'number') { %>
-                                                | Loss <%= partner.lossPercent %>%
-                                            <% } %>
-                                        <% } else { %>
-                                            ✓ <%= partner.name %>
-                                        <% } %>
-                                    </div>
-                                <% }); %>
-                            </div>
-                        <% } else { %>
-                            <span class="value partnership-missing">Not extracted yet - Please upload Partnership Deed</span>
-                        <% } %>
-                    </div>
-                </div>
-                
-                <% if (!partnershipDate || !partnershipPartners || partnershipPartners.length === 0) { %>
-                    <div class="partnership-note">
-                        <strong>ℹ️ Note:</strong> Partnership date and profit/loss shares will be automatically extracted from your Partnership Deed PDF once uploaded.
-                    </div>
-                <% } %>
-            </div>
-            <% } %>
 
             <!-- Document Statistics Section -->
             <div class="document-statistics card">
@@ -206,6 +142,19 @@
             </div>
 
             <!-- Required Documents Section -->
+            <%
+                // Calculate Financial Years - rolls over every November
+                const now = new Date();
+                const currentMonth = now.getMonth(); // 0-11 (0=Jan, 10=Nov)
+                const currentYear = now.getFullYear();
+
+                // Before November: use (year-2) as base, From November onwards: use (year-1) as base
+                const baseYear = currentMonth >= 10 ? currentYear - 1 : currentYear - 2;
+
+                const currentFY = 'FY' + baseYear + '-' + String(baseYear + 1).slice(-2);
+                const previousFY = 'FY' + (baseYear - 1) + '-' + String(baseYear).slice(-2);
+                const precedingFY = 'FY' + (baseYear - 2) + '-' + String(baseYear - 1).slice(-2);
+            %>
             <div class="required-documents card">
                 <h2>📋 Required Documents</h2>
                 
@@ -237,6 +186,16 @@
                         <li>GST Certificate of <%= proposal.applicantName || 'Applicant Name' %></li>
                         <li>Labour License of <%= proposal.applicantName || 'Applicant Name' %></li>
                         <li>UDYAM Certificate of <%= proposal.applicantName || 'Applicant Name' %></li>
+                        <% if (proposal.applicantType === 'Partnership' || proposal.applicantType === 'LLP') { %>
+                        <li>Firm Registration Certificate of <%= proposal.applicantName || 'Applicant Name' %></li>
+                        <% } %>
+                        <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
+                            <% proposal.coApplicants.forEach((co, idx) => { %>
+                                <% if (co.type === 'Partnership' || co.type === 'LLP') { %>
+                                <li>Firm Registration Certificate of <%= co.name %></li>
+                                <% } %>
+                            <% }); %>
+                        <% } %>
                     </ul>
                 </div>
                 <% } %>
@@ -284,9 +243,9 @@
                     <div class="doc-subcategory">
                         <h4>Business</h4>
                         <ul class="doc-list">
-                            <li>ITR of Current Year of (<%= proposal.applicantName %>)</li>
-                            <li>ITR of Previous Year of (<%= proposal.applicantName %>)</li>
-                            <li>ITR of Preceding previous year of (<%= proposal.applicantName %>)</li>
+                            <li>ITR of <%= currentFY %> of (<%= proposal.applicantName %>)</li>
+                            <li>ITR of <%= previousFY %> of (<%= proposal.applicantName %>)</li>
+                            <li>ITR of <%= precedingFY %> of (<%= proposal.applicantName %>)</li>
                         </ul>
                     </div>
                     <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
@@ -294,9 +253,9 @@
                         <h4>Personal</h4>
                         <ul class="doc-list">
                             <% proposal.coApplicants.forEach((co, idx) => { %>
-                                <li>ITR of Current Year (<%= co.name || 'CoApplicant ' + (idx + 1) %>)</li>
-                                <li>ITR of Previous Year of (<%= co.name || 'coApplicant' + (idx + 1) + ' name' %>)</li>
-                                <li>ITR of Preceding previous year of (<%= co.name || 'coApplicant' + (idx + 1) + ' name' %>)</li>
+                                <li>ITR of <%= currentFY %> of (<%= co.name || 'CoApplicant ' + (idx + 1) %>)</li>
+                                <li>ITR of <%= previousFY %> of (<%= co.name || 'coApplicant' + (idx + 1) + ' name' %>)</li>
+                                <li>ITR of <%= precedingFY %> of (<%= co.name || 'coApplicant' + (idx + 1) + ' name' %>)</li>
                             <% }); %>
                         </ul>
                     </div>
@@ -544,6 +503,20 @@
                             allDocTypesByCategory.businessId.push('GST Certificate of ' + (proposal.applicantName || 'Applicant Name'));
                             allDocTypesByCategory.businessId.push('Labour License of ' + (proposal.applicantName || 'Applicant Name'));
                             allDocTypesByCategory.businessId.push('UDYAM Certificate of ' + (proposal.applicantName || 'Applicant Name'));
+
+                            // Firm Registration Certificate for Partnership or LLP applicant
+                            if (proposal.applicantType === 'Partnership' || proposal.applicantType === 'LLP') {
+                                allDocTypesByCategory.businessId.push('Firm Registration Certificate of ' + (proposal.applicantName || 'Applicant Name'));
+                            }
+
+                            // Firm Registration Certificate for Partnership or LLP co-applicants
+                            if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                                proposal.coApplicants.forEach((co, idx) => {
+                                    if (co.type === 'Partnership' || co.type === 'LLP') {
+                                        allDocTypesByCategory.businessId.push('Firm Registration Certificate of ' + co.name);
+                                    }
+                                });
+                            }
                         }
                         
                         // Incorporation
@@ -569,15 +542,15 @@
                         }
                         
                         // Financials
-                        allDocTypesByCategory.financials.push('ITR of Current Year of ' + proposal.applicantName);
-                        allDocTypesByCategory.financials.push('ITR of Previous Year of ' + proposal.applicantName);
-                        allDocTypesByCategory.financials.push('ITR of Preceding previous year of ' + proposal.applicantName);
+                        allDocTypesByCategory.financials.push('ITR of ' + currentFY + ' of ' + proposal.applicantName);
+                        allDocTypesByCategory.financials.push('ITR of ' + previousFY + ' of ' + proposal.applicantName);
+                        allDocTypesByCategory.financials.push('ITR of ' + precedingFY + ' of ' + proposal.applicantName);
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
                                 if (co.type === 'Individual') {
-                                    allDocTypesByCategory.financials.push('ITR of Current Year of ' + (co.name || 'CoApplicant ' + (idx + 1)));
-                                    allDocTypesByCategory.financials.push('ITR of Previous Year of ' + (co.name || 'coApplicant' + (idx + 1) + ' name'));
-                                    allDocTypesByCategory.financials.push('ITR of Preceding previous year of ' + (co.name || 'coApplicant' + (idx + 1) + ' name'));
+                                    allDocTypesByCategory.financials.push('ITR of ' + currentFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1)));
+                                    allDocTypesByCategory.financials.push('ITR of ' + previousFY + ' of ' + (co.name || 'coApplicant' + (idx + 1) + ' name'));
+                                    allDocTypesByCategory.financials.push('ITR of ' + precedingFY + ' of ' + (co.name || 'coApplicant' + (idx + 1) + ' name'));
                                 }
                             });
                         }
@@ -666,6 +639,22 @@
                             if (!classifiedDocs.includes(gst)) pendingByCategory.businessId.push(gst);
                             if (!classifiedDocs.includes(labour)) pendingByCategory.businessId.push(labour);
                             if (!classifiedDocs.includes(udyam)) pendingByCategory.businessId.push(udyam);
+
+                            // Firm Registration Certificate for Partnership or LLP applicant
+                            if (proposal.applicantType === 'Partnership' || proposal.applicantType === 'LLP') {
+                                const firmRegCert = 'Firm Registration Certificate of ' + (proposal.applicantName || 'Applicant Name');
+                                if (!classifiedDocs.includes(firmRegCert)) pendingByCategory.businessId.push(firmRegCert);
+                            }
+
+                            // Firm Registration Certificate for Partnership or LLP co-applicants
+                            if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                                proposal.coApplicants.forEach((co, idx) => {
+                                    if (co.type === 'Partnership' || co.type === 'LLP') {
+                                        const coFirmRegCert = 'Firm Registration Certificate of ' + co.name;
+                                        if (!classifiedDocs.includes(coFirmRegCert)) pendingByCategory.businessId.push(coFirmRegCert);
+                                    }
+                                });
+                            }
                         }
 
                         // Incorporation - Always show for Partnership to display required details
@@ -699,19 +688,19 @@
                         }
 
                         // Financials
-                        const itrCurrent = 'ITR of Current Year of ' + proposal.applicantName;
-                        const itrPrevious = 'ITR of Previous Year of ' + proposal.applicantName;
-                        const itrPreceding = 'ITR of Preceding previous year of ' + proposal.applicantName;
+                        const itrCurrent = 'ITR of ' + currentFY + ' of ' + proposal.applicantName;
+                        const itrPrevious = 'ITR of ' + previousFY + ' of ' + proposal.applicantName;
+                        const itrPreceding = 'ITR of ' + precedingFY + ' of ' + proposal.applicantName;
                         if (!classifiedDocs.includes(itrCurrent)) pendingByCategory.financials.push(itrCurrent);
                         if (!classifiedDocs.includes(itrPrevious)) pendingByCategory.financials.push(itrPrevious);
                         if (!classifiedDocs.includes(itrPreceding)) pendingByCategory.financials.push(itrPreceding);
-                        
+
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
                                 if (co.type === 'Individual') {
-                                    const coItrCurrent = 'ITR of Current Year of ' + (co.name || 'CoApplicant ' + (idx + 1));
-                                    const coItrPrevious = 'ITR of Previous Year of ' + (co.name || 'coApplicant' + (idx + 1) + ' name');
-                                    const coItrPreceding = 'ITR of Preceding previous year of ' + (co.name || 'coApplicant' + (idx + 1) + ' name');
+                                    const coItrCurrent = 'ITR of ' + currentFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1));
+                                    const coItrPrevious = 'ITR of ' + previousFY + ' of ' + (co.name || 'coApplicant' + (idx + 1) + ' name');
+                                    const coItrPreceding = 'ITR of ' + precedingFY + ' of ' + (co.name || 'coApplicant' + (idx + 1) + ' name');
                                     if (!classifiedDocs.includes(coItrCurrent)) pendingByCategory.financials.push(coItrCurrent);
                                     if (!classifiedDocs.includes(coItrPrevious)) pendingByCategory.financials.push(coItrPrevious);
                                     if (!classifiedDocs.includes(coItrPreceding)) pendingByCategory.financials.push(coItrPreceding);
@@ -1140,6 +1129,84 @@
                                 </div>
                             <% } %>
                             
+                            <%
+                            // EMI Verification against Bank Statements
+                            const missingEmiBankStatements = [];
+
+                            if (debtProfiles && debtProfiles.length > 0) {
+                                // Get all bank statement extracted texts
+                                const allBankStatementTexts = bankingDocs
+                                    .filter(doc => doc.extractedText)
+                                    .map(doc => doc.extractedText.toLowerCase());
+                                const combinedBankText = allBankStatementTexts.join(' ');
+
+                                // Check each EMI from debt profiles
+                                debtProfiles.forEach(profile => {
+                                    if (profile.emi && profile.emi > 0) {
+                                        const emiAmount = Math.round(profile.emi);
+                                        const emiVariations = [
+                                            emiAmount.toString(),
+                                            emiAmount.toLocaleString('en-IN'),
+                                            (emiAmount - 1).toString(), // Allow ±1 variance
+                                            (emiAmount + 1).toString()
+                                        ];
+
+                                        // Check if EMI appears in any bank statement
+                                        const emiFound = emiVariations.some(emi => combinedBankText.includes(emi));
+
+                                        if (!emiFound) {
+                                            // Calculate required period
+                                            let requiredPeriod = 'last 12 months';
+                                            if (profile.emiStartDate) {
+                                                const startParts = profile.emiStartDate.split('/');
+                                                if (startParts.length === 3) {
+                                                    const startDate = new Date(startParts[2], startParts[1] - 1, startParts[0]);
+                                                    const monthsAgo = Math.floor((new Date() - startDate) / (30 * 24 * 60 * 60 * 1000));
+                                                    if (monthsAgo < 12) {
+                                                        requiredPeriod = `from ${profile.emiStartDate} (${monthsAgo} months)`;
+                                                    }
+                                                }
+                                            }
+
+                                            missingEmiBankStatements.push({
+                                                bank: profile.bank,
+                                                emi: emiAmount,
+                                                loanType: profile.loanType,
+                                                applicant: profile.loanApplicant,
+                                                requiredPeriod: requiredPeriod
+                                            });
+                                        }
+                                    }
+                                });
+                            }
+                            %>
+
+                            <% if (missingEmiBankStatements.length > 0) { %>
+                                <!-- Missing EMI Bank Statements -->
+                                <div style="margin-bottom: 20px; padding: 15px; background: #fff3e0; border-radius: 8px; border-left: 4px solid #ff9800;">
+                                    <h4 style="margin: 0 0 15px 0; color: #e65100;">
+                                        ⚠️ EMI Verification - Missing Bank Statements (<%= missingEmiBankStatements.length %>)
+                                    </h4>
+                                    <p style="margin: 0 0 15px 0; color: #666; font-size: 0.9em;">
+                                        The following EMIs from Debt Profile are not reflecting in the uploaded bank statements.
+                                        Please provide the bank statements where these EMIs are debited.
+                                    </p>
+                                    <ul style="margin: 0; padding: 0 0 0 20px;">
+                                        <% missingEmiBankStatements.forEach(item => { %>
+                                            <li style="margin: 8px 0; padding: 10px; background: white; border-radius: 4px; list-style: none; margin-left: -20px; padding-left: 15px; border-left: 3px solid #f57c00;">
+                                                <strong style="color: #d32f2f;">EMI ₹<%= item.emi.toLocaleString('en-IN') %></strong>
+                                                <span style="color: #555;"> - <%= item.bank %> (<%= item.loanType %>)</span>
+                                                <br>
+                                                <span style="font-size: 0.85em; color: #666;">
+                                                    👤 <%= item.applicant %> |
+                                                    📅 Bank statement required for <%= item.requiredPeriod %>
+                                                </span>
+                                            </li>
+                                        <% }); %>
+                                    </ul>
+                                </div>
+                            <% } %>
+
                             <% if (pendingByCategory.banking.length > 0) { %>
                                 <ul class="pending-list">
                                     <% pendingByCategory.banking.forEach(doc => { %>
@@ -1149,7 +1216,7 @@
                                         </li>
                                     <% }); %>
                                 </ul>
-                            <% } else { %>
+                            <% } else if (missingEmiBankStatements.length === 0) { %>
                                 <p class="success-message">✓ All Banking documents uploaded!</p>
                             <% } %>
                         </div>
@@ -1183,12 +1250,28 @@
                                 }
                             }
 
+                            // Store trade name and legal name for each GSTIN
+                            const gstinNames = {};
+
                             allGstReturns.forEach(doc => {
                                 const gstinMatch = doc.extractedText.match(/GSTIN of the supplier\s+([A-Z0-9]+)/);
                                 const gstin = gstinMatch ? gstinMatch[1] : 'Unknown GSTIN';
+
+                                // Extract trade name and legal name
+                                const tradeNameMatch = doc.extractedText.match(/Trade name[,\s]*\(if any\)\s*[:\-]?\s*([^\n\r]+)/i);
+                                const legalNameMatch = doc.extractedText.match(/Legal name of the registered person\s*[:\-]?\s*([^\n\r]+)/i);
+
                                 if (!gstReturnsByGstin[gstin]) {
                                     gstReturnsByGstin[gstin] = [];
                                     uploadedMonthsByGstin[gstin] = {};
+                                    gstinNames[gstin] = {
+                                        tradeName: tradeNameMatch ? tradeNameMatch[1].trim() : '',
+                                        legalName: legalNameMatch ? legalNameMatch[1].trim() : ''
+                                    };
+                                } else if (!gstinNames[gstin].tradeName && tradeNameMatch) {
+                                    gstinNames[gstin].tradeName = tradeNameMatch[1].trim();
+                                } else if (!gstinNames[gstin].legalName && legalNameMatch) {
+                                    gstinNames[gstin].legalName = legalNameMatch[1].trim();
                                 }
                                 gstReturnsByGstin[gstin].push(doc);
 
@@ -1256,21 +1339,14 @@
                                     missingReturnsByGstin[gstin] = [];
                                     last12Months.forEach(m => {
                                         const uploaded = uploadedMonthsByGstin[gstin][m.key];
-                                        if (!uploaded) {
-                                            // Neither form uploaded
+                                        // Only mark as missing if NEITHER GSTR-1 nor GSTR-3B is uploaded
+                                        // If either one is received, it's considered complete
+                                        if (!uploaded || (!uploaded.gstr1 && !uploaded.gstr3b)) {
                                             missingReturnsByGstin[gstin].push({
                                                 ...m,
                                                 status: 'missing',
                                                 gstr1: false,
                                                 gstr3b: false
-                                            });
-                                        } else if (!uploaded.gstr1 || !uploaded.gstr3b) {
-                                            // At least one form missing
-                                            missingReturnsByGstin[gstin].push({
-                                                ...m,
-                                                status: 'partial',
-                                                gstr1: uploaded.gstr1,
-                                                gstr3b: uploaded.gstr3b
                                             });
                                         }
                                     });
@@ -1304,24 +1380,17 @@
                                         <% if (missingReturnsByGstin[gstin].length > 0) { %>
                                             <div style="margin-bottom: 15px; padding: 10px; background: #fff3e0; border-left: 4px solid #ff9800; border-radius: 4px;">
                                                 <strong style="color: #e65100;">GSTIN: <%= gstin %></strong>
+                                                <% if (gstinNames[gstin] && (gstinNames[gstin].tradeName || gstinNames[gstin].legalName)) { %>
+                                                    <span style="margin-left: 10px; color: #555;">
+                                                        <% if (gstinNames[gstin].tradeName) { %>| Trade Name: <strong><%= gstinNames[gstin].tradeName %></strong><% } %>
+                                                        <% if (gstinNames[gstin].legalName) { %>| Legal Name: <strong><%= gstinNames[gstin].legalName %></strong><% } %>
+                                                    </span>
+                                                <% } %>
                                                 <ul style="margin: 8px 0 0 20px; padding: 0;">
                                                     <% missingReturnsByGstin[gstin].forEach(m => { %>
                                                         <li style="margin: 4px 0;">
                                                             <strong><%= m.month %> (FY <%= m.fy %>)</strong>:
-                                                            <% if (m.status === 'missing') { %>
-                                                                <span style="color: #d32f2f;">GSTR-1 - Not uploaded, GSTR-3B - Not uploaded</span>
-                                                            <% } else { %>
-                                                                <% if (m.gstr1) { %>
-                                                                    <span style="color: #2e7d32;">GSTR-1 received</span>,
-                                                                <% } else { %>
-                                                                    <span style="color: #d32f2f;">GSTR-1 - Not uploaded</span>,
-                                                                <% } %>
-                                                                <% if (m.gstr3b) { %>
-                                                                    <span style="color: #2e7d32;">GSTR-3B received</span>
-                                                                <% } else { %>
-                                                                    <span style="color: #d32f2f;">GSTR-3B - Not uploaded</span>
-                                                                <% } %>
-                                                            <% } %>
+                                                            <span style="color: #d32f2f;">GST Return not uploaded</span>
                                                         </li>
                                                     <% }); %>
                                                 </ul>
@@ -1341,7 +1410,15 @@
                                 <% if (allGstReturns.length > 0) { %>
                                     <% Object.keys(gstReturnsByGstin).forEach(gstin => { %>
                                         <div style="margin-bottom: 24px;">
-                                            <h4 style="margin-bottom: 8px; color: #1976d2;">GSTIN: <%= gstin %></h4>
+                                            <h4 style="margin-bottom: 8px; color: #1976d2;">
+                                                GSTIN: <%= gstin %>
+                                                <% if (gstinNames[gstin] && (gstinNames[gstin].tradeName || gstinNames[gstin].legalName)) { %>
+                                                    <span style="font-weight: normal; color: #555; font-size: 0.9em;">
+                                                        <% if (gstinNames[gstin].tradeName) { %>| Trade Name: <strong><%= gstinNames[gstin].tradeName %></strong><% } %>
+                                                        <% if (gstinNames[gstin].legalName) { %>| Legal Name: <strong><%= gstinNames[gstin].legalName %></strong><% } %>
+                                                    </span>
+                                                <% } %>
+                                            </h4>
                                             <table border="1" style="width:100%;border-collapse:collapse;background:#fff;">
                                                 <thead>
                                                     <tr style="background:#e8f5e9;">
@@ -1395,46 +1472,109 @@
 
                         <!-- Debt Profile Pending -->
                         <div class="pending-category-content" data-pending-category="debtProfile" style="display: none;">
-                            <h3>Debt Profile Table</h3>
+                            <% if (pendingByCategory.debtProfile.length > 0) { %>
+                                <ul class="pending-list">
+                                    <% pendingByCategory.debtProfile.forEach(doc => { %>
+                                        <li class="pending-item">
+                                            <span class="warning-icon">⚠️</span>
+                                            <%= doc %>
+                                        </li>
+                                    <% }); %>
+                                </ul>
+                            <% } %>
+
+                            <%
+                            // Check if there are Excel files in debtProfile category
+                            const debtProfileExcelFiles = uploadedFiles.filter(f =>
+                                f.category === 'debtProfile' &&
+                                (f.filename.endsWith('.xlsx') || f.filename.endsWith('.xls'))
+                            );
+                            %>
+
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px;">
+                                <h3 style="margin: 0;">Debt Profile Table</h3>
+                                <% if (debtProfileExcelFiles.length > 0) { %>
+                                    <button onclick="extractDebtProfile()" class="btn btn-primary" style="font-size: 0.85em; padding: 6px 12px;">
+                                        🔄 Extract from Excel (<%= debtProfileExcelFiles.length %> file<%= debtProfileExcelFiles.length > 1 ? 's' : '' %>)
+                                    </button>
+                                <% } %>
+                            </div>
+
                             <% if (debtProfiles && debtProfiles.length > 0) { %>
-                            <div style="overflow-x:auto;">
-                            <table border="1" style="width:100%;border-collapse:collapse;">
+                            <div style="overflow-x:auto; margin-top: 15px;">
+                            <table border="1" style="width:100%;border-collapse:collapse;background:#fff;font-size:0.9em;">
                                 <thead>
-                                    <tr>
-                                        <th>S.No</th>
-                                        <th>Loan Applicant</th>
-                                        <th>Bank</th>
-                                        <th>Loan Type</th>
-                                        <th>Loan Amount</th>
-                                        <th>EMI</th>
-                                        <th>EMI Start Date</th>
-                                        <th>Tenure</th>
-                                        <th>EMI End Date</th>
-                                        <th>ROI</th>
-                                        <th>Current Outstanding</th>
+                                    <tr style="background:#e3f2fd;">
+                                        <th style="padding:8px;">S.No</th>
+                                        <th style="padding:8px;">Applicant</th>
+                                        <th style="padding:8px;">Bank Name</th>
+                                        <th style="padding:8px;">Loan Type</th>
+                                        <th style="padding:8px;">Loan Amount</th>
+                                        <th style="padding:8px;">EMI</th>
+                                        <th style="padding:8px;">ROI %</th>
+                                        <th style="padding:8px;">Sanction Date</th>
+                                        <th style="padding:8px;">Tenure (Months)</th>
+                                        <th style="padding:8px;">EMI Start Date</th>
+                                        <th style="padding:8px;">EMI End Date</th>
+                                        <th style="padding:8px;">Months Completed</th>
+                                        <th style="padding:8px;">% Tenure Completed</th>
+                                        <th style="padding:8px;">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <% debtProfiles.forEach(function(profile) { %>
+                                    <%
+                                    let totalLoanAmount = 0;
+                                    let totalEmi = 0;
+                                    debtProfiles.forEach(function(profile) {
+                                        totalLoanAmount += profile.loanAmount || 0;
+                                        totalEmi += profile.emi || 0;
+                                    %>
                                         <tr>
-                                            <td><%= profile.sNo %></td>
-                                            <td><%= profile.loanApplicant %></td>
-                                            <td><%= profile.bank %></td>
-                                            <td><%= profile.loanType %></td>
-                                            <td><%= profile.loanAmount %></td>
-                                            <td><%= profile.emi %></td>
-                                            <td><%= profile.emiStartDate %></td>
-                                            <td><%= profile.tenure %></td>
-                                            <td><%= profile.emiEndDate %></td>
-                                            <td><%= profile.roi %></td>
-                                            <td><%= profile.currentOutstanding %></td>
+                                            <td style="padding:8px;text-align:center;"><%= profile.sNo %></td>
+                                            <td style="padding:8px;"><%= profile.loanApplicant %></td>
+                                            <td style="padding:8px;"><%= profile.bank %></td>
+                                            <td style="padding:8px;"><%= profile.loanType %></td>
+                                            <td style="padding:8px;text-align:right;"><%= profile.loanAmount ? profile.loanAmount.toLocaleString('en-IN') : '' %></td>
+                                            <td style="padding:8px;text-align:right;"><%= profile.emi ? profile.emi.toLocaleString('en-IN') : '' %></td>
+                                            <td style="padding:8px;text-align:center;"><%= profile.roi %><%= profile.roi ? '%' : '' %></td>
+                                            <td style="padding:8px;text-align:center;"><%= profile.sanctionDate %></td>
+                                            <td style="padding:8px;text-align:center;"><%= profile.tenure %></td>
+                                            <td style="padding:8px;text-align:center;"><%= profile.emiStartDate %></td>
+                                            <td style="padding:8px;text-align:center;"><%= profile.emiEndDate %></td>
+                                            <td style="padding:8px;text-align:center;"><%= profile.monthsCompleted %></td>
+                                            <td style="padding:8px;text-align:center;">
+                                                <div style="display:flex;align-items:center;gap:5px;">
+                                                    <div style="flex:1;background:#e0e0e0;border-radius:4px;height:8px;">
+                                                        <div style="width:<%= profile.percentTenureCompleted %>%;background:<%= profile.percentTenureCompleted >= 80 ? '#4caf50' : profile.percentTenureCompleted >= 50 ? '#ff9800' : '#2196f3' %>;height:100%;border-radius:4px;"></div>
+                                                    </div>
+                                                    <span><%= profile.percentTenureCompleted %>%</span>
+                                                </div>
+                                            </td>
+                                            <td style="padding:8px;text-align:center;">
+                                                <button onclick="editDebtProfile('<%= profile._id %>')" style="padding:4px 8px;margin-right:4px;background:#1976d2;color:white;border:none;border-radius:4px;cursor:pointer;font-size:0.8em;" title="Edit">✏️</button>
+                                                <button onclick="deleteDebtProfile('<%= profile._id %>')" style="padding:4px 8px;background:#d32f2f;color:white;border:none;border-radius:4px;cursor:pointer;font-size:0.8em;" title="Delete">🗑️</button>
+                                            </td>
                                         </tr>
                                     <% }); %>
                                 </tbody>
+                                <tfoot>
+                                    <tr style="background:#e8f5e9; font-weight:bold;">
+                                        <td style="padding:10px;text-align:center;" colspan="4"><strong>TOTAL</strong></td>
+                                        <td style="padding:10px;text-align:right;"><strong>₹<%= totalLoanAmount.toLocaleString('en-IN') %></strong></td>
+                                        <td style="padding:10px;text-align:right;"><strong>₹<%= totalEmi.toLocaleString('en-IN') %></strong></td>
+                                        <td style="padding:10px;" colspan="8"></td>
+                                    </tr>
+                                </tfoot>
                             </table>
                             </div>
                             <% } else { %>
-                                <p class="success-message">✓ All Debt Profile documents uploaded!</p>
+                                <p style="color: #666; font-style: italic; margin-top: 15px;">
+                                    <% if (debtProfileExcelFiles.length > 0) { %>
+                                        Excel file(s) found. Click "Extract from Excel" to populate the debt profile table.
+                                    <% } else { %>
+                                        No debt profile data available yet. Upload Excel file with loan details and categorize as "Debt Profile".
+                                    <% } %>
+                                </p>
                             <% } %>
                         </div>
 
@@ -1997,7 +2137,7 @@
             if (!confirm('This will re-extract information from all partnership deed PDFs. Continue?')) {
                 return;
             }
-            
+
             try {
                 const response = await fetch(`/stage2/${proposalId}/reprocess-incorporation`, {
                     method: 'POST',
@@ -2005,18 +2145,18 @@
                         'Content-Type': 'application/json'
                     }
                 });
-                
+
                 const result = await response.json();
                 console.log('Reprocess result:', result);
-                
+
                 if (result.success) {
                     alert(`Successfully extracted data from ${result.processedCount} document(s)! Page will reload to show the results.`);
-                    
+
                     // Log extraction details to console
                     if (result.extractionResults && result.extractionResults.length > 0) {
                         console.log('Extraction Results:', result.extractionResults);
                     }
-                    
+
                     // Reload page immediately to show updated data
                     window.location.reload();
                 } else {
@@ -2024,6 +2164,165 @@
                 }
             } catch (error) {
                 console.error('Reprocess error:', error);
+                alert('Error: ' + error.message);
+            }
+        }
+
+        // Extract debt profile from uploaded Excel files
+        async function extractDebtProfile() {
+            if (!confirm('This will extract loan details from Excel files in Debt Profile category. Continue?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/stage2/${proposalId}/extract-debt-profile`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const result = await response.json();
+                console.log('Debt profile extraction result:', result);
+
+                if (result.success) {
+                    alert(`Successfully extracted ${result.count} loan record(s)! Page will reload to show the results.`);
+                    window.location.reload();
+                } else {
+                    alert('Extraction failed: ' + result.message);
+                }
+            } catch (error) {
+                console.error('Debt profile extraction error:', error);
+                alert('Error: ' + error.message);
+            }
+        }
+
+        // Edit debt profile entry
+        async function editDebtProfile(id) {
+            // Fetch current data
+            try {
+                const response = await fetch(`/api/debt-profile/${id}`);
+                const profile = await response.json();
+
+                if (!profile.success) {
+                    alert('Error fetching profile data');
+                    return;
+                }
+
+                const data = profile.data;
+
+                // Create edit modal
+                const modalHtml = `
+                    <div id="editDebtModal" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999;">
+                        <div style="background:white;padding:25px;border-radius:10px;width:90%;max-width:600px;max-height:90vh;overflow-y:auto;">
+                            <h3 style="margin:0 0 20px 0;color:#1976d2;">Edit Loan Details</h3>
+                            <form id="editDebtForm">
+                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                                    <div>
+                                        <label style="display:block;margin-bottom:5px;font-weight:500;">Applicant</label>
+                                        <input type="text" name="loanApplicant" value="${data.loanApplicant || ''}" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
+                                    </div>
+                                    <div>
+                                        <label style="display:block;margin-bottom:5px;font-weight:500;">Bank Name</label>
+                                        <input type="text" name="bank" value="${data.bank || ''}" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
+                                    </div>
+                                    <div>
+                                        <label style="display:block;margin-bottom:5px;font-weight:500;">Loan Type</label>
+                                        <input type="text" name="loanType" value="${data.loanType || ''}" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
+                                    </div>
+                                    <div>
+                                        <label style="display:block;margin-bottom:5px;font-weight:500;">Loan Amount</label>
+                                        <input type="number" name="loanAmount" value="${data.loanAmount || ''}" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
+                                    </div>
+                                    <div>
+                                        <label style="display:block;margin-bottom:5px;font-weight:500;">EMI</label>
+                                        <input type="number" name="emi" value="${data.emi || ''}" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
+                                    </div>
+                                    <div>
+                                        <label style="display:block;margin-bottom:5px;font-weight:500;">ROI %</label>
+                                        <input type="number" step="0.01" name="roi" value="${data.roi || ''}" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
+                                    </div>
+                                    <div>
+                                        <label style="display:block;margin-bottom:5px;font-weight:500;">Sanction Date</label>
+                                        <input type="text" name="sanctionDate" value="${data.sanctionDate || ''}" placeholder="DD/MM/YYYY" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
+                                    </div>
+                                    <div>
+                                        <label style="display:block;margin-bottom:5px;font-weight:500;">Tenure (Months)</label>
+                                        <input type="number" name="tenure" value="${data.tenure || ''}" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
+                                    </div>
+                                    <div>
+                                        <label style="display:block;margin-bottom:5px;font-weight:500;">EMI Start Date</label>
+                                        <input type="text" name="emiStartDate" value="${data.emiStartDate || ''}" placeholder="DD/MM/YYYY" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
+                                    </div>
+                                    <div>
+                                        <label style="display:block;margin-bottom:5px;font-weight:500;">EMI End Date</label>
+                                        <input type="text" name="emiEndDate" value="${data.emiEndDate || ''}" placeholder="DD/MM/YYYY" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
+                                    </div>
+                                </div>
+                                <div style="margin-top:20px;display:flex;gap:10px;justify-content:flex-end;">
+                                    <button type="button" onclick="closeEditModal()" style="padding:10px 20px;background:#9e9e9e;color:white;border:none;border-radius:4px;cursor:pointer;">Cancel</button>
+                                    <button type="submit" style="padding:10px 20px;background:#1976d2;color:white;border:none;border-radius:4px;cursor:pointer;">Save Changes</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                `;
+
+                document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+                document.getElementById('editDebtForm').onsubmit = async (e) => {
+                    e.preventDefault();
+                    const formData = new FormData(e.target);
+                    const updateData = Object.fromEntries(formData.entries());
+
+                    try {
+                        const updateResponse = await fetch(`/api/debt-profile/${id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(updateData)
+                        });
+
+                        const result = await updateResponse.json();
+                        if (result.success) {
+                            alert('Loan details updated successfully!');
+                            closeEditModal();
+                            window.location.reload();
+                        } else {
+                            alert('Update failed: ' + result.message);
+                        }
+                    } catch (err) {
+                        alert('Error updating: ' + err.message);
+                    }
+                };
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        function closeEditModal() {
+            const modal = document.getElementById('editDebtModal');
+            if (modal) modal.remove();
+        }
+
+        // Delete debt profile entry
+        async function deleteDebtProfile(id) {
+            if (!confirm('Are you sure you want to delete this loan entry?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/debt-profile/${id}`, {
+                    method: 'DELETE'
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    alert('Loan entry deleted successfully!');
+                    window.location.reload();
+                } else {
+                    alert('Delete failed: ' + result.message);
+                }
+            } catch (error) {
                 alert('Error: ' + error.message);
             }
         }

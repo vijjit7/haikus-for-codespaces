@@ -53,6 +53,134 @@ app.get('/debt-profile/pending', async (req, res) => {
   }
 });
 const debtProfileUpload = multer({ storage: debtProfileStorage });
+
+// Helper function to parse Excel date or string date
+function parseExcelDate(value) {
+  if (!value) return '';
+  // If it's an Excel serial number
+  if (typeof value === 'number') {
+    const date = new Date((value - 25569) * 86400 * 1000);
+    return date.toLocaleDateString('en-IN');
+  }
+  return String(value);
+}
+
+// Helper function to calculate months completed and percentage
+function calculateTenureProgress(emiStartDate, tenure) {
+  if (!emiStartDate || !tenure) return { monthsCompleted: 0, percentCompleted: 0 };
+
+  let startDate;
+  if (typeof emiStartDate === 'number') {
+    startDate = new Date((emiStartDate - 25569) * 86400 * 1000);
+  } else {
+    // Try to parse date string (DD/MM/YYYY or DD-MM-YYYY or other formats)
+    const parts = String(emiStartDate).split(/[\/\-\.]/);
+    if (parts.length === 3) {
+      // Assume DD/MM/YYYY format
+      startDate = new Date(parts[2], parts[1] - 1, parts[0]);
+    } else {
+      startDate = new Date(emiStartDate);
+    }
+  }
+
+  if (isNaN(startDate.getTime())) return { monthsCompleted: 0, percentCompleted: 0 };
+
+  const now = new Date();
+  const monthsDiff = (now.getFullYear() - startDate.getFullYear()) * 12 + (now.getMonth() - startDate.getMonth());
+  const monthsCompleted = Math.max(0, monthsDiff);
+  const tenureMonths = parseInt(tenure) || 0;
+  const percentCompleted = tenureMonths > 0 ? Math.min(100, Math.round((monthsCompleted / tenureMonths) * 100)) : 0;
+
+  return { monthsCompleted, percentCompleted };
+}
+
+// Helper function to calculate EMI end date
+function calculateEmiEndDate(emiStartDate, tenure) {
+  if (!emiStartDate || !tenure) return '';
+
+  let startDate;
+  if (typeof emiStartDate === 'number') {
+    startDate = new Date((emiStartDate - 25569) * 86400 * 1000);
+  } else {
+    const parts = String(emiStartDate).split(/[\/\-\.]/);
+    if (parts.length === 3) {
+      startDate = new Date(parts[2], parts[1] - 1, parts[0]);
+    } else {
+      startDate = new Date(emiStartDate);
+    }
+  }
+
+  if (isNaN(startDate.getTime())) return '';
+
+  const tenureMonths = parseInt(tenure) || 0;
+  const endDate = new Date(startDate);
+  endDate.setMonth(endDate.getMonth() + tenureMonths);
+  return endDate.toLocaleDateString('en-IN');
+}
+
+// Helper function to get value from row with flexible column name matching
+function getRowValue(row, ...possibleNames) {
+  // First try exact match
+  for (const name of possibleNames) {
+    if (row[name] !== undefined && row[name] !== '') return row[name];
+  }
+
+  // Then try case-insensitive match with trimmed keys
+  const rowKeys = Object.keys(row);
+  for (const name of possibleNames) {
+    const normalizedName = name.toLowerCase().trim();
+    for (const key of rowKeys) {
+      if (key.toLowerCase().trim() === normalizedName) {
+        if (row[key] !== undefined && row[key] !== '') return row[key];
+      }
+    }
+  }
+
+  // Try partial match (key contains the name or name contains the key)
+  for (const name of possibleNames) {
+    const normalizedName = name.toLowerCase().trim();
+    for (const key of rowKeys) {
+      const normalizedKey = key.toLowerCase().trim();
+      if (normalizedKey.includes(normalizedName) || normalizedName.includes(normalizedKey)) {
+        if (row[key] !== undefined && row[key] !== '') return row[key];
+      }
+    }
+  }
+
+  return '';
+}
+
+// Helper function to process debt profile Excel data
+function processDebtProfileData(data, proposalId) {
+  return data.map((row, idx) => {
+    // Get values using flexible matching
+    const emiStartDate = getRowValue(row, 'EMI Start Date', 'EMI Start', 'Start Date', 'emi start date');
+    const tenure = getRowValue(row, 'Tenure', 'Loan Tenure', 'Tenure (Months)', 'tenure');
+    const sanctionDate = getRowValue(row, 'Sanction Date', 'Date of Sanction', 'sanction date');
+
+    const { monthsCompleted, percentCompleted } = calculateTenureProgress(emiStartDate, tenure);
+    const emiEndDateValue = getRowValue(row, 'EMI End Date', 'EMI End', 'End Date', 'emi end date');
+    const emiEndDate = emiEndDateValue || calculateEmiEndDate(emiStartDate, tenure);
+
+    return {
+      sNo: getRowValue(row, 'S.No', 'SNo', 'Sr.No', 's.no', 'sno') || idx + 1,
+      loanApplicant: getRowValue(row, 'Applicant', 'Loan Applicant', 'Borrower', 'Name', 'applicant'),
+      bank: getRowValue(row, 'Bank Name', 'Bank', 'Lender', 'Financial Institution', 'bank name'),
+      loanType: getRowValue(row, 'Loan Type', 'Type of Loan', 'Product', 'loan type'),
+      loanAmount: Number(String(getRowValue(row, 'Loan Amount', 'Amount', 'Sanctioned Amount', 'loan amount') || 0).replace(/[^0-9.-]/g, '')) || 0,
+      emi: Number(String(getRowValue(row, 'EMI', 'Monthly EMI', 'emi') || 0).replace(/[^0-9.-]/g, '')) || 0,
+      roi: Number(String(getRowValue(row, 'ROI', 'Rate of Interest', 'Interest Rate', 'Rate', 'roi') || 0).replace(/[^0-9.-]/g, '')) || 0,
+      sanctionDate: parseExcelDate(sanctionDate),
+      tenure: parseInt(tenure) || 0,
+      emiStartDate: parseExcelDate(emiStartDate),
+      emiEndDate: parseExcelDate(emiEndDate),
+      monthsCompleted: monthsCompleted,
+      percentTenureCompleted: percentCompleted,
+      proposalId: proposalId || ''
+    };
+  });
+}
+
 // Route to upload Excel and store debt profile data
 app.post('/upload-debt-profile', debtProfileUpload.single('excelFile'), async (req, res) => {
   try {
@@ -64,23 +192,14 @@ app.post('/upload-debt-profile', debtProfileUpload.single('excelFile'), async (r
     const sheet = workbook.Sheets[sheetName];
     const data = xlsx.utils.sheet_to_json(sheet, { defval: '' });
 
-    // Map Excel columns to DebtProfile fields
-    const mappedData = data.map((row, idx) => ({
-      sNo: row['S.No'] || idx + 1,
-      loanApplicant: row['Loan Applicant'] || '',
-      bank: row['Bank'] || '',
-      loanType: row['Loan Type'] || '',
-      loanAmount: Number(row['Loan Amount']) || 0,
-      emi: Number(row['EMI']) || 0,
-      emiStartDate: row['EMI Start Date'] || '',
-      tenure: row['Tenure'] || '',
-      emiEndDate: row['EMI End Date'] || '',
-      roi: Number(row['ROI']) || 0,
-      currentOutstanding: Number(row['Current Outstanding']) || 0
-    }));
+    const mappedData = processDebtProfileData(data, req.body.proposalId || '');
 
-    // Remove all previous debt profiles and insert new
-    await DebtProfile.deleteMany({});
+    // Remove all previous debt profiles for this proposal and insert new
+    if (req.body.proposalId) {
+      await DebtProfile.deleteMany({ proposalId: req.body.proposalId });
+    } else {
+      await DebtProfile.deleteMany({});
+    }
     await DebtProfile.insertMany(mappedData);
 
     res.json({ success: true, message: 'Debt profile data uploaded and saved.' });
@@ -89,6 +208,196 @@ app.post('/upload-debt-profile', debtProfileUpload.single('excelFile'), async (r
     res.status(500).json({ success: false, message: 'Error processing file.' });
   }
 });
+
+// Helper function to find header row in Excel data
+function findHeaderRowAndParseExcel(sheet) {
+  // Read raw data (array of arrays)
+  const rawData = xlsx.utils.sheet_to_json(sheet, { defval: '', header: 1 });
+
+  // Keywords to identify header row (case insensitive)
+  const headerKeywords = ['s.no', 'sno', 'sr.no', 'applicant', 'bank', 'loan', 'emi', 'tenure', 'roi'];
+
+  let headerRowIndex = -1;
+
+  // Find the row that contains header keywords
+  for (let i = 0; i < Math.min(rawData.length, 10); i++) { // Check first 10 rows
+    const row = rawData[i];
+    if (!row || row.length === 0) continue;
+
+    const rowText = row.map(cell => String(cell || '').toLowerCase().trim()).join(' ');
+    const matchCount = headerKeywords.filter(kw => rowText.includes(kw)).length;
+
+    if (matchCount >= 3) { // At least 3 keywords found
+      headerRowIndex = i;
+      break;
+    }
+  }
+
+  if (headerRowIndex === -1) {
+    // Fallback: use first row as header
+    return xlsx.utils.sheet_to_json(sheet, { defval: '' });
+  }
+
+  // Extract headers from the header row
+  const headers = rawData[headerRowIndex].map(h => String(h || '').trim());
+
+  // Convert remaining rows to objects using these headers
+  const result = [];
+  for (let i = headerRowIndex + 1; i < rawData.length; i++) {
+    const row = rawData[i];
+    if (!row || row.every(cell => cell === '' || cell === null || cell === undefined)) continue;
+
+    const obj = {};
+    headers.forEach((header, idx) => {
+      if (header) {
+        obj[header] = row[idx] !== undefined ? row[idx] : '';
+      }
+    });
+
+    // Only add if there's meaningful data (at least has a loan amount or bank name)
+    if (obj['loan amount'] || obj[' loan amount'] || obj['bank name'] || obj['bank'] || obj['emi']) {
+      result.push(obj);
+    }
+  }
+
+  return result;
+}
+
+// Route to extract debt profile from uploaded Excel files in the proposal
+app.post('/stage2/:proposalId/extract-debt-profile', async (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const proposal = getProposalById(proposalId);
+
+    if (!proposal) {
+      return res.status(404).json({ success: false, message: 'Proposal not found' });
+    }
+
+    // Find Excel files in debtProfile category
+    const debtProfileDocs = (proposal.documents || []).filter(doc =>
+      doc.category === 'debtProfile' &&
+      (doc.filename.endsWith('.xlsx') || doc.filename.endsWith('.xls'))
+    );
+
+    if (debtProfileDocs.length === 0) {
+      return res.status(400).json({ success: false, message: 'No Excel files found in Debt Profile category' });
+    }
+
+    let allDebtProfiles = [];
+
+    for (const doc of debtProfileDocs) {
+      const filePath = path.join(UPLOADS_DIR, proposalId, doc.filename);
+      if (fs.existsSync(filePath)) {
+        try {
+          const workbook = xlsx.readFile(filePath);
+          const sheetName = workbook.SheetNames[0];
+          const sheet = workbook.Sheets[sheetName];
+
+          // Use smart header detection
+          const data = findHeaderRowAndParseExcel(sheet);
+          console.log('Parsed Excel data:', JSON.stringify(data.slice(0, 2), null, 2));
+
+          const mappedData = processDebtProfileData(data, proposalId);
+          allDebtProfiles = allDebtProfiles.concat(mappedData);
+        } catch (excelErr) {
+          console.error(`Error reading Excel file ${doc.filename}:`, excelErr);
+        }
+      }
+    }
+
+    if (allDebtProfiles.length === 0) {
+      return res.status(400).json({ success: false, message: 'No data could be extracted from Excel files' });
+    }
+
+    // Remove previous debt profiles for this proposal and insert new
+    await DebtProfile.deleteMany({ proposalId: proposalId });
+    await DebtProfile.insertMany(allDebtProfiles);
+
+    res.json({ success: true, message: `Extracted ${allDebtProfiles.length} loan records`, count: allDebtProfiles.length });
+  } catch (err) {
+    console.error('Error extracting debt profile:', err);
+    res.status(500).json({ success: false, message: 'Error processing debt profile' });
+  }
+});
+
+// API: Get single debt profile
+app.get('/api/debt-profile/:id', async (req, res) => {
+  try {
+    const profile = await DebtProfile.findById(req.params.id);
+    if (!profile) {
+      return res.status(404).json({ success: false, message: 'Profile not found' });
+    }
+    res.json({ success: true, data: profile });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// API: Update debt profile
+app.put('/api/debt-profile/:id', async (req, res) => {
+  try {
+    const { loanApplicant, bank, loanType, loanAmount, emi, roi, sanctionDate, tenure, emiStartDate, emiEndDate } = req.body;
+
+    // Recalculate months completed and percentage
+    let monthsCompleted = 0;
+    let percentTenureCompleted = 0;
+
+    if (emiStartDate && tenure) {
+      const parts = String(emiStartDate).split(/[\/\-\.]/);
+      if (parts.length === 3) {
+        const startDate = new Date(parts[2], parts[1] - 1, parts[0]);
+        if (!isNaN(startDate.getTime())) {
+          const now = new Date();
+          const monthsDiff = (now.getFullYear() - startDate.getFullYear()) * 12 + (now.getMonth() - startDate.getMonth());
+          monthsCompleted = Math.max(0, monthsDiff);
+          const tenureMonths = parseInt(tenure) || 0;
+          percentTenureCompleted = tenureMonths > 0 ? Math.min(100, Math.round((monthsCompleted / tenureMonths) * 100)) : 0;
+        }
+      }
+    }
+
+    const updatedProfile = await DebtProfile.findByIdAndUpdate(
+      req.params.id,
+      {
+        loanApplicant,
+        bank,
+        loanType,
+        loanAmount: Number(loanAmount) || 0,
+        emi: Number(emi) || 0,
+        roi: Number(roi) || 0,
+        sanctionDate,
+        tenure: parseInt(tenure) || 0,
+        emiStartDate,
+        emiEndDate,
+        monthsCompleted,
+        percentTenureCompleted
+      },
+      { new: true }
+    );
+
+    if (!updatedProfile) {
+      return res.status(404).json({ success: false, message: 'Profile not found' });
+    }
+
+    res.json({ success: true, data: updatedProfile });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// API: Delete debt profile
+app.delete('/api/debt-profile/:id', async (req, res) => {
+  try {
+    const deletedProfile = await DebtProfile.findByIdAndDelete(req.params.id);
+    if (!deletedProfile) {
+      return res.status(404).json({ success: false, message: 'Profile not found' });
+    }
+    res.json({ success: true, message: 'Profile deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 const port = process.env.PORT || 3000;
 
 // Configure pdfjs-dist worker - disable worker to avoid errors
@@ -1628,10 +1937,10 @@ app.get('/stage2/:proposalId', async (req, res) => {
     }
   }
 
-  // Fetch debt profile data from MongoDB
+  // Fetch debt profile data from MongoDB for this proposal
   let debtProfiles = [];
   try {
-    debtProfiles = await DebtProfile.find({});
+    debtProfiles = await DebtProfile.find({ proposalId: req.params.proposalId });
   } catch (err) {
     debtProfiles = [];
   }
