@@ -1231,10 +1231,10 @@
                                                                         <tr style="<%= idx % 2 === 0 ? 'background: white;' : 'background: #f9f9f9;' %>">
                                                                             <td style="padding: 10px; border: 1px solid #ddd; font-weight: 500;"><%= partner.name %></td>
                                                                             <td style="padding: 10px; border: 1px solid #ddd; text-align: center; color: #2e7d32; font-weight: 600;">
-                                                                                <%= partner.profitPercent %><%= partner.profitPercent !== 'Not specified' ? '%' : '' %>
+                                                                                <%= partner.profitPercent %><%= (typeof partner.profitPercent === 'number' || !isNaN(parseFloat(partner.profitPercent))) ? '%' : '' %>
                                                                             </td>
                                                                             <td style="padding: 10px; border: 1px solid #ddd; text-align: center; color: #d32f2f; font-weight: 600;">
-                                                                                <%= partner.lossPercent %><%= partner.lossPercent !== 'Not specified' ? '%' : '' %>
+                                                                                <%= partner.lossPercent %><%= (typeof partner.lossPercent === 'number' || !isNaN(parseFloat(partner.lossPercent))) ? '%' : '' %>
                                                                             </td>
                                                                         </tr>
                                                                     <% }); %>

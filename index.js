@@ -325,6 +325,57 @@ app.post('/stage2/:proposalId/extract-debt-profile', async (req, res) => {
   }
 });
 
+// Route to re-extract turnover (GST) documents with full text for analysis
+app.post('/stage2/:proposalId/extract-turnover', async (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const proposal = getProposalById(proposalId);
+
+    if (!proposal) {
+      return res.status(404).json({ success: false, message: 'Proposal not found' });
+    }
+
+    // Find turnover PDF documents (GSTR-3B returns)
+    const turnoverDocs = (proposal.documents || []).filter(doc =>
+      doc.category === 'turnover' &&
+      doc.filename.toLowerCase().endsWith('.pdf')
+    );
+
+    if (turnoverDocs.length === 0) {
+      return res.status(400).json({ success: false, message: 'No PDF files found in Turnover category' });
+    }
+
+    let extractedCount = 0;
+
+    for (let i = 0; i < proposal.documents.length; i++) {
+      const doc = proposal.documents[i];
+      if (doc.category !== 'turnover' || !doc.filename.toLowerCase().endsWith('.pdf')) continue;
+
+      const filePath = path.join(UPLOADS_DIR, proposalId, doc.filename);
+      if (fs.existsSync(filePath)) {
+        try {
+          const pdfResult = await extractPDFWithTableDetection(filePath);
+          proposal.documents[i].extractedText = pdfResult.text; // Full text
+          proposal.documents[i].pages = pdfResult.numPages;
+          extractedCount++;
+          console.log(`✓ Re-extracted turnover document: ${doc.originalName} (${pdfResult.text.length} chars)`);
+        } catch (pdfErr) {
+          console.error(`Error extracting PDF ${doc.filename}:`, pdfErr);
+        }
+      }
+    }
+
+    if (extractedCount > 0) {
+      updateProposal(proposalId, { documents: proposal.documents });
+    }
+
+    res.json({ success: true, message: `Re-extracted ${extractedCount} turnover documents`, count: extractedCount });
+  } catch (err) {
+    console.error('Error extracting turnover documents:', err);
+    res.status(500).json({ success: false, message: 'Error processing turnover documents' });
+  }
+});
+
 // API: Get single debt profile
 app.get('/api/debt-profile/:id', async (req, res) => {
   try {
@@ -1651,74 +1702,207 @@ function extractPartnershipDeedDetails(fullText, tables = []) {
   const lowerText = fullText.toLowerCase();
   
   // STEP 2: Extract deed date - comprehensive patterns
-  const datePatterns = [
-    /(?:dated|executed\s+on|dated\s+this|made\s+this|entered\s+into\s+on|deed\s+dated|this\s+deed\s+of\s+partnership\s+made\s+on|made\s+and\s+executed\s+on\s+this)\s*(?:the\s*)?(\d{1,2}(?:st|nd|rd|th)?\s+(?:day\s+of\s+)?(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[,\s]+\d{4})/gi,
-    /(?:deed\s+date|date\s+of\s+deed|execution\s+date|on\s+this|amendment\s+dated)[\s:]+(\d{1,2}[\s\/\-]\d{1,2}[\s\/\-]\d{2,4})/gi,
-    /(\d{1,2}[\s\/\-]\d{1,2}[\s\/\-]\d{4})/g
+  // Priority 1: Look for execution date specifically (most reliable)
+  const executionDatePatterns = [
+    // "made and executed on this 11t day of JUNE, 2025" - OCR may have "11t" instead of "11th"
+    /(?:made\s+and\s+executed\s+on|executed\s+on|this\s+deed.*?made\s+on)\s*(?:this\s+)?(\d{1,2}[a-z]*\s+day\s+of\s+(?:january|february|march|april|may|june|july|august|september|october|november|december)[,\s]+\d{4})/gi,
+    // "dated this X day of MONTH, YEAR"
+    /(?:dated\s+this|made\s+this)\s+(\d{1,2}[a-z]*\s+(?:day\s+of\s+)?(?:january|february|march|april|may|june|july|august|september|october|november|december)[,\s]+\d{4})/gi,
   ];
 
-  for (const pattern of datePatterns) {
-    const matches = fullText.matchAll(pattern);
-    for (const match of matches) {
-      if (match[1] || match[0]) {
-        const rawDate = match[1] || match[0];
-        details.deedDate = normalizeDeedDate(rawDate);
-        console.log('Found date (raw):', rawDate);
-        console.log('Found date (normalized):', details.deedDate);
-        break;
-      }
+  // Try execution date patterns first (highest priority)
+  for (const pattern of executionDatePatterns) {
+    const matches = [...fullText.matchAll(pattern)];
+    if (matches.length > 0) {
+      const rawDate = matches[0][1];
+      details.deedDate = normalizeDeedDate(rawDate);
+      console.log('Found execution date (raw):', rawDate);
+      console.log('Found execution date (normalized):', details.deedDate);
+      break;
     }
-    if (details.deedDate) break;
+  }
+
+  // Priority 2: Fallback patterns if no execution date found
+  if (!details.deedDate) {
+    const datePatterns = [
+      /(?:dated|executed\s+on|dated\s+this|made\s+this|entered\s+into\s+on|deed\s+dated|this\s+deed\s+of\s+partnership\s+made\s+on|made\s+and\s+executed\s+on\s+this)\s*(?:the\s*)?(\d{1,2}(?:st|nd|rd|th)?[a-z]*\s+(?:day\s+of\s+)?(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[,\s]+\d{4})/gi,
+      /(?:deed\s+date|date\s+of\s+deed|execution\s+date|on\s+this|amendment\s+dated)[\s:]+(\d{1,2}[\s\/\-]\d{1,2}[\s\/\-]\d{2,4})/gi,
+      // Avoid dates after "Dt." which are references to old deeds
+      /(?<!Dt\.?\s*)(\d{1,2}[\s\/\-]\d{1,2}[\s\/\-]\d{4})/g
+    ];
+
+    for (const pattern of datePatterns) {
+      const matches = fullText.matchAll(pattern);
+      for (const match of matches) {
+        if (match[1] || match[0]) {
+          const rawDate = match[1] || match[0];
+          details.deedDate = normalizeDeedDate(rawDate);
+          console.log('Found date (raw):', rawDate);
+          console.log('Found date (normalized):', details.deedDate);
+          break;
+        }
+      }
+      if (details.deedDate) break;
+    }
   }
 
   // STEP 3: Enhanced profit/loss sharing extraction (fallback if table extraction didn't find partners)
   if (details.partners.length === 0) {
-    const sharePatterns = [
-      // Pattern: "Partner Name - 50%"
-      /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*[-:]\s*(\d+)\s*%/g,
-      // Pattern: "Partner Name shall have 50%"
-      /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:shall|will)\s+(?:be\s+entitled\s+to|receive|have|get)\s+(\d+)\s*%/gi,
-      // Pattern: "50% to Partner Name"
-      /(\d+)\s*%\s+(?:to|for|of)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/g,
-      // Pattern: "profit sharing ratio: Partner1 50%, Partner2 50%"
-      /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(\d+)\s*%/g,
-      // Pattern: "ratio of 50:50" or "50:50"
-      /(?:ratio|share|sharing)(?:\s+is|\s+shall\s+be)?[\s:]+(\d+)\s*:\s*(\d+)/gi,
-      // Pattern: "equally" or "equal shares"
-      /(?:share|profit|loss)(?:s)?\s+(?:shall\s+be\s+)?(?:equally|equal)/gi
-    ];
+    console.log('Attempting to extract partners from OCR text...');
 
-    const foundShares = new Set();
-  
-  for (const pattern of sharePatterns) {
-    const matches = fullText.matchAll(pattern);
-      for (const match of matches) {
-        if (match[0] && match[0].length < 300 && match[0].length > 3) {
-          const shareText = match[0].trim();
-          // Avoid duplicate or very similar entries
-          if (!foundShares.has(shareText.toLowerCase())) {
-            foundShares.add(shareText.toLowerCase());
-            details.partners.push({ name: shareText, profitPercent: 'See text', lossPercent: 'See text' });
-            console.log('Found share:', shareText);
-          }
+    // Pattern 1: Match OCR table format - "1 Sri.NAME NAME 50.00% 50.00%" or "Sri NAME NAME | 50.00% | 50.00%"
+    // Look for lines with Sri/Smt followed by name and two percentages
+    // Allow any prefix (OCR can corrupt numbers like "1" to "18", "2" to "Zs", etc.)
+    const ocrTablePattern = /(?:^|\n)\s*(?:[\dA-Z]+\s+)?(?:Sri\.?|Smt\.?|Mr\.?|Mrs\.?|Ms\.?)\s*([A-Z][A-Z\s\.]+?)\s+(\d+(?:\.\d+)?)\s*%\s*[|\s]*(\d+(?:\.\d+)?)\s*%/gi;
+    let ocrMatches = [...fullText.matchAll(ocrTablePattern)];
+
+    // Also try a more flexible pattern that looks directly for name + percentage patterns in the profit/loss section
+    if (ocrMatches.length < 2) {
+      // Look for the PROFIT AND LOSS table and extract all partners
+      const profitLossTableMatch = fullText.match(/(?:THE\s+)?PROFIT\s+AND\s+LOSS[\s\S]*?(?:Total|100\.00%\s*\|?\s*100\.00%)/i);
+      if (profitLossTableMatch) {
+        const tableText = profitLossTableMatch[0];
+        // More flexible pattern: any prefix + (Sri/Smt) + NAME + percentage + percentage
+        const flexPattern = /(?:[\dA-Za-z]+\s+)?(?:Sri\.?|Smt\.?)\s*\.?\s*([A-Z][A-Z\s\.]+?)\s+(\d+(?:\.\d+)?)\s*%\s*[|\s]*(\d+(?:\.\d+)?)\s*%/gi;
+        const flexMatches = [...tableText.matchAll(flexPattern)];
+        if (flexMatches.length > ocrMatches.length) {
+          ocrMatches = flexMatches;
+          console.log('Using flexible pattern, found:', flexMatches.length, 'matches');
         }
       }
     }
 
-    // Look for common patterns in partnership deeds
-    const profitLossSection = fullText.match(/(?:profit\s+(?:and|&)\s+loss|sharing\s+ratio|distribution\s+of\s+profit)[\s\S]{0,500}/gi);
-    if (profitLossSection && profitLossSection.length > 0) {
-      console.log('Found profit/loss section:', profitLossSection[0].substring(0, 200));
-      
-      // Extract any percentage numbers from this section
-      const percentages = profitLossSection[0].match(/\d+\s*%/g);
-      if (percentages && percentages.length > 0) {
-        const percentText = `Profit sharing: ${percentages.join(', ')}`;
-        if (!foundShares.has(percentText.toLowerCase())) {
-          details.partners.push({ name: percentText, profitPercent: 'See text', lossPercent: 'See text' });
-          console.log('Found percentages in profit section:', percentText);
+    if (ocrMatches.length > 0) {
+      console.log('Found OCR table pattern matches:', ocrMatches.length);
+      ocrMatches.forEach(match => {
+        const name = match[1].trim().replace(/\s+/g, ' ');
+        const profit = parseFloat(match[2]);
+        const loss = parseFloat(match[3]);
+
+        // Skip if name looks like a header or total
+        if (name.toLowerCase().includes('total') || name.toLowerCase().includes('partner') || name.length < 3) {
+          return;
         }
+
+        // Check for duplicates
+        const isDuplicate = details.partners.some(p =>
+          p.name.toLowerCase().replace(/\s+/g, '') === name.toLowerCase().replace(/\s+/g, '')
+        );
+
+        if (!isDuplicate && profit > 0) {
+          details.partners.push({
+            name: name,
+            profitPercent: profit,
+            lossPercent: loss
+          });
+          console.log('✓ Found partner from OCR:', name, profit + '%', loss + '%');
+        }
+      });
+    }
+
+    // Pattern 2: Look for profit/loss table section and extract from there
+    if (details.partners.length === 0) {
+      // Find the profit and loss section
+      const profitLossSection = fullText.match(/(?:THE\s+)?PROFIT\s+AND\s+LOSS[\s\S]{0,1500}/i);
+      if (profitLossSection) {
+        console.log('Found PROFIT AND LOSS section, searching for partners...');
+
+        // Look for pattern: "Sri NAME NAME 50.00% 50.00%" within this section
+        const sectionText = profitLossSection[0];
+        const partnerPattern = /(?:Sri\.?|Smt\.?)\s*([A-Z][A-Z\s\.]+?(?:REDDY|KUMAR|SINGH|RAO|NAIDU|SHARMA|BOMMU|ALLA)[A-Z\s]*?)\s+(\d+(?:\.\d+)?)\s*%\s*[|\s]*(\d+(?:\.\d+)?)\s*%/gi;
+
+        let partnerMatches = [...sectionText.matchAll(partnerPattern)];
+        partnerMatches.forEach(match => {
+          const name = match[1].trim().replace(/\s+/g, ' ');
+          const profit = parseFloat(match[2]);
+          const loss = parseFloat(match[3]);
+
+          if (name.length > 3 && profit > 0) {
+            const isDuplicate = details.partners.some(p =>
+              p.name.toLowerCase().includes(name.toLowerCase().split(' ')[0])
+            );
+
+            if (!isDuplicate) {
+              details.partners.push({
+                name: 'Sri. ' + name,
+                profitPercent: profit,
+                lossPercent: loss
+              });
+              console.log('✓ Found partner in P&L section:', name, profit + '%', loss + '%');
+            }
+          }
+        });
       }
+    }
+
+    // Pattern 3: Look for "Name of the Partner" table header and extract rows
+    if (details.partners.length === 0) {
+      const tableHeaderMatch = fullText.match(/Name\s+of\s+the\s+Partner[\s\S]{0,100}Profit[\s\S]{0,50}Loss([\s\S]{0,1000}?)(?:Total|MANAGEMENT|100\.00%\s*\|?\s*100\.00%)/i);
+      if (tableHeaderMatch) {
+        console.log('Found partner table with header...');
+        const tableContent = tableHeaderMatch[1];
+
+        // Extract rows: "1 | Sri NAME | 50.00% | 50.00%" or similar
+        const rowPattern = /(?:\d+\s*[|\s]+)?(?:Sri\.?|Smt\.?)\s*([A-Z][A-Z\s\.]+?)\s+(\d+(?:\.\d+)?)\s*%\s*[|\s]*(\d+(?:\.\d+)?)\s*%/gi;
+        let rowMatches = [...tableContent.matchAll(rowPattern)];
+
+        rowMatches.forEach(match => {
+          const name = match[1].trim().replace(/\s+/g, ' ');
+          const profit = parseFloat(match[2]);
+          const loss = parseFloat(match[3]);
+
+          if (name.length > 3 && profit > 0 && !name.toLowerCase().includes('total')) {
+            details.partners.push({
+              name: 'Sri. ' + name,
+              profitPercent: profit,
+              lossPercent: loss
+            });
+            console.log('✓ Found partner in table:', name, profit + '%', loss + '%');
+          }
+        });
+      }
+    }
+
+    // Pattern 4: Simple fallback - look for any "NAME 50.00% 50.00%" near profit/loss keywords
+    if (details.partners.length === 0) {
+      console.log('Trying simple percentage pattern...');
+      // Find all instances of "NAME 50.00% 50.00%" pattern
+      const simplePattern = /([A-Z][A-Z\s]{5,40}?)\s+(\d{1,3}(?:\.\d{1,2})?)\s*%\s*[|\s]*(\d{1,3}(?:\.\d{1,2})?)\s*%/g;
+      let simpleMatches = [...fullText.matchAll(simplePattern)];
+
+      // Filter to only keep likely partner names (near profit/loss section)
+      const profitLossIndex = fullText.toUpperCase().indexOf('PROFIT AND LOSS');
+      if (profitLossIndex > -1) {
+        simpleMatches = simpleMatches.filter(m => {
+          const matchIndex = fullText.indexOf(m[0]);
+          return matchIndex > profitLossIndex && matchIndex < profitLossIndex + 2000;
+        });
+      }
+
+      simpleMatches.slice(0, 5).forEach(match => { // Limit to first 5 matches
+        const name = match[1].trim().replace(/\s+/g, ' ');
+        const profit = parseFloat(match[2]);
+        const loss = parseFloat(match[3]);
+
+        // Skip headers, totals, keywords, and short names
+        const lowerName = name.toLowerCase();
+        if (name.length < 5 || lowerName.includes('total') ||
+            lowerName.includes('partner') || lowerName.includes('name') ||
+            lowerName.includes('profit') || lowerName.includes('loss') ||
+            lowerName.includes('sharing') || lowerName.includes('ratio') ||
+            lowerName.includes('percentage') || lowerName.includes('share')) {
+          return;
+        }
+
+        if (profit > 0 && profit <= 100) {
+          details.partners.push({
+            name: name,
+            profitPercent: profit,
+            lossPercent: loss
+          });
+          console.log('✓ Found partner (simple):', name, profit + '%', loss + '%');
+        }
+      });
     }
   }
 
@@ -1999,10 +2183,12 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
       const docIndex = proposal.documents.findIndex(d => d.filename === fileDetail.filename);
       if (docIndex !== -1) {
         proposal.documents[docIndex].pages = pageCount;
-        // Store full text for financial documents to detect all components (ITR, Computation, Balance Sheet, P&L)
+        // Store full text for financial and turnover documents to extract detailed data
+        // For financials: detect all components (ITR, Computation, Balance Sheet, P&L)
+        // For turnover: extract GST outward supplies and tax values from GSTR-3B
         // For other documents, store truncated text to save space
-        if (fileDetail.category === 'financials') {
-          proposal.documents[docIndex].extractedText = fullText; // Full text for financials
+        if (fileDetail.category === 'financials' || fileDetail.category === 'turnover') {
+          proposal.documents[docIndex].extractedText = fullText; // Full text for financials and turnover
         } else {
           proposal.documents[docIndex].extractedText = extractedText; // Truncated for others
         }
@@ -2613,7 +2799,12 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
             }
             
             let extractedDetails;
-            let rawExtraction = { textLength: fullText.length, tablesFound: pdfResult.tables.length };
+            let rawExtraction = {
+              textLength: fullText.length,
+              tablesFound: pdfResult.tables.length,
+              extractionMethod: pdfResult.method,
+              rawText: fullText // Include raw text in response
+            };
 
             // Check applicant type and use appropriate extraction
             if (proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') {
@@ -2624,30 +2815,12 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
               rawExtraction.rawResponse = extractedDetails;
               console.log('Private Limited Extracted Data:', JSON.stringify(extractedDetails, null, 2));
             } else {
-              // Try Document AI first for Partnership
-              const aiResult = await extractWithDocumentAI(fullText, 'partnership-deed', pdfResult.tables || []);
-
-              if (aiResult.success && aiResult.data) {
-                console.log('✓ Document AI extraction successful for:', doc.originalName);
-                console.log('AI Extracted Data:', JSON.stringify(aiResult.data, null, 2));
-                const partners = (aiResult.data.partners || []).map(p => ({
-                  name: p.name,
-                  profitPercent: p.profitPercentage !== null ? p.profitPercentage : 'Not specified',
-                  lossPercent: p.lossPercentage !== null ? p.lossPercentage : 'Not specified'
-                }));
-                extractedDetails = {
-                  deedDate: aiResult.data.dateOfExecution,
-                  partners: partners
-                };
-                rawExtraction.method = 'AI (Gemini)';
-                rawExtraction.rawResponse = aiResult.data;
-              } else {
-                console.log('⚠ Document AI failed, using fallback for:', doc.originalName);
-                extractedDetails = extractPartnershipDeedDetails(fullText, pdfResult.tables || []);
-                console.log('Fallback Extracted Data:', JSON.stringify(extractedDetails, null, 2));
-                rawExtraction.method = 'Fallback (Pattern Matching)';
-                rawExtraction.rawResponse = extractedDetails;
-              }
+              // AI extraction DISABLED - using only regex-based extraction
+              console.log('🔧 AI extraction disabled, using regex-based extraction for:', doc.originalName);
+              extractedDetails = extractPartnershipDeedDetails(fullText, pdfResult.tables || []);
+              console.log('Regex Extracted Data:', JSON.stringify(extractedDetails, null, 2));
+              rawExtraction.method = 'Regex Pattern Matching (AI Disabled)';
+              rawExtraction.rawResponse = extractedDetails;
             }
             
             console.log('\n📋 FINAL EXTRACTED DETAILS:');
@@ -3017,6 +3190,31 @@ app.post('/stage3/:proposalId/submit', (req, res) => {
     updateProposal(proposalId, updates);
     res.json({ success: true });
   } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Save P&L Sales turnover data
+app.post('/stage3/:proposalId/save-turnover-data', (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const { fy2324, fy2425 } = req.body;
+
+    const proposal = getProposal(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ success: false, message: 'Proposal not found' });
+    }
+
+    const turnoverData = {
+      fy2324: parseFloat(fy2324) || 0,
+      fy2425: parseFloat(fy2425) || 0,
+      updatedAt: new Date().toISOString()
+    };
+
+    updateProposal(proposalId, { turnoverData });
+    res.json({ success: true, message: 'Turnover data saved successfully' });
+  } catch (error) {
+    console.error('Save turnover data error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
