@@ -75,7 +75,7 @@
                             </select>
                         </div>
                         
-                        <div class="form-group">
+                        <div class="form-group" id="collateralGroup">
                             <label for="natureOfCollateral">Nature of Collateral <span class="required">*</span></label>
                             <select id="natureOfCollateral" name="natureOfCollateral" required>
                                 <option value="">Select Collateral Type</option>
@@ -114,13 +114,6 @@
                         <div class="form-group">
                             <label for="phone">Phone Number <span class="required">*</span></label>
                             <input type="tel" id="phone" name="phone" value="<%= proposal.phone || '' %>" required>
-                        </div>
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-group full-width">
-                            <label for="address">Address <span class="required">*</span></label>
-                            <input type="text" id="address" name="address" value="<%= proposal.address || '' %>" required>
                         </div>
                     </div>
 
@@ -171,47 +164,6 @@
                         </div>
                     </div>
 
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="annualRevenue">Annual Revenue <span class="required">*</span></label>
-                            <select id="annualRevenue" name="annualRevenue" required>
-                                <option value="">Select Range</option>
-                                <option value="0-100K" <%= proposal.annualRevenue === '0-100K' ? 'selected' : '' %>>₹0 - ₹1 Lakh</option>
-                                <option value="100K-500K" <%= proposal.annualRevenue === '100K-500K' ? 'selected' : '' %>>₹1 Lakh - ₹5 Lakh</option>
-                                <option value="500K-1M" <%= proposal.annualRevenue === '500K-1M' ? 'selected' : '' %>>₹5 Lakh - ₹10 Lakh</option>
-                                <option value="1M-5M" <%= proposal.annualRevenue === '1M-5M' ? 'selected' : '' %>>₹10 Lakh - ₹50 Lakh</option>
-                                <option value="5M-10M" <%= proposal.annualRevenue === '5M-10M' ? 'selected' : '' %>>₹50 Lakh - ₹1 Crore</option>
-                                <option value="10M-50M" <%= proposal.annualRevenue === '10M-50M' ? 'selected' : '' %>>₹1 Crore - ₹5 Crore</option>
-                                <option value="50M+" <%= proposal.annualRevenue === '50M+' ? 'selected' : '' %>>₹5 Crore+</option>
-                            </select>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="employeeCount">Number of Employees <span class="required">*</span></label>
-                            <input type="number" id="employeeCount" name="employeeCount" value="<%= proposal.employeeCount || '' %>" min="1" required>
-                        </div>
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="creditRating">Credit Rating (if available)</label>
-                            <select id="creditRating" name="creditRating">
-                                <option value="">Select Rating</option>
-                                <option value="AAA" <%= proposal.creditRating === 'AAA' ? 'selected' : '' %>>AAA - Excellent</option>
-                                <option value="AA" <%= proposal.creditRating === 'AA' ? 'selected' : '' %>>AA - Very Good</option>
-                                <option value="A" <%= proposal.creditRating === 'A' ? 'selected' : '' %>>A - Good</option>
-                                <option value="BBB" <%= proposal.creditRating === 'BBB' ? 'selected' : '' %>>BBB - Fair</option>
-                                <option value="BB" <%= proposal.creditRating === 'BB' ? 'selected' : '' %>>BB - Below Average</option>
-                                <option value="B" <%= proposal.creditRating === 'B' ? 'selected' : '' %>>B - Poor</option>
-                                <option value="Not Rated" <%= proposal.creditRating === 'Not Rated' ? 'selected' : '' %>>Not Rated</option>
-                            </select>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="existingBankRelations">Existing Bank Relations</label>
-                            <input type="text" id="existingBankRelations" name="existingBankRelations" value="<%= proposal.existingBankRelations || '' %>" placeholder="e.g., HDFC, ICICI">
-                        </div>
-                    </div>
                 </section>
 
                 <div class="form-actions">
@@ -225,6 +177,26 @@
     <script>
         const form = document.getElementById('editProposalForm');
         const proposalId = '<%= proposal.id %>';
+
+        // Nature of Loan toggle for collateral field
+        const natureOfLoanSelect = document.getElementById('natureOfLoan');
+        const collateralGroup = document.getElementById('collateralGroup');
+        const collateralSelect = document.getElementById('natureOfCollateral');
+
+        function toggleCollateralField() {
+            if (natureOfLoanSelect.value === 'Unsecured') {
+                collateralGroup.style.display = 'none';
+                collateralSelect.removeAttribute('required');
+                collateralSelect.value = '';
+            } else {
+                collateralGroup.style.display = '';
+                collateralSelect.setAttribute('required', 'required');
+            }
+        }
+
+        natureOfLoanSelect.addEventListener('change', toggleCollateralField);
+        // Initialize on page load
+        toggleCollateralField();
 
         form.addEventListener('submit', async (e) => {
             e.preventDefault();

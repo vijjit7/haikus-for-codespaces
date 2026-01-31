@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stage 3: CAM - Proposal #<%= proposal.id %></title>
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="/css/proposal.css">
+    <style>
+        /* Stage 3 Layout Styles */
+        .stage3-container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* Main Tabs (CAM / Analysis) */
+        .main-tabs {
+            display: flex;
+            gap: 0;
+            background: #f8f9fa;
+            border-radius: 8px 8px 0 0;
+            border-bottom: 2px solid #3498db;
+        }
+
+        .main-tab {
+            padding: 15px 40px;
+            border: none;
+            background: transparent;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            color: #666;
+            border-radius: 8px 8px 0 0;
+        }
+
+        .main-tab:hover {
+            background: #e8f4fc;
+            color: #3498db;
+        }
+
+        .main-tab.active {
+            background: #3498db;
+            color: white;
+        }
+
+        /* Main Tab Content */
+        .main-tab-content {
+            display: none;
+            background: white;
+            border-radius: 0 0 8px 8px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .main-tab-content.active {
+            display: block;
+        }
+
+        /* Analysis Sub-tabs */
+        .analysis-tabs {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 15px;
+            background: #f0f4f8;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .analysis-tab {
+            padding: 10px 20px;
+            border: none;
+            background: white;
+            font-size: 0.9em;
+            font-weight: 500;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: all 0.3s;
+            color: #555;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .analysis-tab:hover {
+            background: #e8f4fc;
+            transform: translateY(-2px);
+            box-shadow: 0 3px 8px rgba(0,0,0,0.15);
+        }
+
+        .analysis-tab.active {
+            background: #3498db;
+            color: white;
+            box-shadow: 0 3px 8px rgba(52, 152, 219, 0.3);
+        }
+
+        /* Analysis Panel Content */
+        .analysis-panel {
+            display: none;
+            min-height: 400px;
+            padding: 20px;
+            background: #fafafa;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .analysis-panel.active {
+            display: block;
+        }
+
+        .analysis-panel h3 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #3498db;
+        }
+
+        /* Placeholder content */
+        .placeholder-content {
+            text-align: center;
+            padding: 60px 20px;
+            color: #888;
+        }
+
+        .placeholder-content .icon {
+            font-size: 3em;
+            margin-bottom: 15px;
+        }
+
+        /* CAM Tab placeholder */
+        .cam-placeholder {
+            text-align: center;
+            padding: 80px 20px;
+            color: #666;
+        }
+
+        .cam-placeholder h3 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Stage 3: Credit Appraisal Memo</h1>
+            <p class="subtitle">Proposal ID: #<%= proposal.id %> | Applicant: <%= proposal.applicantName || proposal.customerName %></p>
+        </header>
+
+        <!-- Progress Tracker -->
+        <div class="progress-tracker">
+            <div class="progress-step completed">
+                <div class="step-number">1</div>
+                <div class="step-label">Proposal</div>
+            </div>
+            <div class="progress-step completed">
+                <div class="step-number">2</div>
+                <div class="step-label">Documents</div>
+            </div>
+            <div class="progress-step active">
+                <div class="step-number">3</div>
+                <div class="step-label">CAM</div>
+            </div>
+            <div class="progress-step">
+                <div class="step-number">4</div>
+                <div class="step-label">Banker Match</div>
+            </div>
+        </div>
+
+        <div class="stage3-container">
+            <!-- Main Tabs: CAM and Analysis -->
+            <div class="main-tabs">
+                <button class="main-tab active" onclick="showMainTab('cam')">CAM</button>
+                <button class="main-tab" onclick="showMainTab('analysis')">Analysis</button>
+            </div>
+
+            <!-- CAM Tab Content -->
+            <div id="camTab" class="main-tab-content active">
+                <div class="cam-placeholder">
+                    <h3>Credit Appraisal Memo</h3>
+                    <p>CAM consolidated view will be displayed here.</p>
+                </div>
+            </div>
+
+            <!-- Analysis Tab Content -->
+            <div id="analysisTab" class="main-tab-content">
+                <!-- Analysis Sub-tabs -->
+                <div class="analysis-tabs">
+                    <button class="analysis-tab active" onclick="showAnalysisTab('personalId')">Personal ID</button>
+                    <button class="analysis-tab" onclick="showAnalysisTab('businessId')">Business ID</button>
+                    <button class="analysis-tab" onclick="showAnalysisTab('incorporation')">Incorporation</button>
+                    <button class="analysis-tab" onclick="showAnalysisTab('creditReports')">Credit Reports</button>
+                    <button class="analysis-tab" onclick="showAnalysisTab('financials')">Financials</button>
+                    <button class="analysis-tab" onclick="showAnalysisTab('banking')">Banking</button>
+                    <button class="analysis-tab" onclick="showAnalysisTab('turnover')">Turnover</button>
+                    <button class="analysis-tab" onclick="showAnalysisTab('debtProfile')">Debt Profile</button>
+                    <button class="analysis-tab" onclick="showAnalysisTab('collateral')">Collateral</button>
+                </div>
+
+                <!-- Analysis Panels -->
+                <div id="personalIdPanel" class="analysis-panel active">
+                    <h3>Personal ID Analysis</h3>
+                    <div class="placeholder-content">
+                        <div class="icon">🪪</div>
+                        <p>Personal ID documents and analysis will be displayed here.</p>
+                    </div>
+                </div>
+
+                <div id="businessIdPanel" class="analysis-panel">
+                    <h3>Business ID Analysis</h3>
+                    <div class="placeholder-content">
+                        <div class="icon">🏢</div>
+                        <p>Business ID documents and analysis will be displayed here.</p>
+                    </div>
+                </div>
+
+                <div id="incorporationPanel" class="analysis-panel">
+                    <h3>Incorporation Analysis</h3>
+                    <div class="placeholder-content">
+                        <div class="icon">📜</div>
+                        <p>Incorporation documents and analysis will be displayed here.</p>
+                    </div>
+                </div>
+
+                <div id="creditReportsPanel" class="analysis-panel">
+                    <h3>Credit Reports Analysis</h3>
+                    <div class="placeholder-content">
+                        <div class="icon">📊</div>
+                        <p>Credit reports and analysis will be displayed here.</p>
+                    </div>
+                </div>
+
+                <div id="financialsPanel" class="analysis-panel">
+                    <h3>Financials Analysis</h3>
+                    <div class="placeholder-content">
+                        <div class="icon">💰</div>
+                        <p>Financial documents and analysis will be displayed here.</p>
+                    </div>
+                </div>
+
+                <div id="bankingPanel" class="analysis-panel">
+                    <h3>Banking Analysis</h3>
+                    <div class="placeholder-content">
+                        <div class="icon">🏦</div>
+                        <p>Banking documents and analysis will be displayed here.</p>
+                    </div>
+                </div>
+
+                <div id="turnoverPanel" class="analysis-panel">
+                    <h3>Turnover Analysis</h3>
+                    <div class="placeholder-content">
+                        <div class="icon">📈</div>
+                        <p>Turnover/GST documents and analysis will be displayed here.</p>
+                    </div>
+                </div>
+
+                <div id="debtProfilePanel" class="analysis-panel">
+                    <h3>Debt Profile Analysis</h3>
+                    <div class="placeholder-content">
+                        <div class="icon">💳</div>
+                        <p>Debt profile documents and analysis will be displayed here.</p>
+                    </div>
+                </div>
+
+                <div id="collateralPanel" class="analysis-panel">
+                    <h3>Collateral Analysis</h3>
+                    <div class="placeholder-content">
+                        <div class="icon">🏠</div>
+                        <p>Collateral documents and analysis will be displayed here.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Navigation Buttons -->
+            <div class="form-actions">
+                <a href="/stage2/<%= proposal.id %>" class="btn btn-secondary">Back to Documents</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const proposalId = '<%= proposal.id %>';
+
+        // Main Tab Switching (CAM / Analysis)
+        function showMainTab(tab) {
+            // Update tab buttons
+            document.querySelectorAll('.main-tab').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+
+            // Update tab content
+            document.querySelectorAll('.main-tab-content').forEach(c => c.classList.remove('active'));
+            document.getElementById(tab + 'Tab').classList.add('active');
+        }
+
+        // Analysis Sub-tab Switching
+        function showAnalysisTab(tab) {
+            // Update sub-tab buttons
+            document.querySelectorAll('.analysis-tab').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+
+            // Update panel content
+            document.querySelectorAll('.analysis-panel').forEach(p => p.classList.remove('active'));
+            document.getElementById(tab + 'Panel').classList.add('active');
+        }
+    </script>
+</body>
+</html>

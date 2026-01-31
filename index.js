@@ -341,12 +341,32 @@ app.get('/api/debt-profile/:id', async (req, res) => {
 // API: Update debt profile
 app.put('/api/debt-profile/:id', async (req, res) => {
   try {
-    const { loanApplicant, bank, loanType, loanAmount, emi, roi, sanctionDate, tenure, emiStartDate, emiEndDate } = req.body;
+    const { loanApplicant, bank, loanType, loanAmount, emi, roi, sanctionDate, tenure, emiStartDate, emiEndDate, emiBankStatementProvided, emiBankAccountNumber } = req.body;
 
-    // Recalculate months completed and percentage
-    let monthsCompleted = 0;
-    let percentTenureCompleted = 0;
+    // Build update object dynamically to support partial updates
+    const updateData = {};
 
+    // Handle EMI bank statement fields (for quick checkbox/dropdown updates)
+    if (emiBankStatementProvided !== undefined) {
+      updateData.emiBankStatementProvided = emiBankStatementProvided;
+    }
+    if (emiBankAccountNumber !== undefined) {
+      updateData.emiBankAccountNumber = emiBankAccountNumber;
+    }
+
+    // Handle full profile edit fields
+    if (loanApplicant !== undefined) updateData.loanApplicant = loanApplicant;
+    if (bank !== undefined) updateData.bank = bank;
+    if (loanType !== undefined) updateData.loanType = loanType;
+    if (loanAmount !== undefined) updateData.loanAmount = Number(loanAmount) || 0;
+    if (emi !== undefined) updateData.emi = Number(emi) || 0;
+    if (roi !== undefined) updateData.roi = Number(roi) || 0;
+    if (sanctionDate !== undefined) updateData.sanctionDate = sanctionDate;
+    if (tenure !== undefined) updateData.tenure = parseInt(tenure) || 0;
+    if (emiStartDate !== undefined) updateData.emiStartDate = emiStartDate;
+    if (emiEndDate !== undefined) updateData.emiEndDate = emiEndDate;
+
+    // Recalculate months completed and percentage if relevant fields are provided
     if (emiStartDate && tenure) {
       const parts = String(emiStartDate).split(/[\/\-\.]/);
       if (parts.length === 3) {
@@ -354,29 +374,16 @@ app.put('/api/debt-profile/:id', async (req, res) => {
         if (!isNaN(startDate.getTime())) {
           const now = new Date();
           const monthsDiff = (now.getFullYear() - startDate.getFullYear()) * 12 + (now.getMonth() - startDate.getMonth());
-          monthsCompleted = Math.max(0, monthsDiff);
+          updateData.monthsCompleted = Math.max(0, monthsDiff);
           const tenureMonths = parseInt(tenure) || 0;
-          percentTenureCompleted = tenureMonths > 0 ? Math.min(100, Math.round((monthsCompleted / tenureMonths) * 100)) : 0;
+          updateData.percentTenureCompleted = tenureMonths > 0 ? Math.min(100, Math.round((updateData.monthsCompleted / tenureMonths) * 100)) : 0;
         }
       }
     }
 
     const updatedProfile = await DebtProfile.findByIdAndUpdate(
       req.params.id,
-      {
-        loanApplicant,
-        bank,
-        loanType,
-        loanAmount: Number(loanAmount) || 0,
-        emi: Number(emi) || 0,
-        roi: Number(roi) || 0,
-        sanctionDate,
-        tenure: parseInt(tenure) || 0,
-        emiStartDate,
-        emiEndDate,
-        monthsCompleted,
-        percentTenureCompleted
-      },
+      updateData,
       { new: true }
     );
 
@@ -572,6 +579,9 @@ function autoCategorizeDocument(filename, extractedText = '') {
   if (lowerName.includes('aoa') || lowerName.includes('articles')) {
     return 'incorporation';
   }
+  if (lowerName.includes('shareholder') || lowerName.includes('share holder') || lowerName.includes('directors')) {
+    return 'incorporation';
+  }
   
   // Credit Reports keywords
   if ((lowerName.includes('credit') || lowerName.includes('cibil') || lowerName.includes('experian')) && 
@@ -581,6 +591,9 @@ function autoCategorizeDocument(filename, extractedText = '') {
   
   // Financials keywords
   if (lowerName.includes('itr') || lowerName.includes('income') && lowerName.includes('tax')) {
+    return 'financials';
+  }
+  if (lowerName.includes('26as') || lowerName.includes('form26') || lowerName.includes('form 26')) {
     return 'financials';
   }
   if (lowerName.includes('p&l') || lowerName.includes('profit') || lowerName.includes('balance') && lowerName.includes('sheet')) {
@@ -947,75 +960,89 @@ Respond with ONLY the exact document type from the list above that best matches 
 // ============================================
 // 3-TIER PDF EXTRACTION SYSTEM
 // ============================================
-// Tier 1: Python FastAPI service (PyMuPDF + pdfplumber)
-// Tier 2: Direct pdfplumber fallback
+// Tier 1: PyMuPDF (fastest and best quality)
+// Tier 2: pdfplumber fallback
 // Tier 3: Node.js pdf-parse as final fallback
 
 /**
- * Tier 1: Extract PDF using Python FastAPI service
- * This service provides PyMuPDF (best quality) with pdfplumber fallback
+ * Tier 1: Extract PDF using PyMuPDF (fastest and best quality)
  */
-async function extractWithPythonService(pdfPath) {
-  try {
-    console.log('🔹 Tier 1: Attempting extraction via Python FastAPI service...');
-    
-    // Check if file exists
-    if (!fs.existsSync(pdfPath)) {
-      throw new Error(`File not found: ${pdfPath}`);
-    }
-    
-    // Create form data
-    const formData = new FormData();
-    formData.append('file', fs.createReadStream(pdfPath));
-    
-    // Call Python service
-    const response = await axios.post(`${PDF_SERVICE_URL}/extract`, formData, {
-      headers: formData.getHeaders(),
-      timeout: PDF_SERVICE_TIMEOUT,
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity
+async function extractWithPyMuPDF(pdfPath) {
+  console.log('🔹 Tier 1: Attempting PyMuPDF extraction (fastest)...');
+
+  return new Promise((resolve, reject) => {
+    // Try 'python' first, then 'python3'
+    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+    const scriptPath = path.join(__dirname, 'extract_pdf_pymupdf.py');
+
+    const pythonProcess = spawn(pythonCmd, [scriptPath, pdfPath]);
+
+    let resultText = '';
+    let errorText = '';
+
+    pythonProcess.stdout.on('data', (data) => {
+      resultText += data.toString();
     });
-    
-    if (response.data && response.data.success) {
-      console.log(`✓ Python service extraction successful (${response.data.method}): ${response.data.total_chars} chars`);
-      return {
-        text: response.data.text,
-        numPages: response.data.num_pages,
-        method: `python-${response.data.method}`,
-        success: true
-      };
-    } else {
-      throw new Error('Python service returned unsuccessful result');
-    }
-    
-  } catch (error) {
-    console.error('✗ Python service extraction failed:', error.message);
-    throw error;
-  }
+
+    pythonProcess.stderr.on('data', (data) => {
+      errorText += data.toString();
+    });
+
+    pythonProcess.on('close', (code) => {
+      if (code !== 0) {
+        console.error(`✗ PyMuPDF process exited with code ${code}`);
+        console.error(`stderr: ${errorText}`);
+        reject(new Error(`PyMuPDF failed with code ${code}: ${errorText}`));
+      } else {
+        try {
+          const result = JSON.parse(resultText);
+          if (result.success) {
+            console.log(`✓ PyMuPDF extraction complete: ${result.totalChars} chars, ${result.numPages} pages`);
+            resolve({
+              text: result.text,
+              numPages: result.numPages,
+              method: 'pymupdf',
+              success: true
+            });
+          } else {
+            reject(new Error(result.error || 'PyMuPDF extraction failed'));
+          }
+        } catch (parseError) {
+          console.error('✗ Failed to parse PyMuPDF output:', parseError.message);
+          reject(parseError);
+        }
+      }
+    });
+
+    pythonProcess.on('error', (err) => {
+      console.error('✗ Failed to start PyMuPDF process:', err);
+      reject(err);
+    });
+  });
 }
 
 /**
  * Tier 2: Direct pdfplumber extraction (fallback)
- * Now returns JSON with text and numPages
  */
 async function extractWithPdfplumber(pdfPath) {
-  console.log('🔹 Tier 2: Attempting direct pdfplumber extraction...');
-  
+  console.log('🔹 Tier 2: Attempting pdfplumber extraction...');
+
   return new Promise((resolve, reject) => {
-    const pythonProcess = spawn('python3', ['extract_pdf.py', pdfPath]);
-    
+    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+    const pythonProcess = spawn(pythonCmd, ['extract_pdf.py', pdfPath]);
+
     let resultText = '';
     let errorText = '';
-    
+
     pythonProcess.stdout.on('data', (data) => {
       resultText += data.toString();
     });
-    
+
     pythonProcess.stderr.on('data', (data) => {
       errorText += data.toString();
       console.log(`pdfplumber: ${data}`);
     });
-    
+
     pythonProcess.on('close', (code) => {
       if (code !== 0) {
         console.error(`✗ pdfplumber process exited with code ${code}`);
@@ -1033,7 +1060,7 @@ async function extractWithPdfplumber(pdfPath) {
         }
       }
     });
-    
+
     pythonProcess.on('error', (err) => {
       console.error('✗ Failed to start pdfplumber process:', err);
       reject(err);
@@ -1073,19 +1100,19 @@ async function extractPDFWithFallback(pdfPath) {
   console.log('📄 STARTING 3-TIER PDF EXTRACTION');
   console.log(`File: ${path.basename(pdfPath)}`);
   console.log('========================================\n');
-  
-  // Tier 1: Try Python FastAPI service (PyMuPDF + pdfplumber)
+
+  // Tier 1: Try PyMuPDF (fastest and best quality)
   try {
-    const result = await extractWithPythonService(pdfPath);
+    const result = await extractWithPyMuPDF(pdfPath);
     if (result.text && result.text.trim().length > 0) {
-      console.log('\n✓ SUCCESS: Python service extraction completed\n');
+      console.log('\n✓ SUCCESS: PyMuPDF extraction completed\n');
       return result;
     }
   } catch (tier1Error) {
-    console.log('⚠ Tier 1 failed, falling back to Tier 2...\n');
+    console.log('⚠ Tier 1 (PyMuPDF) failed, falling back to Tier 2...\n');
   }
-  
-  // Tier 2: Try direct pdfplumber (now returns JSON with text and numPages)
+
+  // Tier 2: Try pdfplumber
   try {
     const result = await extractWithPdfplumber(pdfPath);
     if (result.text && result.text.trim().length > 0) {
@@ -1093,14 +1120,14 @@ async function extractPDFWithFallback(pdfPath) {
       return {
         text: result.text,
         numPages: result.numPages || 1,
-        method: 'python-pdfplumber-direct',
+        method: 'pdfplumber',
         success: true
       };
     }
   } catch (tier2Error) {
-    console.log('⚠ Tier 2 failed, falling back to Tier 3...\n');
+    console.log('⚠ Tier 2 (pdfplumber) failed, falling back to Tier 3...\n');
   }
-  
+
   // Tier 3: Try Node.js pdf-parse
   try {
     const result = await extractWithPdfParse(pdfPath);
@@ -1111,12 +1138,12 @@ async function extractPDFWithFallback(pdfPath) {
   } catch (tier3Error) {
     console.log('✗ All tiers failed\n');
   }
-  
+
   // All tiers failed
   console.log('========================================');
   console.log('✗ EXTRACTION FAILED: All methods exhausted');
   console.log('========================================\n');
-  
+
   return {
     text: '',
     numPages: 0,
@@ -1699,6 +1726,172 @@ function extractPartnershipDeedDetails(fullText, tables = []) {
   return details;
 }
 
+// Extract shareholders and directors for Private Limited companies
+function extractPrivateLimitedDetails(fullText, tables = []) {
+  const details = {
+    companyName: null,
+    shareholders: [],
+    directors: []
+  };
+
+  if (!fullText) {
+    console.log('No text provided for Private Limited extraction');
+    return details;
+  }
+
+  console.log('Extracting Private Limited details from text length:', fullText.length);
+
+  // Extract company name
+  const companyNamePatterns = [
+    /(?:company\s+name|name\s+of\s+(?:the\s+)?company)[\s:]+([A-Z][A-Za-z\s]+(?:PRIVATE|PVT\.?)\s*(?:LIMITED|LTD\.?))/gi,
+    /([A-Z][A-Za-z\s]+(?:PRIVATE|PVT\.?)\s*(?:LIMITED|LTD\.?))/g
+  ];
+
+  for (const pattern of companyNamePatterns) {
+    const match = fullText.match(pattern);
+    if (match && match[0]) {
+      details.companyName = match[0].trim();
+      console.log('Found company name:', details.companyName);
+      break;
+    }
+  }
+
+  // Extract shareholders from text
+  const shareholderPatterns = [
+    // Pattern: "Name - X shares" or "Name holding X shares"
+    /([A-Z][a-zA-Z\s]+?)(?:\s*[-–]\s*|\s+holding\s+|\s+holds\s+)(\d+(?:,\d+)?)\s*(?:equity\s+)?shares/gi,
+    // Pattern: "X shares held by Name"
+    /(\d+(?:,\d+)?)\s*(?:equity\s+)?shares?\s+(?:held\s+by|of)\s+([A-Z][a-zA-Z\s]+)/gi,
+    // Pattern from table: Name | Shares | Percentage
+    /([A-Z][a-zA-Z\s]+?)\s+(\d+(?:,\d+)?)\s+(\d+(?:\.\d+)?)\s*%/g
+  ];
+
+  const foundShareholders = new Map();
+
+  for (const pattern of shareholderPatterns) {
+    const matches = fullText.matchAll(pattern);
+    for (const match of matches) {
+      let name, shares;
+      if (match[1] && !isNaN(parseInt(match[1].replace(/,/g, '')))) {
+        // Pattern where shares come first
+        shares = match[1].replace(/,/g, '');
+        name = match[2];
+      } else {
+        name = match[1];
+        shares = match[2] ? match[2].replace(/,/g, '') : null;
+      }
+
+      if (name && name.length > 2 && name.length < 100) {
+        const cleanName = name.trim().replace(/\s+/g, ' ');
+        if (!foundShareholders.has(cleanName.toLowerCase())) {
+          foundShareholders.set(cleanName.toLowerCase(), {
+            name: cleanName,
+            shares: shares || '-',
+            percentage: match[3] || null
+          });
+        }
+      }
+    }
+  }
+
+  details.shareholders = Array.from(foundShareholders.values());
+  console.log('Found shareholders:', details.shareholders.length);
+
+  // Extract directors from text
+  const directorPatterns = [
+    // Pattern: "DIN: XXXXXXXX Name"
+    /DIN[\s:]+(\d{8})\s+([A-Z][a-zA-Z\s]+?)(?:\s+(?:Director|Managing|Whole|Executive))/gi,
+    // Pattern: "Name (DIN: XXXXXXXX)"
+    /([A-Z][a-zA-Z\s]+?)\s*\(?\s*DIN[\s:]+(\d{8})\s*\)?/gi,
+    // Pattern: "Director Name" or "Managing Director Name"
+    /(?:Director|Managing\s+Director|Whole\s+Time\s+Director)[\s:]+([A-Z][a-zA-Z\s]+?)(?:\s*[-–,]|\s+DIN)/gi,
+    // Pattern from table with DIN
+    /([A-Z][a-zA-Z\s]+?)\s+(\d{8})\s+(Director|Managing|Whole|Executive)/gi
+  ];
+
+  const foundDirectors = new Map();
+
+  for (const pattern of directorPatterns) {
+    const matches = fullText.matchAll(pattern);
+    for (const match of matches) {
+      let name, din, designation;
+
+      // Check if first group is DIN (8 digits)
+      if (match[1] && /^\d{8}$/.test(match[1])) {
+        din = match[1];
+        name = match[2];
+        designation = match[3] || 'Director';
+      } else {
+        name = match[1];
+        din = match[2] && /^\d{8}$/.test(match[2]) ? match[2] : null;
+        designation = match[3] || 'Director';
+      }
+
+      if (name && name.length > 2 && name.length < 100) {
+        const cleanName = name.trim().replace(/\s+/g, ' ');
+        if (!foundDirectors.has(cleanName.toLowerCase())) {
+          foundDirectors.set(cleanName.toLowerCase(), {
+            name: cleanName,
+            din: din || '-',
+            designation: designation || 'Director'
+          });
+        }
+      }
+    }
+  }
+
+  details.directors = Array.from(foundDirectors.values());
+  console.log('Found directors:', details.directors.length);
+
+  // Try to extract from tables if available
+  if (tables && tables.length > 0) {
+    tables.forEach(table => {
+      const headerText = (table.headers || []).join(' ').toLowerCase();
+
+      // Check if it's a shareholders table
+      if (headerText.includes('share') || headerText.includes('holder')) {
+        table.rows.forEach(row => {
+          if (row.length >= 2) {
+            const name = row[0];
+            const shares = row[1];
+            const percentage = row[2] || null;
+
+            if (name && name.length > 2 && !foundShareholders.has(name.toLowerCase())) {
+              details.shareholders.push({
+                name: name.trim(),
+                shares: shares || '-',
+                percentage: percentage
+              });
+            }
+          }
+        });
+      }
+
+      // Check if it's a directors table
+      if (headerText.includes('director') || headerText.includes('din')) {
+        table.rows.forEach(row => {
+          if (row.length >= 1) {
+            const name = row[0];
+            const din = row.find(cell => /^\d{8}$/.test(cell)) || '-';
+            const designation = row.find(cell => /director|managing|executive/i.test(cell)) || 'Director';
+
+            if (name && name.length > 2 && !foundDirectors.has(name.toLowerCase())) {
+              details.directors.push({
+                name: name.trim(),
+                din: din,
+                designation: designation
+              });
+            }
+          }
+        });
+      }
+    });
+  }
+
+  console.log('Extraction complete. Shareholders:', details.shareholders.length, 'Directors:', details.directors.length);
+  return details;
+}
+
 // Background file processing function
 async function processFilesInBackground(files, proposalId, fileDetails) {
   console.log(`🔄 Starting background processing for ${files.length} files...`);
@@ -1963,8 +2156,13 @@ app.get('/stage2/:proposalId', async (req, res) => {
   });
 });
 
-app.post('/stage2/:proposalId/upload', upload.array('documents', 10), async (req, res) => {
-  try {
+app.post('/stage2/:proposalId/upload', (req, res) => {
+  upload.array('documents', 10)(req, res, async (err) => {
+    if (err) {
+      console.error('Multer error:', err);
+      return res.status(400).json({ success: false, error: err.message || 'Upload error' });
+    }
+    try {
     const proposalId = req.params.proposalId;
     const files = req.files;
     
@@ -2084,10 +2282,11 @@ app.post('/stage2/:proposalId/upload', upload.array('documents', 10), async (req
     processFilesInBackground(allFiles, proposalId, fileDetails).catch(err => {
       console.error('Background processing error:', err);
     });
-  } catch (error) {
-    console.error('Upload error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
+    } catch (error) {
+      console.error('Upload error:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
 });
 
 // Delete multiple documents endpoint
@@ -2413,31 +2612,42 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
               console.log('');
             }
             
-            // Try Document AI first
-            const aiResult = await extractWithDocumentAI(fullText, 'partnership-deed', pdfResult.tables || []);
             let extractedDetails;
             let rawExtraction = { textLength: fullText.length, tablesFound: pdfResult.tables.length };
-            
-            if (aiResult.success && aiResult.data) {
-              console.log('✓ Document AI extraction successful for:', doc.originalName);
-              console.log('AI Extracted Data:', JSON.stringify(aiResult.data, null, 2));
-              const partners = (aiResult.data.partners || []).map(p => ({
-                name: p.name,
-                profitPercent: p.profitPercentage !== null ? p.profitPercentage : 'Not specified',
-                lossPercent: p.lossPercentage !== null ? p.lossPercentage : 'Not specified'
-              }));
-              extractedDetails = {
-                deedDate: aiResult.data.dateOfExecution,
-                partners: partners
-              };
-              rawExtraction.method = 'AI (Gemini)';
-              rawExtraction.rawResponse = aiResult.data;
-            } else {
-              console.log('⚠ Document AI failed, using fallback for:', doc.originalName);
-              extractedDetails = extractPartnershipDeedDetails(fullText, pdfResult.tables || []);
-              console.log('Fallback Extracted Data:', JSON.stringify(extractedDetails, null, 2));
-              rawExtraction.method = 'Fallback (Pattern Matching)';
+
+            // Check applicant type and use appropriate extraction
+            if (proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') {
+              // Extract shareholders and directors for Private Limited companies
+              console.log('📊 Extracting Private Limited company details...');
+              extractedDetails = extractPrivateLimitedDetails(fullText, pdfResult.tables || []);
+              rawExtraction.method = 'Private Limited Extraction';
               rawExtraction.rawResponse = extractedDetails;
+              console.log('Private Limited Extracted Data:', JSON.stringify(extractedDetails, null, 2));
+            } else {
+              // Try Document AI first for Partnership
+              const aiResult = await extractWithDocumentAI(fullText, 'partnership-deed', pdfResult.tables || []);
+
+              if (aiResult.success && aiResult.data) {
+                console.log('✓ Document AI extraction successful for:', doc.originalName);
+                console.log('AI Extracted Data:', JSON.stringify(aiResult.data, null, 2));
+                const partners = (aiResult.data.partners || []).map(p => ({
+                  name: p.name,
+                  profitPercent: p.profitPercentage !== null ? p.profitPercentage : 'Not specified',
+                  lossPercent: p.lossPercentage !== null ? p.lossPercentage : 'Not specified'
+                }));
+                extractedDetails = {
+                  deedDate: aiResult.data.dateOfExecution,
+                  partners: partners
+                };
+                rawExtraction.method = 'AI (Gemini)';
+                rawExtraction.rawResponse = aiResult.data;
+              } else {
+                console.log('⚠ Document AI failed, using fallback for:', doc.originalName);
+                extractedDetails = extractPartnershipDeedDetails(fullText, pdfResult.tables || []);
+                console.log('Fallback Extracted Data:', JSON.stringify(extractedDetails, null, 2));
+                rawExtraction.method = 'Fallback (Pattern Matching)';
+                rawExtraction.rawResponse = extractedDetails;
+              }
             }
             
             console.log('\n📋 FINAL EXTRACTED DETAILS:');
@@ -2552,10 +2762,14 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
             console.log('========================================\n');
             
             proposal.documents[i].extractedDetails = bankStatementDetails;
+            proposal.documents[i].extractedText = fullText; // Save full text for EMI verification
             proposal.documents[i].pages = pdfResult.numPages;
-            
+            proposal.documents[i].extractionMethod = pdfResult.method || 'pymupdf';
+
             extractionResults.push({
               fileName: doc.originalName,
+              textLength: fullText.length,
+              method: pdfResult.method || 'pymupdf',
               ...bankStatementDetails
             });
             
@@ -2779,27 +2993,27 @@ app.post('/stage2/:proposalId/complete', (req, res) => {
   }
 });
 
-// Stage 3: Customer Profiling
+// Stage 3: CAM (Credit Appraisal Memo)
 app.get('/stage3/:proposalId', (req, res) => {
   const proposal = getProposalById(req.params.proposalId);
   if (!proposal) {
     return res.status(404).send('Proposal not found');
   }
-  res.render('stage3-profiling', { proposal });
+  res.render('stage3-cam', { proposal });
 });
 
 app.post('/stage3/:proposalId/submit', (req, res) => {
   try {
     const proposalId = req.params.proposalId;
     const profilingData = req.body;
-    
+
     const updates = {
       currentStage: 4,
       status: 'Stage 3 - Profiling Complete',
       profiling: profilingData,
       stage3CompletedAt: new Date().toISOString()
     };
-    
+
     updateProposal(proposalId, updates);
     res.json({ success: true });
   } catch (error) {

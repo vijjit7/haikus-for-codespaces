@@ -106,7 +106,7 @@
                             </select>
                         </div>
                         
-                        <div class="form-group">
+                        <div class="form-group" id="collateralGroup">
                             <label for="natureOfCollateral">Nature of Collateral <span class="required">*</span></label>
                             <select id="natureOfCollateral" name="natureOfCollateral" required>
                                 <option value="">Select Collateral Type</option>
@@ -145,13 +145,6 @@
                         <div class="form-group">
                             <label for="phone">Phone Number <span class="required">*</span></label>
                             <input type="tel" id="phone" name="phone" required>
-                        </div>
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-group full-width">
-                            <label for="address">Address <span class="required">*</span></label>
-                            <input type="text" id="address" name="address" required>
                         </div>
                     </div>
 
@@ -202,47 +195,6 @@
                         </div>
                     </div>
 
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="annualRevenue">Annual Revenue (USD) <span class="required">*</span></label>
-                            <select id="annualRevenue" name="annualRevenue" required>
-                                <option value="">Select Range</option>
-                                <option value="0-100K">$0 - $100,000</option>
-                                <option value="100K-500K">$100,000 - $500,000</option>
-                                <option value="500K-1M">$500,000 - $1 Million</option>
-                                <option value="1M-5M">$1 Million - $5 Million</option>
-                                <option value="5M-10M">$5 Million - $10 Million</option>
-                                <option value="10M-50M">$10 Million - $50 Million</option>
-                                <option value="50M+">$50 Million+</option>
-                            </select>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="employeeCount">Number of Employees <span class="required">*</span></label>
-                            <input type="number" id="employeeCount" name="employeeCount" min="1" required>
-                        </div>
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="creditRating">Credit Rating (if available)</label>
-                            <select id="creditRating" name="creditRating">
-                                <option value="">Select Rating</option>
-                                <option value="AAA">AAA - Excellent</option>
-                                <option value="AA">AA - Very Good</option>
-                                <option value="A">A - Good</option>
-                                <option value="BBB">BBB - Fair</option>
-                                <option value="BB">BB - Below Average</option>
-                                <option value="B">B - Poor</option>
-                                <option value="Not Rated">Not Rated</option>
-                            </select>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="existingBankRelations">Existing Bank Relations</label>
-                            <input type="text" id="existingBankRelations" name="existingBankRelations" placeholder="e.g., Chase, Wells Fargo">
-                        </div>
-                    </div>
                 </section>
 
                 <div class="form-actions">
@@ -270,6 +222,26 @@
         const form = document.getElementById('proposalForm');
         const modal = document.getElementById('successModal');
         let coApplicantCount = 1;
+
+        // Nature of Loan toggle for collateral field
+        const natureOfLoanSelect = document.getElementById('natureOfLoan');
+        const collateralGroup = document.getElementById('collateralGroup');
+        const collateralSelect = document.getElementById('natureOfCollateral');
+
+        function toggleCollateralField() {
+            if (natureOfLoanSelect.value === 'Unsecured') {
+                collateralGroup.style.display = 'none';
+                collateralSelect.removeAttribute('required');
+                collateralSelect.value = '';
+            } else {
+                collateralGroup.style.display = '';
+                collateralSelect.setAttribute('required', 'required');
+            }
+        }
+
+        natureOfLoanSelect.addEventListener('change', toggleCollateralField);
+        // Initialize on page load
+        toggleCollateralField();
 
         // Add Co-Applicant functionality
         function addCoApplicant() {

@@ -6,6 +6,42 @@
     <title>All Proposals - Customer Profiling</title>
     <link rel="stylesheet" href="/css/main.css">
     <link rel="stylesheet" href="/css/proposal.css">
+    <style>
+        .stage-buttons {
+            display: inline-flex;
+            gap: 4px;
+            margin-right: 8px;
+        }
+        .btn-stage-circle {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border: 2px solid #bdc3c7;
+            background: #fff;
+            color: #7f8c8d;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+        .btn-stage-circle:hover {
+            border-color: #3498db;
+            color: #3498db;
+            transform: scale(1.1);
+        }
+        .btn-stage-circle.active {
+            background: #3498db;
+            border-color: #3498db;
+            color: #fff;
+        }
+        .btn-stage-circle.active:hover {
+            background: #2980b9;
+            border-color: #2980b9;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
@@ -38,7 +74,6 @@
                                 <th>Loan Type</th>
                                 <th>Nature</th>
                                 <th>Industry</th>
-                                <th>Urgency</th>
                                 <th>Status</th>
                                 <th>Submitted Date</th>
                                 <th>Associate</th>
@@ -77,11 +112,6 @@
                                     </td>
                                     <td><%= proposal.industry || 'N/A' %></td>
                                     <td>
-                                        <span class="badge badge-<%= (proposal.urgency || '').toLowerCase() %>">
-                                            <%= proposal.urgency || 'N/A' %>
-                                        </span>
-                                    </td>
-                                    <td>
                                         <span class="status-badge status-stage<%= proposal.currentStage || 1 %>">
                                             <%= proposal.status || 'Stage 1' %>
                                         </span>
@@ -90,14 +120,14 @@
                                     <td><%= proposal.associateName %></td>
                                     <td>
                                         <div class="action-buttons">
+                                            <div class="stage-buttons">
+                                                <button class="btn-stage-circle <%= proposal.currentStage >= 1 ? 'active' : '' %>" onclick="goToStage('<%= proposal.id %>', 1)" title="Stage 1 - Proposal">1</button>
+                                                <button class="btn-stage-circle <%= proposal.currentStage >= 2 ? 'active' : '' %>" onclick="goToStage('<%= proposal.id %>', 2)" title="Stage 2 - Documents">2</button>
+                                                <button class="btn-stage-circle <%= proposal.currentStage >= 3 ? 'active' : '' %>" onclick="goToStage('<%= proposal.id %>', 3)" title="Stage 3 - CAM">3</button>
+                                            </div>
                                             <button class="btn-action btn-edit" onclick="editProposal('<%= proposal.id %>')" title="Edit">
                                                 ✏️
                                             </button>
-                                            <% if (proposal.currentStage === 1) { %>
-                                                <button class="btn-action btn-stage2" onclick="moveToStage2('<%= proposal.id %>')" title="Move to Stage 2">
-                                                    ➡️ Stage 2
-                                                </button>
-                                            <% } %>
                                             <button class="btn-action btn-delete" onclick="deleteProposal('<%= proposal.id %>', '<%= proposal.applicantName || proposal.customerName %>')" title="Delete">
                                                 🗑️
                                             </button>
@@ -116,9 +146,13 @@
         function editProposal(proposalId) {
             window.location.href = `/proposals/${proposalId}/edit`;
         }
-        
-        function moveToStage2(proposalId) {
-            window.location.href = `/stage2/${proposalId}`;
+
+        function goToStage(proposalId, stage) {
+            if (stage === 1) {
+                window.location.href = `/proposals/${proposalId}/edit`;
+            } else {
+                window.location.href = `/stage${stage}/${proposalId}`;
+            }
         }
         
         async function deleteProposal(proposalId, applicantName) {

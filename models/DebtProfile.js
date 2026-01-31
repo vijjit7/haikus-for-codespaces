@@ -14,7 +14,9 @@ const DebtProfileSchema = new mongoose.Schema({
   emiEndDate: String,
   monthsCompleted: Number,
   percentTenureCompleted: Number,
-  proposalId: String
+  proposalId: String,
+  emiBankStatementProvided: { type: Boolean, default: false },
+  emiBankAccountNumber: String
 });
 
 module.exports = mongoose.model('DebtProfile', DebtProfileSchema);
