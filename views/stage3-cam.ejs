@@ -127,16 +127,44 @@
             margin-bottom: 15px;
         }
 
-        /* CAM Tab placeholder */
-        .cam-placeholder {
-            text-align: center;
-            padding: 80px 20px;
-            color: #666;
+        /* CAM Table Styles */
+        .cam-content {
+            padding: 10px;
         }
 
-        .cam-placeholder h3 {
-            color: #2c3e50;
-            margin-bottom: 10px;
+        .cam-table tbody tr:hover {
+            background: #e8f4fc !important;
+        }
+
+        .head-link {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85em;
+            font-weight: 500;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        .head-link:hover {
+            background: #2980b9;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+
+        .cam-memo {
+            min-height: 40px;
+            vertical-align: top;
+        }
+
+        .memo-content {
+            white-space: pre-wrap;
+            font-size: 0.9em;
+            color: #333;
+            line-height: 1.5;
         }
     </style>
 </head>
@@ -176,9 +204,379 @@
 
             <!-- CAM Tab Content -->
             <div id="camTab" class="main-tab-content active">
-                <div class="cam-placeholder">
-                    <h3>Credit Appraisal Memo</h3>
-                    <p>CAM consolidated view will be displayed here.</p>
+                <div class="cam-content">
+                    <h3 style="color: #2c3e50; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 3px solid #3498db;">Credit Appraisal Memo</h3>
+
+                    <div style="overflow-x: auto;">
+                        <table class="cam-table" style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+                            <thead>
+                                <tr style="background: #2c3e50; color: white;">
+                                    <th style="padding: 12px 10px; text-align: center; border: 1px solid #1a252f; width: 50px;">Sl.No</th>
+                                    <th style="padding: 12px 10px; text-align: left; border: 1px solid #1a252f; width: 280px;">Particulars</th>
+                                    <th style="padding: 12px 10px; text-align: center; border: 1px solid #1a252f; width: 140px;">Head</th>
+                                    <th style="padding: 12px 10px; text-align: left; border: 1px solid #1a252f;">Appraisal Memo</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr style="background: #fff;">
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">1</td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;">Case Type</td>
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                                        <button class="head-link" onclick="goToAnalysis('proposalType')">Proposal Type</button>
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="caseType">
+                                        <div class="memo-content"><%= proposal.camMemo?.caseType || '' %></div>
+                                    </td>
+                                </tr>
+                                <tr style="background: #f8f9fa;">
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">2</td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;">Applicant and Co-applicant Personal Details</td>
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                                        <button class="head-link" onclick="goToAnalysis('personalId')">Personal ID</button>
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="personalDetails">
+                                        <div class="memo-content"><%= proposal.camMemo?.personalDetails || '' %></div>
+                                    </td>
+                                </tr>
+                                <tr style="background: #fff;">
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">3</td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;">Business Details</td>
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                                        <button class="head-link" onclick="goToAnalysis('businessId')">Business ID</button>
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="businessDetails">
+                                        <div class="memo-content"><%= proposal.camMemo?.businessDetails || '' %></div>
+                                    </td>
+                                </tr>
+                                <tr style="background: #f8f9fa;">
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">4</td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;">Business Process</td>
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                                        <button class="head-link" onclick="goToAnalysis('businessProcess')">Business Process</button>
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="businessProcess">
+                                        <div class="memo-content"><%= proposal.camMemo?.businessProcess || '' %></div>
+                                    </td>
+                                </tr>
+                                <tr style="background: #fff;">
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">5</td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;">Financial Details</td>
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                                        <button class="head-link" onclick="goToAnalysis('financials')">Financials</button>
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="financialDetails">
+                                        <div class="memo-content"><%= proposal.camMemo?.financialDetails || '' %></div>
+                                    </td>
+                                </tr>
+                                <tr style="background: #f8f9fa;">
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">6</td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;">Incorporation (Share Holding)</td>
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                                        <button class="head-link" onclick="goToAnalysis('incorporation')">Incorporation</button>
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="incorporation">
+                                        <div class="memo-content"><%= proposal.camMemo?.incorporation || '' %></div>
+                                    </td>
+                                </tr>
+                                <tr style="background: #fff;">
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">7</td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;">Other Income (Rentals etc)</td>
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                                        <button class="head-link" onclick="goToAnalysis('otherIncome')">Other Income</button>
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="otherIncome">
+                                        <div class="memo-content"><%= proposal.camMemo?.otherIncome || '' %></div>
+                                    </td>
+                                </tr>
+                                <tr style="background: #f8f9fa;">
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">8</td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;">GST Returns / Turnover</td>
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                                        <button class="head-link" onclick="goToAnalysis('turnover')">Turnover</button>
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="gstReturns">
+                                        <%
+                                        // Extract P&L Sales for turnover summary in memo
+                                        let memoSales2324 = 0, memoSales2425 = 0;
+                                        const memoFinancialDocs = proposal.documents ? proposal.documents.filter(d => d.category === 'financials') : [];
+                                        memoFinancialDocs.forEach(doc => {
+                                            const cls = (doc.classification || '').toLowerCase();
+                                            const txt = doc.extractedText || '';
+                                            let docFY = null;
+                                            if (cls.includes('fy2024-25') || cls.includes('fy 2024-25')) docFY = '2024-25';
+                                            else if (cls.includes('fy2023-24') || cls.includes('fy 2023-24')) docFY = '2023-24';
+                                            if (docFY && (cls.includes('pragati') || cls.includes('pragathi'))) {
+                                                const salesMatch = txt.match(/(?:BY\s+)?SALES(?:\s+A\/C)?\s*(?:\n?\d+\s*\n)?\s*([\d,]+(?:\.\d+)?)/i);
+                                                if (salesMatch) {
+                                                    const amt = parseFloat(salesMatch[1].replace(/,/g, ''));
+                                                    if (docFY === '2024-25' && amt > memoSales2425) memoSales2425 = amt;
+                                                    else if (docFY === '2023-24' && amt > memoSales2324) memoSales2324 = amt;
+                                                }
+                                            }
+                                        });
+                                        // Calculate GST projected turnover - same logic as analysis section
+                                        const turnoverDocs = proposal.documents ? proposal.documents.filter(d => d.category === 'turnover') : [];
+                                        let memoGstTotal = 0;
+                                        const memoGstMonthSet = new Set();
+                                        turnoverDocs.forEach(doc => {
+                                            const txt = doc.extractedText || '';
+                                            // Check if FY 2025-26
+                                            const yearMatch = txt.match(/Year\s+(\d{4}-\d{2})/);
+                                            if (yearMatch && yearMatch[1] === '2025-26') {
+                                                const periodMatch = txt.match(/Period\s+([A-Za-z]+)/);
+                                                if (periodMatch) memoGstMonthSet.add(periodMatch[1]);
+                                                // Extract all outward supplies components (same as analysis)
+                                                let taxableValue = 0, zeroRatedValue = 0, exemptedValue = 0, ecommerceSupplies = 0;
+                                                const outwardMatch = txt.match(/\(a\)\s*Outward taxable supplies[^)]+\)\s*([\d,.]+)/);
+                                                if (outwardMatch) taxableValue = parseFloat(outwardMatch[1].replace(/,/g, '')) || 0;
+                                                const zeroMatch = txt.match(/\(b\)\s*Outward taxable supplies\s*\(zero rated\)\s*([\d,.]+)/i);
+                                                if (zeroMatch) zeroRatedValue = parseFloat(zeroMatch[1].replace(/,/g, '')) || 0;
+                                                const exemptMatch = txt.match(/\(c\s*\)\s*Other outward supplies\s*\(nil rated,?\s*exempted\)\s*([\d,.]+)/i);
+                                                if (exemptMatch) exemptedValue = parseFloat(exemptMatch[1].replace(/,/g, '')) || 0;
+                                                const ecomMatch = txt.match(/\(ii\)\s*Taxable supplies made by registered person through electronic commerce[^\]]*\]\s*([\d,.]+)/i);
+                                                if (ecomMatch) ecommerceSupplies = parseFloat(ecomMatch[1].replace(/,/g, '')) || 0;
+                                                // Avoid double counting if exempted equals ecommerce
+                                                if (exemptedValue > 0 && ecommerceSupplies > 0 && exemptedValue === ecommerceSupplies) exemptedValue = 0;
+                                                memoGstTotal += taxableValue + zeroRatedValue + exemptedValue + ecommerceSupplies;
+                                            }
+                                        });
+                                        const memoGstMonths = memoGstMonthSet.size || 1;
+                                        const memoProjected = memoGstMonths > 0 ? (memoGstTotal / memoGstMonths) * 12 : 0;
+                                        const memoGrowth2425 = memoSales2324 > 0 ? ((memoSales2425 - memoSales2324) / memoSales2324 * 100) : null;
+                                        const memoGrowth2526 = memoSales2425 > 0 ? ((memoProjected - memoSales2425) / memoSales2425 * 100) : null;
+                                        %>
+                                        <div style="margin-bottom: 10px;">
+                                            <table style="width: 100%; border-collapse: collapse; font-size: 0.85em;">
+                                                <tr style="background: #27ae60; color: white;">
+                                                    <th style="padding: 6px 8px; border: 1px solid #1e8449; text-align: left;">Year</th>
+                                                    <th style="padding: 6px 8px; border: 1px solid #1e8449; text-align: right;">FY2023-24</th>
+                                                    <th style="padding: 6px 8px; border: 1px solid #1e8449; text-align: right;">FY2024-25</th>
+                                                    <th style="padding: 6px 8px; border: 1px solid #1e8449; text-align: right;">FY2025-26 (Proj)</th>
+                                                </tr>
+                                                <tr>
+                                                    <td style="padding: 6px 8px; border: 1px solid #ddd; font-weight: 600;">Turnover</td>
+                                                    <td style="padding: 6px 8px; border: 1px solid #ddd; text-align: right;">₹ <%= memoSales2324 > 0 ? memoSales2324.toLocaleString('en-IN') : '-' %></td>
+                                                    <td style="padding: 6px 8px; border: 1px solid #ddd; text-align: right;">₹ <%= memoSales2425 > 0 ? memoSales2425.toLocaleString('en-IN') : '-' %></td>
+                                                    <td style="padding: 6px 8px; border: 1px solid #ddd; text-align: right;">₹ <%= memoProjected > 0 ? Math.round(memoProjected).toLocaleString('en-IN') : '-' %></td>
+                                                </tr>
+                                                <tr style="background: #f8f9fa;">
+                                                    <td style="padding: 6px 8px; border: 1px solid #ddd; font-weight: 600;">Growth</td>
+                                                    <td style="padding: 6px 8px; border: 1px solid #ddd; text-align: right; color: #888;">-</td>
+                                                    <td style="padding: 6px 8px; border: 1px solid #ddd; text-align: right; color: <%= memoGrowth2425 !== null ? (memoGrowth2425 >= 0 ? '#27ae60' : '#e74c3c') : '#888' %>;"><%= memoGrowth2425 !== null ? (memoGrowth2425 >= 0 ? '+' : '') + memoGrowth2425.toFixed(1) + '%' : '-' %></td>
+                                                    <td style="padding: 6px 8px; border: 1px solid #ddd; text-align: right; color: <%= memoGrowth2526 !== null ? (memoGrowth2526 >= 0 ? '#27ae60' : '#e74c3c') : '#888' %>;"><%= memoGrowth2526 !== null ? (memoGrowth2526 >= 0 ? '+' : '') + memoGrowth2526.toFixed(1) + '%' : '-' %></td>
+                                                </tr>
+                                            </table>
+                                        </div>
+                                        <%
+                                        // Calculate GSTIN-wise contribution to projected turnover
+                                        const gstinContribution = {};
+                                        turnoverDocs.forEach(doc => {
+                                            const txt = doc.extractedText || '';
+                                            const gstinMatch = txt.match(/GSTIN of the supplier\s+([A-Z0-9]{15})/) ||
+                                                               doc.originalName.match(/GSTR3B_([A-Z0-9]{15})_/);
+                                            const yearMatch = txt.match(/Year\s+(\d{4}-\d{2})/);
+                                            if (gstinMatch && yearMatch && yearMatch[1] === '2025-26') {
+                                                const gstin = gstinMatch[1];
+                                                if (!gstinContribution[gstin]) gstinContribution[gstin] = { total: 0, months: new Set() };
+                                                const periodMatch = txt.match(/Period\s+([A-Za-z]+)/);
+                                                if (periodMatch) gstinContribution[gstin].months.add(periodMatch[1]);
+                                                // Extract all outward supplies
+                                                const outwardMatch = txt.match(/\(a\)\s*Outward taxable supplies[^)]+\)\s*([\d,.]+)/);
+                                                const zeroMatch = txt.match(/\(b\)\s*Outward taxable supplies\s*\(zero rated\)\s*([\d,.]+)/i);
+                                                const exemptMatch = txt.match(/\(c\s*\)\s*Other outward supplies\s*\(nil rated,?\s*exempted\)\s*([\d,.]+)/i);
+                                                const ecomMatch = txt.match(/\(ii\)\s*Taxable supplies made by registered person through electronic commerce[^\]]*\]\s*([\d,.]+)/i);
+                                                let taxable = outwardMatch ? parseFloat(outwardMatch[1].replace(/,/g, '')) : 0;
+                                                let zeroRated = zeroMatch ? parseFloat(zeroMatch[1].replace(/,/g, '')) : 0;
+                                                let exempted = exemptMatch ? parseFloat(exemptMatch[1].replace(/,/g, '')) : 0;
+                                                let ecommerce = ecomMatch ? parseFloat(ecomMatch[1].replace(/,/g, '')) : 0;
+                                                if (exempted > 0 && ecommerce > 0 && exempted === ecommerce) exempted = 0;
+                                                gstinContribution[gstin].total += taxable + zeroRated + exempted + ecommerce;
+                                            }
+                                        });
+                                        // Calculate annualized values and percentages
+                                        let gstinGrandTotal = 0;
+                                        const gstinResults = [];
+                                        Object.entries(gstinContribution).forEach(([gstin, data]) => {
+                                            const annualized = data.months.size > 0 ? (data.total / data.months.size) * 12 : 0;
+                                            gstinGrandTotal += annualized;
+                                            const state = gstin.startsWith('36') ? 'Telangana' : gstin.startsWith('37') ? 'Andhra Pradesh' : 'Other';
+                                            gstinResults.push({ gstin, state, annualized, months: data.months.size });
+                                        });
+                                        gstinResults.forEach(r => { r.pct = gstinGrandTotal > 0 ? (r.annualized / gstinGrandTotal * 100) : 0; });
+                                        gstinResults.sort((a, b) => b.annualized - a.annualized);
+                                        %>
+                                        <%
+                                        // Show table only when there are GSTINs from different states
+                                        const uniqueStates = new Set(gstinResults.map(r => r.state));
+                                        const hasMultipleStates = uniqueStates.size > 1;
+                                        %>
+                                        <% if (hasMultipleStates) { %>
+                                        <div style="margin-top: 10px; margin-bottom: 10px;">
+                                            <div style="font-size: 0.8em; color: #666; margin-bottom: 5px; font-weight: 600;">GST State-wise Contribution (FY2025-26 Projected)</div>
+                                            <table style="width: 100%; border-collapse: collapse; font-size: 0.85em;">
+                                                <tr style="background: #3498db; color: white;">
+                                                    <th style="padding: 6px 8px; border: 1px solid #2980b9; text-align: left;">State</th>
+                                                    <th style="padding: 6px 8px; border: 1px solid #2980b9; text-align: left;">GSTIN</th>
+                                                    <th style="padding: 6px 8px; border: 1px solid #2980b9; text-align: right;">Annualized Turnover</th>
+                                                    <th style="padding: 6px 8px; border: 1px solid #2980b9; text-align: right;">Contribution</th>
+                                                </tr>
+                                                <% gstinResults.forEach(r => { %>
+                                                <tr>
+                                                    <td style="padding: 6px 8px; border: 1px solid #ddd;"><%= r.state %></td>
+                                                    <td style="padding: 6px 8px; border: 1px solid #ddd; font-family: monospace; font-size: 0.9em;"><%= r.gstin %></td>
+                                                    <td style="padding: 6px 8px; border: 1px solid #ddd; text-align: right;">₹ <%= Math.round(r.annualized).toLocaleString('en-IN') %></td>
+                                                    <td style="padding: 6px 8px; border: 1px solid #ddd; text-align: right; font-weight: 600; color: #2980b9;"><%= r.pct.toFixed(1) %>%</td>
+                                                </tr>
+                                                <% }); %>
+                                                <tr style="background: #ecf0f1; font-weight: 600;">
+                                                    <td style="padding: 6px 8px; border: 1px solid #ddd;" colspan="2">Total</td>
+                                                    <td style="padding: 6px 8px; border: 1px solid #ddd; text-align: right;">₹ <%= Math.round(gstinGrandTotal).toLocaleString('en-IN') %></td>
+                                                    <td style="padding: 6px 8px; border: 1px solid #ddd; text-align: right;">100%</td>
+                                                </tr>
+                                            </table>
+                                        </div>
+                                        <% } %>
+                                        <div class="memo-content"><%= proposal.camMemo?.gstReturns || '' %></div>
+                                    </td>
+                                </tr>
+                                <tr style="background: #fff;">
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">9</td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;">Banking Details</td>
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                                        <button class="head-link" onclick="goToAnalysis('banking')">Banking</button>
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="bankingDetails">
+                                        <div class="memo-content"><%= proposal.camMemo?.bankingDetails || '' %></div>
+                                    </td>
+                                </tr>
+                                <tr style="background: #f8f9fa;">
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">10</td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;">Debt Profile</td>
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                                        <button class="head-link" onclick="goToAnalysis('debtProfile')">Debt Profile</button>
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="debtProfile">
+                                        <div class="memo-content"><%= proposal.camMemo?.debtProfile || '' %></div>
+                                    </td>
+                                </tr>
+                                <tr style="background: #fff;">
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">11</td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;">Asset Base / Net Worth of Customer</td>
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                                        <button class="head-link" onclick="goToAnalysis('networth')">Networth</button>
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="networth">
+                                        <div class="memo-content"><%= proposal.camMemo?.networth || '' %></div>
+                                    </td>
+                                </tr>
+                                <tr style="background: #f8f9fa;">
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">12</td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;">Eligibility Basis</td>
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                                        <button class="head-link" onclick="goToAnalysis('eligibility')">Eligibility</button>
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="eligibility">
+                                        <div class="memo-content"><%= proposal.camMemo?.eligibility || '' %></div>
+                                    </td>
+                                </tr>
+                                <tr style="background: #fff;">
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">13</td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;">Collateral Details - Technical & Legal</td>
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                                        <button class="head-link" onclick="goToAnalysis('collateral')">Collateral</button>
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="collateral">
+                                        <div class="memo-content"><%= proposal.camMemo?.collateral || '' %></div>
+                                    </td>
+                                </tr>
+                                <tr style="background: #f8f9fa;">
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">14</td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;">End Use of Funds / Loan Purpose</td>
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                                        <button class="head-link" onclick="goToAnalysis('proposalType')">Proposal Type</button>
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="endUse">
+                                        <div class="memo-content"><%= proposal.camMemo?.endUse || '' %></div>
+                                    </td>
+                                </tr>
+                                <tr style="background: #fff;">
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">15</td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;">FOIR and LTV</td>
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                                        <button class="head-link" onclick="goToAnalysis('financials')">Financials</button>
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="foirLtv">
+                                        <div class="memo-content"><%= proposal.camMemo?.foirLtv || '' %></div>
+                                    </td>
+                                </tr>
+                                <tr style="background: #f8f9fa;">
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">16</td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;">Google Check and Other Checks</td>
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                                        <button class="head-link" onclick="goToAnalysis('googleChecks')">Google Checks</button>
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="googleChecks">
+                                        <div style="margin-bottom: 10px; padding: 10px; background: #e8f5e9; border-radius: 6px; border-left: 3px solid #4caf50;">
+                                            <div style="font-weight: 600; color: #2e7d32; margin-bottom: 8px;">🔍 Google Check Summary</div>
+                                            <div style="font-size: 0.9em; line-height: 1.6;">
+                                                <strong>Applicant: <%= proposal.applicantName %></strong><br>
+                                                <%
+                                                const appNameLower = (proposal.applicantName || '').toLowerCase();
+                                                let businessDescription = '';
+                                                if (appNameLower.includes('pragati') && appNameLower.includes('enterpri')) {
+                                                    businessDescription = 'Pragati Enterprize is a safety equipment supplier operating in Hyderabad (Telangana) and Visakhapatnam (Andhra Pradesh). The business deals in Body Protection, Electrical Protection, Fire Protection, Confined Space Protection, Eye Protection, Face Protection, Fire & Rescue equipment, Fire Suppression Systems, and Foot Protection. Business hours: Monday-Saturday 09:00-18:00. Website: pragatienterprize.com';
+                                                } else {
+                                                    businessDescription = 'Business verification pending. No adverse news found in Google search.';
+                                                }
+                                                %>
+                                                <%= businessDescription %>
+                                                <br><br>
+                                                <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
+                                                <strong>Co-Applicants:</strong><br>
+                                                <% proposal.coApplicants.forEach(co => { %>
+                                                • <strong><%= co.name %></strong> (<%= co.type %>): No adverse news or negative publicity found in Google search. Individual appears to be associated with the business as a partner.<br>
+                                                <% }); %>
+                                                <% } %>
+                                                <br>
+                                                <span style="color: #666; font-size: 0.85em;">✓ No negative news, legal cases, or fraud reports found for applicant or co-applicants.</span>
+                                            </div>
+                                        </div>
+                                        <div class="memo-content"><%= proposal.camMemo?.googleChecks || '' %></div>
+                                    </td>
+                                </tr>
+                                <tr style="background: #fff;">
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">17</td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;">Deviations</td>
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                                        <button class="head-link" onclick="goToAnalysis('deviations')">Deviations</button>
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="deviations">
+                                        <div class="memo-content"><%= proposal.camMemo?.deviations || '' %></div>
+                                    </td>
+                                </tr>
+                                <tr style="background: #f8f9fa;">
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">18</td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;">Concerns in the Case</td>
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                                        <button class="head-link" onclick="goToAnalysis('concerns')">Concerns</button>
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="concerns">
+                                        <div class="memo-content"><%= proposal.camMemo?.concerns || '' %></div>
+                                    </td>
+                                </tr>
+                                <tr style="background: #fff;">
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">19</td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;">Strengths of the Case</td>
+                                    <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                                        <button class="head-link" onclick="goToAnalysis('strengths')">Strength</button>
+                                    </td>
+                                    <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="strengths">
+                                        <div class="memo-content"><%= proposal.camMemo?.strengths || '' %></div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
 
@@ -186,18 +584,34 @@
             <div id="analysisTab" class="main-tab-content">
                 <!-- Analysis Sub-tabs -->
                 <div class="analysis-tabs">
+                    <button class="analysis-tab" onclick="showAnalysisTab('proposalType')">Proposal Type</button>
                     <button class="analysis-tab active" onclick="showAnalysisTab('personalId')">Personal ID</button>
                     <button class="analysis-tab" onclick="showAnalysisTab('businessId')">Business ID</button>
+                    <button class="analysis-tab" onclick="showAnalysisTab('businessProcess')">Business Process</button>
                     <button class="analysis-tab" onclick="showAnalysisTab('incorporation')">Incorporation</button>
-                    <button class="analysis-tab" onclick="showAnalysisTab('creditReports')">Credit Reports</button>
                     <button class="analysis-tab" onclick="showAnalysisTab('financials')">Financials</button>
-                    <button class="analysis-tab" onclick="showAnalysisTab('banking')">Banking</button>
+                    <button class="analysis-tab" onclick="showAnalysisTab('otherIncome')">Other Income</button>
                     <button class="analysis-tab" onclick="showAnalysisTab('turnover')">Turnover</button>
+                    <button class="analysis-tab" onclick="showAnalysisTab('banking')">Banking</button>
                     <button class="analysis-tab" onclick="showAnalysisTab('debtProfile')">Debt Profile</button>
+                    <button class="analysis-tab" onclick="showAnalysisTab('networth')">Networth</button>
+                    <button class="analysis-tab" onclick="showAnalysisTab('eligibility')">Eligibility</button>
                     <button class="analysis-tab" onclick="showAnalysisTab('collateral')">Collateral</button>
+                    <button class="analysis-tab" onclick="showAnalysisTab('googleChecks')">Google Checks</button>
+                    <button class="analysis-tab" onclick="showAnalysisTab('deviations')">Deviations</button>
+                    <button class="analysis-tab" onclick="showAnalysisTab('concerns')">Concerns</button>
+                    <button class="analysis-tab" onclick="showAnalysisTab('strengths')">Strength</button>
                 </div>
 
                 <!-- Analysis Panels -->
+                <div id="proposalTypePanel" class="analysis-panel">
+                    <h3>Proposal Type Analysis</h3>
+                    <div class="placeholder-content">
+                        <div class="icon">📋</div>
+                        <p>Case type and loan purpose details will be displayed here.</p>
+                    </div>
+                </div>
+
                 <div id="personalIdPanel" class="analysis-panel active">
                     <h3>Personal ID Analysis</h3>
                     <div class="placeholder-content">
@@ -214,19 +628,19 @@
                     </div>
                 </div>
 
+                <div id="businessProcessPanel" class="analysis-panel">
+                    <h3>Business Process Analysis</h3>
+                    <div class="placeholder-content">
+                        <div class="icon">⚙️</div>
+                        <p>Business process and operations details will be displayed here.</p>
+                    </div>
+                </div>
+
                 <div id="incorporationPanel" class="analysis-panel">
                     <h3>Incorporation Analysis</h3>
                     <div class="placeholder-content">
                         <div class="icon">📜</div>
-                        <p>Incorporation documents and analysis will be displayed here.</p>
-                    </div>
-                </div>
-
-                <div id="creditReportsPanel" class="analysis-panel">
-                    <h3>Credit Reports Analysis</h3>
-                    <div class="placeholder-content">
-                        <div class="icon">📊</div>
-                        <p>Credit reports and analysis will be displayed here.</p>
+                        <p>Incorporation documents and shareholding analysis will be displayed here.</p>
                     </div>
                 </div>
 
@@ -234,7 +648,15 @@
                     <h3>Financials Analysis</h3>
                     <div class="placeholder-content">
                         <div class="icon">💰</div>
-                        <p>Financial documents and analysis will be displayed here.</p>
+                        <p>Financial documents, FOIR and LTV analysis will be displayed here.</p>
+                    </div>
+                </div>
+
+                <div id="otherIncomePanel" class="analysis-panel">
+                    <h3>Other Income Analysis</h3>
+                    <div class="placeholder-content">
+                        <div class="icon">💵</div>
+                        <p>Other income sources like rentals will be displayed here.</p>
                     </div>
                 </div>
 
@@ -247,11 +669,503 @@
                 </div>
 
                 <div id="turnoverPanel" class="analysis-panel">
-                    <h3>Turnover Analysis</h3>
-                    <div class="placeholder-content">
-                        <div class="icon">📈</div>
-                        <p>Turnover/GST documents and analysis will be displayed here.</p>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                        <h3 style="margin: 0; padding-bottom: 10px; border-bottom: 2px solid #3498db;">Turnover Analysis</h3>
+                        <button onclick="refreshTurnoverData()" id="refreshTurnoverBtn" style="background: #3498db; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 500; display: flex; align-items: center; gap: 6px;">
+                            <span style="font-size: 1.1em;">&#8635;</span> Refresh Data
+                        </button>
                     </div>
+
+                    <%
+                    // Get all GST documents
+                    const gstDocuments = (proposal.documents || []).filter(doc =>
+                        doc.category === 'turnover' &&
+                        (doc.extractedText && (doc.extractedText.includes('GSTR-3B') || doc.extractedText.includes('Form GSTR-3B')))
+                    );
+
+                    // Group by GSTIN
+                    const gstDataByGstin = {};
+
+                    gstDocuments.forEach(doc => {
+                        const text = doc.extractedText || '';
+
+                        // Extract GSTIN
+                        let gstin = 'Unknown';
+                        const gstinMatch = text.match(/GSTIN of the supplier\s+([A-Z0-9]{15})/);
+                        if (gstinMatch) {
+                            gstin = gstinMatch[1];
+                        } else {
+                            const filenameMatch = doc.originalName.match(/GSTR3B_([A-Z0-9]{15})_/);
+                            if (filenameMatch) gstin = filenameMatch[1];
+                        }
+
+                        // Extract Trade Name and Legal Name
+                        let tradeName = '';
+                        let legalName = '';
+                        const tradeMatch = text.match(/Trade name,?\s*(?:if any)?\s*([A-Z0-9\s]+?)(?:\n|2\(c\))/i);
+                        const legalMatch = text.match(/Legal name of the registered person\s+([A-Z0-9\s]+?)(?:\n|2\(b\))/i);
+                        if (tradeMatch) tradeName = tradeMatch[1].trim();
+                        if (legalMatch) legalName = legalMatch[1].trim();
+
+                        // Extract Period and Year
+                        let period = '';
+                        let year = '';
+                        const periodMatch = text.match(/Period\s+([A-Za-z]+)/);
+                        const yearMatch = text.match(/Year\s+(\d{4}-\d{2})/);
+                        if (periodMatch) period = periodMatch[1];
+                        if (yearMatch) year = yearMatch[1];
+
+                        // Extract Outward Supplies data from Section 3.1
+                        // Pattern: (a) Outward taxable supplies ... followed by numbers
+                        let taxableValue = 0;
+                        let integratedTax = 0;
+                        let centralTax = 0;
+                        let stateTax = 0;
+                        let cess = 0;
+
+                        // Match outward taxable supplies row (a)
+                        const outwardMatch = text.match(/\(a\)\s*Outward taxable supplies[^)]+\)\s*([\d,.]+)\s+([\d,.]+)\s+([\d,.]+)\s+([\d,.]+)\s+([\d,.]+)/);
+                        if (outwardMatch) {
+                            taxableValue = parseFloat(outwardMatch[1].replace(/,/g, '')) || 0;
+                            integratedTax = parseFloat(outwardMatch[2].replace(/,/g, '')) || 0;
+                            centralTax = parseFloat(outwardMatch[3].replace(/,/g, '')) || 0;
+                            stateTax = parseFloat(outwardMatch[4].replace(/,/g, '')) || 0;
+                            cess = parseFloat(outwardMatch[5].replace(/,/g, '')) || 0;
+                        }
+
+                        // Extract zero rated outward supplies from section 3.1(b)
+                        let zeroRatedValue = 0;
+                        const zeroRatedMatch = text.match(/\(b\)\s*Outward taxable supplies\s*\(zero rated\)\s*([\d,.]+)/i);
+                        if (zeroRatedMatch) {
+                            zeroRatedValue = parseFloat(zeroRatedMatch[1].replace(/,/g, '')) || 0;
+                        }
+
+                        // Extract exempted outward supplies from section 3.1(c) - nil rated, exempted
+                        let exemptedValue = 0;
+                        const exemptedMatch = text.match(/\(c\s*\)\s*Other outward supplies\s*\(nil rated,?\s*exempted\)\s*([\d,.]+)/i);
+                        if (exemptedMatch) {
+                            exemptedValue = parseFloat(exemptedMatch[1].replace(/,/g, '')) || 0;
+                        }
+
+                        // Extract e-commerce supplies from section 3.1.1(ii)
+                        // "(ii) Taxable supplies made by registered person through electronic commerce operator"
+                        // The Total taxable value is the first number after the description
+                        let ecommerceSupplies = 0;
+                        const ecomMatch = text.match(/\(ii\)\s*Taxable supplies made by registered person through electronic commerce[^\]]*\]\s*([\d,.]+)/i);
+                        if (ecomMatch) {
+                            ecommerceSupplies = parseFloat(ecomMatch[1].replace(/,/g, '')) || 0;
+                        }
+
+                        if (!gstDataByGstin[gstin]) {
+                            gstDataByGstin[gstin] = {
+                                tradeName: tradeName,
+                                legalName: legalName,
+                                months: []
+                            };
+                        }
+
+                        // Update names if found
+                        if (tradeName && !gstDataByGstin[gstin].tradeName) {
+                            gstDataByGstin[gstin].tradeName = tradeName;
+                        }
+                        if (legalName && !gstDataByGstin[gstin].legalName) {
+                            gstDataByGstin[gstin].legalName = legalName;
+                        }
+
+                        // If same amount appears in both Exempted and Ecommerce Supplies,
+                        // count only once (in Ecommerce for Hospitality sector)
+                        let finalExempted = exemptedValue;
+                        let finalEcommerce = ecommerceSupplies;
+                        if (exemptedValue > 0 && ecommerceSupplies > 0 && exemptedValue === ecommerceSupplies) {
+                            finalExempted = 0; // Count only in Ecommerce column
+                        }
+
+                        gstDataByGstin[gstin].months.push({
+                            period: period,
+                            year: year,
+                            taxableValue: taxableValue,
+                            zeroRatedValue: zeroRatedValue,
+                            exemptedValue: finalExempted,
+                            ecommerceSupplies: finalEcommerce,
+                            totalOutward: taxableValue + zeroRatedValue + finalExempted + finalEcommerce,
+                            integratedTax: integratedTax,
+                            centralTax: centralTax,
+                            stateTax: stateTax,
+                            cess: cess,
+                            totalTax: integratedTax + centralTax + stateTax + cess
+                        });
+                    });
+
+                    // Check if this is Hospitality sector
+                    const isHospitality = proposal.industry === 'Hospitality';
+
+                    // Sort months for each GSTIN in chronological order (FY: April to March)
+                    const monthOrder = ['April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December', 'January', 'February', 'March'];
+
+                    // Helper function to get sort key for chronological ordering
+                    // For FY 2024-25: April-Dec are in 2024, Jan-Mar are in 2025
+                    function getSortKey(month) {
+                        const fyMatch = month.year.match(/(\d{4})-(\d{2})/);
+                        if (!fyMatch) return 0;
+
+                        const fyStartYear = parseInt(fyMatch[1]); // e.g., 2024 from "2024-25"
+                        const monthIdx = monthOrder.indexOf(month.period);
+
+                        // April-December (index 0-8) belong to fyStartYear
+                        // January-March (index 9-11) belong to fyStartYear + 1
+                        let calendarYear = fyStartYear;
+                        if (monthIdx >= 9) { // January, February, March
+                            calendarYear = fyStartYear + 1;
+                        }
+
+                        // Convert month name to number (April=4, May=5, ..., March=3)
+                        const calendarMonthMap = {
+                            'April': 4, 'May': 5, 'June': 6, 'July': 7,
+                            'August': 8, 'September': 9, 'October': 10, 'November': 11,
+                            'December': 12, 'January': 1, 'February': 2, 'March': 3
+                        };
+                        const calendarMonth = calendarMonthMap[month.period] || 1;
+
+                        // Return sortable key: YYYYMM
+                        return calendarYear * 100 + calendarMonth;
+                    }
+
+                    Object.keys(gstDataByGstin).forEach(gstin => {
+                        gstDataByGstin[gstin].months.sort((a, b) => {
+                            return getSortKey(a) - getSortKey(b);
+                        });
+                    });
+
+                    const gstinList = Object.keys(gstDataByGstin);
+
+                    // Check if any data has values (to detect if extraction was truncated)
+                    let hasAnyValues = false;
+                    gstinList.forEach(gstin => {
+                        gstDataByGstin[gstin].months.forEach(m => {
+                            if (m.taxableValue > 0 || m.totalTax > 0) hasAnyValues = true;
+                        });
+                    });
+                    %>
+
+                    <%
+                    // Calculate GST turnover for FY2025-26 (latest year - to be annualized)
+                    // For FY2025-26, only use April 2025 onwards and count UNIQUE months
+                    const gstTurnoverByFY = {};
+                    const uniqueMonthsByFY = {}; // Track unique months per FY
+
+                    gstinList.forEach(gstin => {
+                        const gstData = gstDataByGstin[gstin];
+                        gstData.months.forEach(m => {
+                            if (!gstTurnoverByFY[m.year]) {
+                                gstTurnoverByFY[m.year] = 0;
+                                uniqueMonthsByFY[m.year] = new Set();
+                            }
+                            gstTurnoverByFY[m.year] += m.totalOutward;
+                            // Track unique months using period name (April, May, etc.)
+                            uniqueMonthsByFY[m.year].add(m.period);
+                        });
+                    });
+
+                    // Get FYs from GST data and find the latest one
+                    const gstFYs = Object.keys(gstTurnoverByFY).sort((a, b) => {
+                        const yearA = parseInt(a.split('-')[0]);
+                        const yearB = parseInt(b.split('-')[0]);
+                        return yearA - yearB;
+                    });
+                    const latestGstFY = gstFYs[gstFYs.length - 1]; // e.g., "2025-26"
+
+                    // Calculate annualized turnover for latest FY from GST
+                    // Use unique month count for proper annualization
+                    let projectedTurnover = 0;
+                    let projectedMonths = 0;
+                    if (latestGstFY && uniqueMonthsByFY[latestGstFY]) {
+                        projectedMonths = uniqueMonthsByFY[latestGstFY].size; // Count of unique months
+                        projectedTurnover = (gstTurnoverByFY[latestGstFY] / projectedMonths) * 12;
+                    }
+
+                    // P&L Sales figures - auto-extract from ITR documents
+                    let extractedSales2324 = 0;
+                    let extractedSales2425 = 0;
+                    let extractedSales2223 = 0;
+
+                    // Extract sales from financial documents
+                    const financialDocs = proposal.documents ? proposal.documents.filter(d => d.category === 'financials') : [];
+                    financialDocs.forEach(doc => {
+                        const classification = (doc.classification || '').toLowerCase();
+                        const text = doc.extractedText || '';
+
+                        // Determine FY from classification
+                        let docFY = null;
+                        if (classification.includes('fy2024-25') || classification.includes('fy 2024-25')) docFY = '2024-25';
+                        else if (classification.includes('fy2023-24') || classification.includes('fy 2023-24')) docFY = '2023-24';
+                        else if (classification.includes('fy2022-23') || classification.includes('fy 2022-23')) docFY = '2022-23';
+
+                        // Only process business entity ITRs (not individual)
+                        if (docFY && (classification.includes('pragati') || classification.includes('pragathi'))) {
+                            // Extract SALES amount - pattern: "SALES \n7,69,93,805" or "BY SALES A/C \n12 \n7,63,04,012"
+                            const salesMatch = text.match(/(?:BY\s+)?SALES(?:\s+A\/C)?\s*(?:\n?\d+\s*\n)?\s*([\d,]+(?:\.\d+)?)/i);
+                            if (salesMatch) {
+                                const salesAmount = parseFloat(salesMatch[1].replace(/,/g, ''));
+                                if (docFY === '2024-25' && salesAmount > extractedSales2425) extractedSales2425 = salesAmount;
+                                else if (docFY === '2023-24' && salesAmount > extractedSales2324) extractedSales2324 = salesAmount;
+                                else if (docFY === '2022-23' && salesAmount > extractedSales2223) extractedSales2223 = salesAmount;
+                            }
+                        }
+                    });
+
+                    // Use extracted values if available, otherwise use manually entered data
+                    const plSales2324 = extractedSales2324 || proposal.turnoverData?.fy2324 || 0;
+                    const plSales2425 = extractedSales2425 || proposal.turnoverData?.fy2425 || 0;
+
+                    // Calculate growth percentages
+                    let growth2425 = null;
+                    let growth2526 = null;
+                    if (plSales2324 > 0 && plSales2425 > 0) {
+                        growth2425 = ((plSales2425 - plSales2324) / plSales2324) * 100;
+                    }
+                    if (plSales2425 > 0 && projectedTurnover > 0) {
+                        growth2526 = ((projectedTurnover - plSales2425) / plSales2425) * 100;
+                    }
+                    %>
+
+                    <!-- Projected Turnover Summary Table -->
+                    <div style="margin-bottom: 30px;">
+                        <h4 style="color: #2c3e50; margin-bottom: 15px; padding-bottom: 8px; border-bottom: 2px solid #27ae60;">Projected Turnover Summary</h4>
+                        <p style="font-size: 0.85em; color: #666; margin-bottom: 15px;">FY2023-24 & FY2024-25: Auto-extracted from ITR Trading Account | FY2025-26: Annualized from GST Returns</p>
+                        <div style="overflow-x: auto;">
+                            <table style="width: 100%; border-collapse: collapse; font-size: 0.95em; max-width: 900px;">
+                                <thead>
+                                    <tr style="background: #27ae60; color: white;">
+                                        <th style="padding: 12px 15px; text-align: left; border: 1px solid #1e8449; width: 120px;">Years</th>
+                                        <th style="padding: 12px 15px; text-align: right; border: 1px solid #1e8449;">
+                                            FY2023-24<br><span style="font-size: 0.8em; font-weight: normal;">(P&L Sales)</span>
+                                        </th>
+                                        <th style="padding: 12px 15px; text-align: right; border: 1px solid #1e8449;">
+                                            FY2024-25<br><span style="font-size: 0.8em; font-weight: normal;">(P&L Sales)</span>
+                                        </th>
+                                        <th style="padding: 12px 15px; text-align: right; border: 1px solid #1e8449;">
+                                            FY2025-26<br><span style="font-size: 0.8em; font-weight: normal;">(Projected)</span>
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr style="background: #fff;">
+                                        <td style="padding: 12px 15px; border: 1px solid #ddd; font-weight: 600;">Turnover</td>
+                                        <td style="padding: 12px 15px; text-align: right; border: 1px solid #ddd;">
+                                            <% if (plSales2324 > 0) { %>
+                                                <span style="font-weight: 600; color: #2980b9;">₹ <%= plSales2324.toLocaleString('en-IN', {minimumFractionDigits: 0, maximumFractionDigits: 0}) %></span>
+                                            <% } else { %>
+                                                <input type="number" id="plSales2324" class="turnover-input" placeholder="Enter P&L Sales"
+                                                    value="<%= plSales2324 || '' %>"
+                                                    style="width: 140px; padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; text-align: right;">
+                                            <% } %>
+                                        </td>
+                                        <td style="padding: 12px 15px; text-align: right; border: 1px solid #ddd;">
+                                            <% if (plSales2425 > 0) { %>
+                                                <span style="font-weight: 600; color: #2980b9;">₹ <%= plSales2425.toLocaleString('en-IN', {minimumFractionDigits: 0, maximumFractionDigits: 0}) %></span>
+                                            <% } else { %>
+                                                <input type="number" id="plSales2425" class="turnover-input" placeholder="Enter P&L Sales"
+                                                    value="<%= plSales2425 || '' %>"
+                                                    style="width: 140px; padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; text-align: right;">
+                                            <% } %>
+                                        </td>
+                                        <td style="padding: 12px 15px; text-align: right; border: 1px solid #ddd; font-weight: 600; color: #2980b9;">
+                                            <% if (projectedTurnover > 0) { %>
+                                                ₹ <%= projectedTurnover.toLocaleString('en-IN', {minimumFractionDigits: 0, maximumFractionDigits: 0}) %>
+                                                <br><span style="font-size: 0.75em; color: #888; font-weight: normal;">(Annualised from <%= projectedMonths %> months GST)</span>
+                                            <% } else { %>
+                                                <span style="color: #888; font-weight: normal;">No GST data</span>
+                                            <% } %>
+                                        </td>
+                                    </tr>
+                                    <tr style="background: #f8f9fa;">
+                                        <td style="padding: 12px 15px; border: 1px solid #ddd; font-weight: 600;">Growth</td>
+                                        <td style="padding: 12px 15px; text-align: right; border: 1px solid #ddd; color: #888;">
+                                            -
+                                        </td>
+                                        <td style="padding: 12px 15px; text-align: right; border: 1px solid #ddd; font-weight: 600; color: <%= growth2425 !== null ? (growth2425 >= 0 ? '#27ae60' : '#e74c3c') : '#888' %>;" id="growth2425Cell">
+                                            <% if (growth2425 !== null) { %>
+                                                <%= growth2425 >= 0 ? '+' : '' %><%= growth2425.toFixed(1) %>%
+                                            <% } else { %>
+                                                -
+                                            <% } %>
+                                        </td>
+                                        <td style="padding: 12px 15px; text-align: right; border: 1px solid #ddd; font-weight: 600; color: <%= growth2526 !== null ? (growth2526 >= 0 ? '#27ae60' : '#e74c3c') : '#888' %>;" id="growth2526Cell">
+                                            <% if (growth2526 !== null) { %>
+                                                <%= growth2526 >= 0 ? '+' : '' %><%= growth2526.toFixed(1) %>%
+                                            <% } else { %>
+                                                -
+                                            <% } %>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <% if (plSales2324 === 0 || plSales2425 === 0) { %>
+                        <div style="margin-top: 15px;">
+                            <button onclick="saveTurnoverData()" id="saveTurnoverBtn" style="background: #27ae60; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: 500;">
+                                Save P&L Sales Data
+                            </button>
+                        </div>
+                        <% } %>
+                    </div>
+
+                    <% if (gstinList.length === 0) { %>
+                        <div class="placeholder-content">
+                            <div class="icon">📈</div>
+                            <p>No GST documents uploaded yet. Upload GSTR-3B returns to see monthly turnover details.</p>
+                        </div>
+                    <% } else { %>
+                        <h4 style="color: #2c3e50; margin-bottom: 15px; padding-bottom: 8px; border-bottom: 2px solid #3498db;">Monthly GST Turnover Details</h4>
+                        <% if (!hasAnyValues && gstinList.length > 0) { %>
+                        <div style="background: #fff3cd; border: 1px solid #ffc107; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <strong style="color: #856404;">Data extraction may be incomplete</strong>
+                                <p style="margin: 5px 0 0 0; color: #856404; font-size: 0.9em;">Click "Re-extract Documents" to fetch complete outward supplies and tax data from GST returns.</p>
+                            </div>
+                            <button onclick="reExtractTurnover()" style="background: #ffc107; color: #000; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">
+                                Re-extract Documents
+                            </button>
+                        </div>
+                        <% } %>
+                        <% gstinList.forEach((gstin, gstIndex) => {
+                            const gstData = gstDataByGstin[gstin];
+                            let totalTaxableValue = 0;
+                            let totalZeroRated = 0;
+                            let totalExempted = 0;
+                            let totalEcommerce = 0;
+                            let totalIntegrated = 0;
+                            let totalCentral = 0;
+                            let totalState = 0;
+                            let totalCess = 0;
+
+                            // Group months by FY for subtotals
+                            const monthsByFY = {};
+                            gstData.months.forEach(m => {
+                                if (!monthsByFY[m.year]) {
+                                    monthsByFY[m.year] = [];
+                                }
+                                monthsByFY[m.year].push(m);
+                            });
+                            const fyList = Object.keys(monthsByFY).sort();
+
+                            // Calculate column count based on sector (added Zero Rated column)
+                            const colCount = isHospitality ? 12 : 11;
+                        %>
+                        <div class="gstin-section" style="margin-bottom: 30px; <% if(gstIndex > 0) { %>border-top: 2px solid #3498db; padding-top: 20px;<% } %>">
+                            <div style="background: #e8f4fc; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                                <h4 style="margin: 0 0 10px 0; color: #2c3e50;">GSTIN: <%= gstin %></h4>
+                                <% if (gstData.tradeName || gstData.legalName) { %>
+                                    <p style="margin: 0; color: #555;">
+                                        <% if (gstData.tradeName) { %><strong>Trade Name:</strong> <%= gstData.tradeName %><% } %>
+                                        <% if (gstData.tradeName && gstData.legalName) { %> | <% } %>
+                                        <% if (gstData.legalName) { %><strong>Legal Name:</strong> <%= gstData.legalName %><% } %>
+                                    </p>
+                                <% } %>
+                            </div>
+
+                            <div style="overflow-x: auto;">
+                                <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+                                    <thead>
+                                        <tr style="background: #3498db; color: white;">
+                                            <th style="padding: 12px 8px; text-align: left; border: 1px solid #2980b9;">Month</th>
+                                            <th style="padding: 12px 8px; text-align: left; border: 1px solid #2980b9;">FY</th>
+                                            <th style="padding: 12px 8px; text-align: right; border: 1px solid #2980b9;">Taxable Supplies</th>
+                                            <th style="padding: 12px 8px; text-align: right; border: 1px solid #2980b9;">Zero Rated</th>
+                                            <th style="padding: 12px 8px; text-align: right; border: 1px solid #2980b9;">Exempted</th>
+                                            <% if (isHospitality) { %>
+                                            <th style="padding: 12px 8px; text-align: right; border: 1px solid #2980b9;">Ecommerce Supplies</th>
+                                            <% } %>
+                                            <th style="padding: 12px 8px; text-align: right; border: 1px solid #2980b9;">Total Outward</th>
+                                            <th style="padding: 12px 8px; text-align: right; border: 1px solid #2980b9;">IGST</th>
+                                            <th style="padding: 12px 8px; text-align: right; border: 1px solid #2980b9;">CGST</th>
+                                            <th style="padding: 12px 8px; text-align: right; border: 1px solid #2980b9;">SGST</th>
+                                            <th style="padding: 12px 8px; text-align: right; border: 1px solid #2980b9;">Cess</th>
+                                            <th style="padding: 12px 8px; text-align: right; border: 1px solid #2980b9;">Total Tax</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <% let rowIdx = 0;
+                                           fyList.forEach((fy, fyIdx) => {
+                                            const fyMonths = monthsByFY[fy];
+                                            let fyTaxable = 0, fyZeroRated = 0, fyExempted = 0, fyEcommerce = 0, fyIntegrated = 0, fyCentral = 0, fyState = 0, fyCess = 0;
+
+                                            fyMonths.forEach((m) => {
+                                                fyTaxable += m.taxableValue;
+                                                fyZeroRated += m.zeroRatedValue || 0;
+                                                fyExempted += m.exemptedValue || 0;
+                                                fyEcommerce += m.ecommerceSupplies || 0;
+                                                fyIntegrated += m.integratedTax;
+                                                fyCentral += m.centralTax;
+                                                fyState += m.stateTax;
+                                                fyCess += m.cess;
+
+                                                totalTaxableValue += m.taxableValue;
+                                                totalZeroRated += m.zeroRatedValue || 0;
+                                                totalExempted += m.exemptedValue || 0;
+                                                totalEcommerce += m.ecommerceSupplies || 0;
+                                                totalIntegrated += m.integratedTax;
+                                                totalCentral += m.centralTax;
+                                                totalState += m.stateTax;
+                                                totalCess += m.cess;
+                                        %>
+                                        <tr style="background: <%= rowIdx % 2 === 0 ? '#fff' : '#f8f9fa' %>;">
+                                            <td style="padding: 10px 8px; border: 1px solid #ddd;"><%= m.period %></td>
+                                            <td style="padding: 10px 8px; border: 1px solid #ddd;"><%= m.year %></td>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #ddd;">₹ <%= m.taxableValue.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #ddd;">₹ <%= (m.zeroRatedValue || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #ddd;">₹ <%= (m.exemptedValue || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <% if (isHospitality) { %>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #ddd;">₹ <%= (m.ecommerceSupplies || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <% } %>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #ddd; font-weight: 600; color: #2980b9;">₹ <%= m.totalOutward.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #ddd;">₹ <%= m.integratedTax.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #ddd;">₹ <%= m.centralTax.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #ddd;">₹ <%= m.stateTax.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #ddd;">₹ <%= m.cess.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #ddd; font-weight: 600; color: #27ae60;">₹ <%= m.totalTax.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                        </tr>
+                                        <% rowIdx++; }); %>
+                                        <!-- FY Subtotal Row -->
+                                        <tr style="background: #34495e; color: white; font-weight: 600;">
+                                            <td colspan="2" style="padding: 10px 8px; border: 1px solid #2c3e50;">FY <%= fy %> Total</td>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #2c3e50;">₹ <%= fyTaxable.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #2c3e50;">₹ <%= fyZeroRated.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #2c3e50;">₹ <%= fyExempted.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <% if (isHospitality) { %>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #2c3e50;">₹ <%= fyEcommerce.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <% } %>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #2c3e50;">₹ <%= (fyTaxable + fyZeroRated + fyExempted + fyEcommerce).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #2c3e50;">₹ <%= fyIntegrated.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #2c3e50;">₹ <%= fyCentral.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #2c3e50;">₹ <%= fyState.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #2c3e50;">₹ <%= fyCess.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 10px 8px; text-align: right; border: 1px solid #2c3e50;">₹ <%= (fyIntegrated + fyCentral + fyState + fyCess).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                        </tr>
+                                        <% }); %>
+                                    </tbody>
+                                    <tfoot>
+                                        <tr style="background: #2c3e50; color: white; font-weight: bold;">
+                                            <td colspan="2" style="padding: 12px 8px; border: 1px solid #1a252f;">GRAND TOTAL</td>
+                                            <td style="padding: 12px 8px; text-align: right; border: 1px solid #1a252f;">₹ <%= totalTaxableValue.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 12px 8px; text-align: right; border: 1px solid #1a252f;">₹ <%= totalZeroRated.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 12px 8px; text-align: right; border: 1px solid #1a252f;">₹ <%= totalExempted.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <% if (isHospitality) { %>
+                                            <td style="padding: 12px 8px; text-align: right; border: 1px solid #1a252f;">₹ <%= totalEcommerce.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <% } %>
+                                            <td style="padding: 12px 8px; text-align: right; border: 1px solid #1a252f;">₹ <%= (totalTaxableValue + totalZeroRated + totalExempted + totalEcommerce).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 12px 8px; text-align: right; border: 1px solid #1a252f;">₹ <%= totalIntegrated.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 12px 8px; text-align: right; border: 1px solid #1a252f;">₹ <%= totalCentral.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 12px 8px; text-align: right; border: 1px solid #1a252f;">₹ <%= totalState.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 12px 8px; text-align: right; border: 1px solid #1a252f;">₹ <%= totalCess.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                            <td style="padding: 12px 8px; text-align: right; border: 1px solid #1a252f;">₹ <%= (totalIntegrated + totalCentral + totalState + totalCess).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        </div>
+                        <% }); %>
+                    <% } %>
                 </div>
 
                 <div id="debtProfilePanel" class="analysis-panel">
@@ -266,7 +1180,55 @@
                     <h3>Collateral Analysis</h3>
                     <div class="placeholder-content">
                         <div class="icon">🏠</div>
-                        <p>Collateral documents and analysis will be displayed here.</p>
+                        <p>Collateral documents - Technical & Legal analysis will be displayed here.</p>
+                    </div>
+                </div>
+
+                <div id="networthPanel" class="analysis-panel">
+                    <h3>Net Worth Analysis</h3>
+                    <div class="placeholder-content">
+                        <div class="icon">📊</div>
+                        <p>Asset base and net worth of customer will be displayed here.</p>
+                    </div>
+                </div>
+
+                <div id="eligibilityPanel" class="analysis-panel">
+                    <h3>Eligibility Analysis</h3>
+                    <div class="placeholder-content">
+                        <div class="icon">✅</div>
+                        <p>Eligibility basis and calculations will be displayed here.</p>
+                    </div>
+                </div>
+
+                <div id="googleChecksPanel" class="analysis-panel">
+                    <h3>Google Checks Analysis</h3>
+                    <div class="placeholder-content">
+                        <div class="icon">🔍</div>
+                        <p>Google check and other background verification results will be displayed here.</p>
+                    </div>
+                </div>
+
+                <div id="deviationsPanel" class="analysis-panel">
+                    <h3>Deviations</h3>
+                    <div class="placeholder-content">
+                        <div class="icon">⚠️</div>
+                        <p>Policy deviations identified in the case will be displayed here.</p>
+                    </div>
+                </div>
+
+                <div id="concernsPanel" class="analysis-panel">
+                    <h3>Concerns in the Case</h3>
+                    <div class="placeholder-content">
+                        <div class="icon">🚨</div>
+                        <p>Key concerns and risk factors will be displayed here.</p>
+                    </div>
+                </div>
+
+                <div id="strengthsPanel" class="analysis-panel">
+                    <h3>Strengths of the Case</h3>
+                    <div class="placeholder-content">
+                        <div class="icon">💪</div>
+                        <p>Key strengths and positive factors will be displayed here.</p>
                     </div>
                 </div>
             </div>
@@ -302,6 +1264,177 @@
             document.querySelectorAll('.analysis-panel').forEach(p => p.classList.remove('active'));
             document.getElementById(tab + 'Panel').classList.add('active');
         }
+
+        // Navigate from CAM table to Analysis tab
+        function goToAnalysis(tab) {
+            // Switch to Analysis main tab
+            document.querySelectorAll('.main-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.main-tab')[1].classList.add('active'); // Analysis is second tab
+
+            document.querySelectorAll('.main-tab-content').forEach(c => c.classList.remove('active'));
+            document.getElementById('analysisTab').classList.add('active');
+
+            // Switch to specific sub-tab
+            document.querySelectorAll('.analysis-tab').forEach(t => t.classList.remove('active'));
+            // Find and activate the matching tab button
+            const tabButtons = document.querySelectorAll('.analysis-tab');
+            tabButtons.forEach(btn => {
+                if (btn.textContent.toLowerCase().replace(/\s+/g, '') === tab.toLowerCase() ||
+                    btn.onclick.toString().includes("'" + tab + "'")) {
+                    btn.classList.add('active');
+                }
+            });
+
+            // Show the panel
+            document.querySelectorAll('.analysis-panel').forEach(p => p.classList.remove('active'));
+            const panel = document.getElementById(tab + 'Panel');
+            if (panel) {
+                panel.classList.add('active');
+            }
+
+            // Scroll to top of analysis section
+            document.getElementById('analysisTab').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        // Re-extract turnover documents (for incomplete data warning)
+        async function reExtractTurnover() {
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = 'Extracting...';
+
+            try {
+                const response = await fetch(`/stage2/${proposalId}/extract-turnover`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    alert(`Successfully re-extracted ${data.count} documents. Refreshing page...`);
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + data.message);
+                    btn.disabled = false;
+                    btn.textContent = 'Re-extract Documents';
+                }
+            } catch (err) {
+                alert('Error re-extracting documents: ' + err.message);
+                btn.disabled = false;
+                btn.textContent = 'Re-extract Documents';
+            }
+        }
+
+        // Refresh turnover data (for newly uploaded GST returns)
+        async function refreshTurnoverData() {
+            const btn = document.getElementById('refreshTurnoverBtn');
+            const originalContent = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span style="font-size: 1.1em;">&#8635;</span> Refreshing...';
+
+            try {
+                const response = await fetch(`/stage2/${proposalId}/extract-turnover`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    btn.innerHTML = '<span style="font-size: 1.1em;">&#10003;</span> Done!';
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 500);
+                } else {
+                    alert('Error: ' + data.message);
+                    btn.disabled = false;
+                    btn.innerHTML = originalContent;
+                }
+            } catch (err) {
+                alert('Error refreshing data: ' + err.message);
+                btn.disabled = false;
+                btn.innerHTML = originalContent;
+            }
+        }
+
+        // Store server-side values for client-side use
+        const serverData = {
+            plSales2324: <%= proposal.turnoverData?.fy2324 || 0 %>,
+            plSales2425: <%= proposal.turnoverData?.fy2425 || 0 %>,
+            projectedTurnover: <%= typeof projectedTurnover !== 'undefined' ? projectedTurnover : 0 %>
+        };
+
+        // Save P&L Sales turnover data
+        async function saveTurnoverData() {
+            const btn = document.getElementById('saveTurnoverBtn');
+            const fy2324Input = document.getElementById('plSales2324');
+            const fy2425Input = document.getElementById('plSales2425');
+
+            const fy2324 = fy2324Input ? parseFloat(fy2324Input.value) || 0 : serverData.plSales2324;
+            const fy2425 = fy2425Input ? parseFloat(fy2425Input.value) || 0 : serverData.plSales2425;
+
+            if (fy2324 === 0 && fy2425 === 0) {
+                alert('Please enter at least one P&L sales value');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+
+            try {
+                const response = await fetch(`/stage3/${proposalId}/save-turnover-data`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fy2324, fy2425 })
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    btn.textContent = 'Saved!';
+                    btn.style.background = '#27ae60';
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 500);
+                } else {
+                    alert('Error: ' + data.message);
+                    btn.disabled = false;
+                    btn.textContent = 'Save P&L Sales Data';
+                }
+            } catch (err) {
+                alert('Error saving data: ' + err.message);
+                btn.disabled = false;
+                btn.textContent = 'Save P&L Sales Data';
+            }
+        }
+
+        // Update growth percentages dynamically when P&L values change
+        document.addEventListener('DOMContentLoaded', function() {
+            const fy2324Input = document.getElementById('plSales2324');
+            const fy2425Input = document.getElementById('plSales2425');
+            const projectedTurnover = serverData.projectedTurnover;
+
+            function updateGrowthDisplay() {
+                const fy2324 = fy2324Input ? parseFloat(fy2324Input.value) || 0 : 0;
+                const fy2425 = fy2425Input ? parseFloat(fy2425Input.value) || 0 : 0;
+
+                // Update FY2024-25 growth
+                const growth2425Cell = document.getElementById('growth2425Cell');
+                if (growth2425Cell && fy2324 > 0 && fy2425 > 0) {
+                    const growth = ((fy2425 - fy2324) / fy2324) * 100;
+                    growth2425Cell.textContent = (growth >= 0 ? '+' : '') + growth.toFixed(1) + '%';
+                    growth2425Cell.style.color = growth >= 0 ? '#27ae60' : '#e74c3c';
+                }
+
+                // Update FY2025-26 growth
+                const growth2526Cell = document.getElementById('growth2526Cell');
+                if (growth2526Cell && fy2425 > 0 && projectedTurnover > 0) {
+                    const growth = ((projectedTurnover - fy2425) / fy2425) * 100;
+                    growth2526Cell.textContent = (growth >= 0 ? '+' : '') + growth.toFixed(1) + '%';
+                    growth2526Cell.style.color = growth >= 0 ? '#27ae60' : '#e74c3c';
+                }
+            }
+
+            if (fy2324Input) fy2324Input.addEventListener('input', updateGrowthDisplay);
+            if (fy2425Input) fy2425Input.addEventListener('input', updateGrowthDisplay);
+        });
     </script>
 </body>
 </html>

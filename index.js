@@ -1075,12 +1075,19 @@ async function extractWithPyMuPDF(pdfPath) {
 /**
  * Tier 2: Direct pdfplumber extraction (fallback)
  */
-async function extractWithPdfplumber(pdfPath) {
+async function extractWithPdfplumber(pdfPath, extractTables = false) {
   console.log('🔹 Tier 2: Attempting pdfplumber extraction...');
+  if (extractTables) {
+    console.log('📊 Table extraction ENABLED');
+  }
 
   return new Promise((resolve, reject) => {
     const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
-    const pythonProcess = spawn(pythonCmd, ['extract_pdf.py', pdfPath]);
+    const args = ['extract_pdf.py', pdfPath];
+    if (extractTables) {
+      args.push('--tables');
+    }
+    const pythonProcess = spawn(pythonCmd, args);
 
     let resultText = '';
     let errorText = '';
@@ -1102,12 +1109,13 @@ async function extractWithPdfplumber(pdfPath) {
         // Parse JSON output from Python script
         try {
           const result = JSON.parse(resultText);
-          console.log(`✓ pdfplumber extraction complete: ${result.text.length} chars, ${result.numPages} pages`);
+          const tablesInfo = result.tables ? `, ${result.tables.length} tables` : '';
+          console.log(`✓ pdfplumber extraction complete: ${result.text.length} chars, ${result.numPages} pages${tablesInfo}`);
           resolve(result);
         } catch (parseError) {
           // Fallback: treat as plain text (backward compatibility)
           console.log(`✓ pdfplumber extraction complete: ${resultText.length} chars (plain text)`);
-          resolve({ text: resultText, numPages: 1 });
+          resolve({ text: resultText, numPages: 1, tables: [] });
         }
       }
     });
@@ -1145,32 +1153,40 @@ async function extractWithPdfParse(pdfPath) {
 
 /**
  * Main PDF extraction function with 3-tier fallback system
+ * @param {string} pdfPath - Path to PDF file
+ * @param {boolean} extractTables - Whether to extract tables (only works with pdfplumber)
  */
-async function extractPDFWithFallback(pdfPath) {
+async function extractPDFWithFallback(pdfPath, extractTables = false) {
   console.log('\n========================================');
   console.log('📄 STARTING 3-TIER PDF EXTRACTION');
   console.log(`File: ${path.basename(pdfPath)}`);
+  if (extractTables) console.log('📊 Table extraction: ENABLED');
   console.log('========================================\n');
 
-  // Tier 1: Try PyMuPDF (fastest and best quality)
-  try {
-    const result = await extractWithPyMuPDF(pdfPath);
-    if (result.text && result.text.trim().length > 0) {
-      console.log('\n✓ SUCCESS: PyMuPDF extraction completed\n');
-      return result;
+  // Tier 1: Try PyMuPDF (fastest and best quality) - skip if tables needed
+  if (!extractTables) {
+    try {
+      const result = await extractWithPyMuPDF(pdfPath);
+      if (result.text && result.text.trim().length > 0) {
+        console.log('\n✓ SUCCESS: PyMuPDF extraction completed\n');
+        return result;
+      }
+    } catch (tier1Error) {
+      console.log('⚠ Tier 1 (PyMuPDF) failed, falling back to Tier 2...\n');
     }
-  } catch (tier1Error) {
-    console.log('⚠ Tier 1 (PyMuPDF) failed, falling back to Tier 2...\n');
+  } else {
+    console.log('⚠ Skipping PyMuPDF (table extraction requires pdfplumber)...\n');
   }
 
-  // Tier 2: Try pdfplumber
+  // Tier 2: Try pdfplumber (supports table extraction)
   try {
-    const result = await extractWithPdfplumber(pdfPath);
+    const result = await extractWithPdfplumber(pdfPath, extractTables);
     if (result.text && result.text.trim().length > 0) {
       console.log('\n✓ SUCCESS: pdfplumber extraction completed\n');
       return {
         text: result.text,
         numPages: result.numPages || 1,
+        tables: result.tables || [],
         method: 'pdfplumber',
         success: true
       };
@@ -1204,24 +1220,133 @@ async function extractPDFWithFallback(pdfPath) {
   };
 }
 
-// Legacy function for backwards compatibility - redirects to new system
-async function extractPDFWithTableDetection(pdfPath) {
-  const result = await extractPDFWithFallback(pdfPath);
-  
-  // Convert to legacy format for backwards compatibility
+// PDF extraction with table detection support
+async function extractPDFWithTableDetection(pdfPath, extractTables = false) {
+  const result = await extractPDFWithFallback(pdfPath, extractTables);
+  const tables = result.tables || [];
+
   return {
     text: result.text,
-    tables: [],
+    tables: tables,
     structuredContent: [{
       pageNum: 1,
       text: result.text,
-      hasTable: false,
-      tables: []
+      hasTable: tables.length > 0,
+      tables: tables
     }],
     numPages: result.numPages,
     success: result.success,
     method: result.method
   };
+}
+
+// Extract financial data from tables (ITR, Balance Sheet, P&L)
+function extractFinancialDataFromTables(tables, textLower) {
+  const financialData = {
+    grossTotalIncome: null,
+    totalIncome: null,
+    taxPayable: null,
+    taxPaid: null,
+    turnover: null,
+    grossProfit: null,
+    netProfit: null,
+    totalAssets: null,
+    totalLiabilities: null,
+    currentAssets: null,
+    currentLiabilities: null,
+    sundryDebtors: null,
+    sundryCreditors: null,
+    cashInHand: null,
+    bankBalance: null,
+    depreciation: null,
+    openingStock: null,
+    closingStock: null,
+    purchases: null,
+    sales: null
+  };
+
+  if (!tables || tables.length === 0) {
+    return financialData;
+  }
+
+  // Helper to parse currency values
+  const parseCurrency = (val) => {
+    if (!val) return null;
+    const cleaned = String(val).replace(/[₹,\s]/g, '').replace(/\(([^)]+)\)/, '-$1');
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? null : num;
+  };
+
+  // Process each table
+  tables.forEach(table => {
+    if (!table.rows) return;
+
+    table.rows.forEach(row => {
+      if (!row || row.length < 2) return;
+
+      const label = (row[0] || '').toLowerCase().trim();
+      const value = row[row.length - 1]; // Usually last column has the value
+
+      // Income related
+      if (label.includes('gross total income')) {
+        financialData.grossTotalIncome = parseCurrency(value);
+      } else if (label.includes('total income') && !label.includes('gross')) {
+        financialData.totalIncome = parseCurrency(value);
+      } else if (label.includes('tax payable') || label.includes('tax liability')) {
+        financialData.taxPayable = parseCurrency(value);
+      } else if (label.includes('tax paid') || label.includes('advance tax') || label.includes('tds')) {
+        const existing = financialData.taxPaid || 0;
+        financialData.taxPaid = existing + (parseCurrency(value) || 0);
+      }
+
+      // P&L related
+      else if (label.includes('turnover') || label.includes('total revenue') || label.includes('gross receipts')) {
+        financialData.turnover = parseCurrency(value);
+      } else if (label.includes('sales') && !label.includes('purchase')) {
+        financialData.sales = parseCurrency(value);
+      } else if (label.includes('purchase') && !label.includes('sales')) {
+        financialData.purchases = parseCurrency(value);
+      } else if (label.includes('gross profit')) {
+        financialData.grossProfit = parseCurrency(value);
+      } else if (label.includes('net profit') || label.includes('profit before tax')) {
+        financialData.netProfit = parseCurrency(value);
+      } else if (label.includes('depreciation')) {
+        financialData.depreciation = parseCurrency(value);
+      } else if (label.includes('opening stock')) {
+        financialData.openingStock = parseCurrency(value);
+      } else if (label.includes('closing stock')) {
+        financialData.closingStock = parseCurrency(value);
+      }
+
+      // Balance Sheet related
+      else if (label.includes('total assets') || label === 'total') {
+        if (!financialData.totalAssets) financialData.totalAssets = parseCurrency(value);
+      } else if (label.includes('total liabilities')) {
+        financialData.totalLiabilities = parseCurrency(value);
+      } else if (label.includes('current assets')) {
+        financialData.currentAssets = parseCurrency(value);
+      } else if (label.includes('current liabilities')) {
+        financialData.currentLiabilities = parseCurrency(value);
+      } else if (label.includes('sundry debtor') || label.includes('trade receivable')) {
+        financialData.sundryDebtors = parseCurrency(value);
+      } else if (label.includes('sundry creditor') || label.includes('trade payable')) {
+        financialData.sundryCreditors = parseCurrency(value);
+      } else if (label.includes('cash in hand') || label.includes('cash balance')) {
+        financialData.cashInHand = parseCurrency(value);
+      } else if (label.includes('bank balance') || label.includes('balance with bank')) {
+        financialData.bankBalance = parseCurrency(value);
+      }
+    });
+  });
+
+  // Clean up - remove null values
+  Object.keys(financialData).forEach(key => {
+    if (financialData[key] === null) {
+      delete financialData[key];
+    }
+  });
+
+  return financialData;
 }
 
 // Detect and extract tables from page lines (Tabula/Camelot-like algorithm)
@@ -2304,7 +2429,8 @@ app.get('/stage2/:proposalId', async (req, res) => {
       pages: doc.pages, // Include page count
       uploadedAt: doc.uploadedAt,
       extractedDetails: doc.extractedDetails, // Include extracted details
-      extractedText: doc.extractedText // Ensure extractedText is available for GST dashboard
+      extractedText: doc.extractedText, // Ensure extractedText is available for GST dashboard
+      financialComponents: doc.financialComponents // Include financial components for ITR parsing
     }));
   } else {
     // Fallback: read from file system
@@ -3001,9 +3127,10 @@ app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
 
         if (fs.existsSync(filePath) && doc.originalName.toLowerCase().endsWith('.pdf')) {
           try {
-            // Extract full text from PDF
-            const pdfResult = await extractPDFWithTableDetection(filePath);
+            // Extract full text from PDF (table extraction disabled for speed)
+            const pdfResult = await extractPDFWithTableDetection(filePath, false);
             const fullText = pdfResult.text;
+            const tables = [];
 
             console.log('\n========================================');
             console.log('📊 EXTRACTING FINANCIAL DOC:', doc.originalName);
@@ -3011,8 +3138,32 @@ app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
             console.log('Text length:', fullText.length);
             console.log('Pages:', pdfResult.numPages);
 
-            // Check for each component with flexible keyword matching
+            // Check for each component with strict keyword matching
             const textLower = fullText.toLowerCase();
+
+            // Check for Balance Sheet - must be actual BS, not just ITR summary
+            const hasBalanceSheet = (
+              // Full balance sheet indicators (has date like "as at" or "as on")
+              textLower.includes('balance sheet as at') ||
+              textLower.includes('balance sheet as on') ||
+              // Has actual BS content (assets/liabilities sections)
+              (textLower.includes('balance sheet') &&
+               (textLower.includes('fixed assets') || textLower.includes('current assets') ||
+                textLower.includes('total assets') || textLower.includes('capital account') ||
+                textLower.includes('partners capital') || textLower.includes("partner's capital")))
+            ) && !textLower.includes('balance sheet (regular books of account');
+
+            // Check for Profit & Loss - must be actual P&L section header
+            const hasProfitLoss =
+              textLower.includes('profit and loss account') ||
+              textLower.includes('profit & loss account') ||
+              textLower.includes('profit and loss a/c') ||
+              textLower.includes('trading and profit and loss') ||
+              textLower.includes('trading, profit and loss') ||
+              textLower.includes('income and expenditure account') ||
+              // Has actual P&L content
+              (textLower.includes('trading account') && textLower.includes('gross profit'));
+
             const components = {
               itrAck: textLower.includes('indian income tax return acknowledgement') ||
                       textLower.includes('itr acknowledgement') ||
@@ -3020,13 +3171,8 @@ app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
               computation: textLower.includes('computation of total income') ||
                           textLower.includes('computation of income') ||
                           (textLower.includes('computation') && textLower.includes('total income')),
-              balanceSheet: textLower.includes('balance sheet') ||
-                           textLower.includes('balancesheet'),
-              profitLoss: textLower.includes('profit and loss account') ||
-                         textLower.includes('profit & loss account') ||
-                         textLower.includes('profit and loss a/c') ||
-                         textLower.includes('trading and profit') ||
-                         (textLower.includes('profit') && textLower.includes('loss') && textLower.includes('account'))
+              balanceSheet: hasBalanceSheet,
+              profitLoss: hasProfitLoss
             };
 
             console.log('Components detected:', JSON.stringify(components));

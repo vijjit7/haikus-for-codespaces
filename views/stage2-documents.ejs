@@ -147,17 +147,10 @@
 
             <!-- Required Documents Section -->
             <%
-                // Calculate Financial Years - rolls over every November
-                const now = new Date();
-                const currentMonth = now.getMonth(); // 0-11 (0=Jan, 10=Nov)
-                const currentYear = now.getFullYear();
-
-                // Before November: use (year-2) as base, From November onwards: use (year-1) as base
-                const baseYear = currentMonth >= 10 ? currentYear - 1 : currentYear - 2;
-
-                const currentFY = 'FY' + baseYear + '-' + String(baseYear + 1).slice(-2);
-                const previousFY = 'FY' + (baseYear - 1) + '-' + String(baseYear).slice(-2);
-                const precedingFY = 'FY' + (baseYear - 2) + '-' + String(baseYear - 1).slice(-2);
+                // Calculate Financial Years - Fixed to FY2024-25 + 2 previous years
+                const currentFY = 'FY 2024-25';
+                const previousFY = 'FY 2023-24';
+                const precedingFY = 'FY 2022-23';
             %>
             <div class="required-documents card">
                 <h2>📋 Required Documents</h2>
@@ -1394,15 +1387,11 @@
                             // Get all financial documents
                             const financialDocs = uploadedFiles.filter(f => f.category === 'financials');
 
-                            // Define financial years (current and previous 2 years)
-                            const currentYear = new Date().getFullYear();
-                            const currentMonth = new Date().getMonth(); // 0-11
-                            // If before April, current FY is previous year
-                            const currentFYStart = currentMonth < 3 ? currentYear - 1 : currentYear;
+                            // Define financial years - Fixed to FY2024-25 + 2 previous years
                             const financialYears = [
-                                `FY ${currentFYStart}-${String(currentFYStart + 1).slice(-2)}`,
-                                `FY ${currentFYStart - 1}-${String(currentFYStart).slice(-2)}`,
-                                `FY ${currentFYStart - 2}-${String(currentFYStart - 1).slice(-2)}`
+                                'FY 2024-25',
+                                'FY 2023-24',
+                                'FY 2022-23'
                             ];
 
                             // Get all applicants (main applicant + coapplicants)
@@ -1422,13 +1411,21 @@
                                 const filename = (doc.originalName || '').toLowerCase();
 
                                 // Extract financial year from classification (e.g., "ITR of FY2023-24 of pragathi")
-                                // Also check filename for year patterns like "IT 2024", "IT-2025", "2023-24"
+                                // Also check filename and extracted text for year patterns
                                 let fy = null;
                                 const fyMatch = classification.match(/fy\s*(\d{4})-?(\d{2,4})/i) ||
-                                                filename.match(/it[- ]?(\d{4})/i) ||
-                                                filename.match(/(\d{4})-(\d{2,4})/i) ||
-                                                extractedText.match(/assessment\s*year[:\s]*(\d{4})-(\d{2,4})/i) ||
-                                                extractedText.match(/accounting\s*year[:\s]*(\d{4})\s*-\s*(\d{4})/i);
+                                                classification.match(/(\d{4})-(\d{2,4})/i) ||
+                                                classification.match(/itr.*?(\d{4})/i) ||
+                                                filename.match(/it[\s\-_]*(20\d{2})/i) ||
+                                                filename.match(/(20\d{2})[\s\-_]*(2\d)/i) ||
+                                                extractedText.match(/assessment\s*year[:\s]*(\d{4})-?(\d{2,4})/i) ||
+                                                extractedText.match(/a\.?\s*y\.?[:\s]*(\d{4})-?(\d{2,4})/i) ||
+                                                extractedText.match(/accounting\s*year[:\s]*(\d{4})\s*-\s*(\d{4})/i) ||
+                                                extractedText.match(/financial\s*year[:\s]*(\d{4})-?(\d{2,4})/i) ||
+                                                extractedText.match(/previous\s*year[:\s]*(\d{4})-?(\d{2,4})/i) ||
+                                                extractedText.match(/f\.?\s*y\.?[:\s]*(\d{4})-?(\d{2,4})/i) ||
+                                                extractedText.match(/(\d{4})-(\d{2})\s*(?:to|ending)/i) ||
+                                                extractedText.match(/year\s*ended?\s*(?:on\s*)?(?:31[\/\-]?(?:03|march)[\/\-]?)?(\d{4})/i);
 
                                 if (fyMatch) {
                                     let year1, year2;
@@ -1436,7 +1433,7 @@
                                         year1 = fyMatch[1];
                                         year2 = fyMatch[2].length === 2 ? fyMatch[2] : fyMatch[2].slice(-2);
                                     } else {
-                                        // Single year like "IT 2024" means FY 2023-24
+                                        // Single year like "IT 2024" or "year ended 2024" means FY 2023-24
                                         const singleYear = parseInt(fyMatch[1]);
                                         year1 = String(singleYear - 1);
                                         year2 = String(singleYear).slice(-2);
@@ -1446,15 +1443,61 @@
 
                                 // Extract applicant name from classification
                                 let applicantName = null;
+                                // Helper function for fuzzy word matching (handles pragati/pragathi, enterprize/enterprise variations)
+                                const fuzzyWordMatch = (word1, word2) => {
+                                    if (!word1 || !word2) return false;
+                                    const w1 = word1.toLowerCase().replace(/[^a-z]/g, '');
+                                    const w2 = word2.toLowerCase().replace(/[^a-z]/g, '');
+                                    if (w1.length < 3 || w2.length < 3) return false;
+                                    // Exact match
+                                    if (w1 === w2) return true;
+                                    // Check first 4-5 chars match (for pragati/pragathi, enterprize/enterprise)
+                                    if (w1.length >= 4 && w2.length >= 4 && w1.slice(0,4) === w2.slice(0,4)) return true;
+                                    // Check if one contains the other
+                                    if (w1.includes(w2) || w2.includes(w1)) return true;
+                                    return false;
+                                };
+                                // Check if any word from applicant matches any word in the text
+                                const fuzzyTextMatch = (appWord, text) => {
+                                    const textWords = text.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+                                    return textWords.some(tw => fuzzyWordMatch(appWord, tw));
+                                };
+                                // Find applicant with most matching words (prefer more specific matches)
+                                let bestMatchScore = 0;
                                 allFinancialApplicants.forEach(app => {
                                     const appLower = app.toLowerCase();
                                     const appFirst = appLower.split(' ')[0];
-                                    // Check classification and filename
-                                    if (classification.includes(appLower) || classification.includes(appFirst) ||
-                                        filename.includes(appLower) || filename.includes(appFirst)) {
+                                    const appWords = appLower.split(/\s+/).filter(w => w.length > 2);
+
+                                    // Count matching words in classification and filename
+                                    let matchScore = 0;
+                                    if (classification.includes(appLower) || filename.includes(appLower)) {
+                                        matchScore = appWords.length + 10; // Full name match gets bonus
+                                    } else {
+                                        appWords.forEach(word => {
+                                            if (classification.includes(word) || filename.includes(word) ||
+                                                fuzzyTextMatch(word, classification) || fuzzyTextMatch(word, filename)) {
+                                                matchScore++;
+                                            }
+                                        });
+                                        // Also check extracted text
+                                        if (matchScore === 0 && (extractedText.includes(appLower) ||
+                                            appWords.some(word => extractedText.includes(word)))) {
+                                            matchScore = 1;
+                                        }
+                                    }
+
+                                    // Keep applicant with highest score
+                                    if (matchScore > bestMatchScore) {
+                                        bestMatchScore = matchScore;
                                         applicantName = app;
                                     }
                                 });
+                                // If no match found and this is a business entity (first in list), assign to business
+                                if (!applicantName && allFinancialApplicants.length > 0 && proposal.applicantType !== 'Individual') {
+                                    // For business entities, unmatched financial docs likely belong to the business
+                                    applicantName = allFinancialApplicants[0];
+                                }
 
                                 // Use pre-stored components if available (from reprocess), otherwise check extracted text
                                 let components;
@@ -1462,21 +1505,40 @@
                                     // Use pre-computed components from reprocessing
                                     components = doc.financialComponents;
                                 } else {
-                                    // Check for keywords with flexible matching
+                                    // Normalize whitespace for better matching (PDFs often have weird spacing)
+                                    const normalizedText = extractedText.replace(/\s+/g, ' ');
+
+                                    // Check for Balance Sheet - must be actual BS, not just ITR summary
+                                    const hasBalanceSheet = (
+                                        normalizedText.includes('balance sheet as at') ||
+                                        normalizedText.includes('balance sheet as on') ||
+                                        (normalizedText.includes('balance sheet') &&
+                                         (normalizedText.includes('fixed assets') || normalizedText.includes('current assets') ||
+                                          normalizedText.includes('total assets') || normalizedText.includes('capital account') ||
+                                          normalizedText.includes('partners capital') || normalizedText.includes("partner's capital")))
+                                    ) && !normalizedText.includes('balance sheet (regular books of account');
+
+                                    // Check for Profit & Loss - must be actual P&L section
+                                    const hasProfitLoss =
+                                        normalizedText.includes('profit and loss account') ||
+                                        normalizedText.includes('profit & loss account') ||
+                                        normalizedText.includes('profit and loss a/c') ||
+                                        normalizedText.includes('trading and profit and loss') ||
+                                        normalizedText.includes('trading, profit and loss') ||
+                                        normalizedText.includes('income and expenditure account') ||
+                                        (normalizedText.includes('trading account') && normalizedText.includes('gross profit'));
+
+                                    // Check for keywords with strict matching
                                     components = {
-                                        itrAck: extractedText.includes('indian income tax return acknowledgement') ||
-                                                extractedText.includes('itr acknowledgement') ||
-                                                extractedText.includes('acknowledgement number'),
-                                        computation: extractedText.includes('computation of total income') ||
-                                                    extractedText.includes('computation of income') ||
-                                                    (extractedText.includes('computation') && extractedText.includes('total income')),
-                                        balanceSheet: extractedText.includes('balance sheet') ||
-                                                     extractedText.includes('balancesheet'),
-                                        profitLoss: extractedText.includes('profit and loss account') ||
-                                                   extractedText.includes('profit & loss account') ||
-                                                   extractedText.includes('profit and loss a/c') ||
-                                                   extractedText.includes('trading and profit') ||
-                                                   (extractedText.includes('profit') && extractedText.includes('loss') && extractedText.includes('account'))
+                                        itrAck: normalizedText.includes('indian income tax return acknowledgement') ||
+                                                normalizedText.includes('itr acknowledgement') ||
+                                                normalizedText.includes('acknowledgement number') ||
+                                                (normalizedText.includes('acknowledgement') && normalizedText.includes('itr')),
+                                        computation: normalizedText.includes('computation of total income') ||
+                                                    normalizedText.includes('computation of income') ||
+                                                    (normalizedText.includes('computation') && normalizedText.includes('total income')),
+                                        balanceSheet: hasBalanceSheet,
+                                        profitLoss: hasProfitLoss
                                     };
                                 }
 
@@ -1498,13 +1560,40 @@
                             // Helper function to check if document component exists
                             function hasFinancialComponent(applicant, year, componentType) {
                                 return parsedFinancialDocs.some(doc => {
-                                    // Match applicant (check first name match if full name doesn't match)
+                                    // Match applicant (strict matching to avoid bommu/bommu false positives)
+                                    const appLower = applicant ? applicant.toLowerCase() : '';
+                                    const docAppLower = doc.applicant ? doc.applicant.toLowerCase() : '';
+                                    // Fuzzy match for first name variations like pragati/pragathi, sivarami/shivarami
+                                    const fuzzyFirstMatch = (s1, s2) => {
+                                        if (!s1 || !s2) return false;
+                                        const a = s1.replace(/[^a-z]/g, '');
+                                        const b = s2.replace(/[^a-z]/g, '');
+                                        if (a === b) return true;
+                                        return a.length >= 4 && b.length >= 4 && a.slice(0,4) === b.slice(0,4);
+                                    };
+                                    // Get first names for comparison
+                                    const appFirst = appLower.split(' ')[0];
+                                    const docFirst = docAppLower.split(' ')[0];
+                                    // Strict matching: exact match, first name match, or fuzzy first name
                                     const appMatch = doc.applicant === applicant ||
-                                        (doc.applicant && applicant &&
-                                         doc.applicant.toLowerCase().split(' ')[0] === applicant.toLowerCase().split(' ')[0]);
+                                        (doc.applicant && applicant && docFirst === appFirst) ||
+                                        (doc.applicant && applicant && fuzzyFirstMatch(docFirst, appFirst));
 
-                                    // Match year
-                                    const yearMatch = doc.fy === year;
+                                    // Match year - flexible matching
+                                    // Extract just the year numbers for comparison (e.g., "2024-25" from "FY 2024-25")
+                                    const yearNums = year ? year.replace(/[^0-9-]/g, '') : '';
+                                    const docYearNums = doc.fy ? doc.fy.replace(/[^0-9-]/g, '') : '';
+                                    let yearMatch = doc.fy === year ||
+                                        (yearNums && docYearNums && yearNums === docYearNums) ||
+                                        (doc.fy && year && doc.fy.includes(yearNums));
+
+                                    // Fallback: if document year couldn't be detected but applicant matches,
+                                    // check classification for year hints
+                                    if (!yearMatch && !doc.fy && doc.classification) {
+                                        const classLower = doc.classification.toLowerCase();
+                                        yearMatch = classLower.includes(yearNums) ||
+                                                   classLower.includes(year.toLowerCase());
+                                    }
 
                                     // Match component
                                     let componentMatch = false;
@@ -3568,6 +3657,40 @@
                 alert('Error: ' + error.message);
                 btn.disabled = false;
                 btn.innerHTML = originalHtml;
+            }
+        }
+
+        // Toggle between preview and full extracted text
+        function toggleFullText(button, fullTextId) {
+            const idx = fullTextId.replace('fullText_', '');
+            const previewDiv = document.getElementById('previewText_' + idx);
+            const fullDiv = document.getElementById(fullTextId);
+
+            if (fullDiv.style.display === 'none') {
+                previewDiv.style.display = 'none';
+                fullDiv.style.display = 'block';
+                button.textContent = 'Show Preview';
+                button.style.background = '#f57c00';
+            } else {
+                previewDiv.style.display = 'block';
+                fullDiv.style.display = 'none';
+                button.textContent = 'Show Full Text';
+                button.style.background = '#1976d2';
+            }
+        }
+
+        // Toggle tables display
+        function toggleTables(button, tablesId) {
+            const tablesDiv = document.getElementById(tablesId);
+
+            if (tablesDiv.style.display === 'none') {
+                tablesDiv.style.display = 'block';
+                button.textContent = 'Hide Tables';
+                button.style.background = '#388e3c';
+            } else {
+                tablesDiv.style.display = 'none';
+                button.textContent = 'Show Tables';
+                button.style.background = '#4caf50';
             }
         }
 
