@@ -145,6 +145,51 @@
                 </div>
             </div>
 
+            <!-- Merge Documents Section -->
+            <div class="merge-documents-section card" style="margin-top: 20px;">
+                <h2>📑 Merge Documents</h2>
+                <p class="upload-instructions">Merge multiple PDFs into one document (e.g., ITR Acknowledgement + Computation + P&L)</p>
+
+                <div class="form-group">
+                    <div class="file-input-wrapper">
+                        <input type="file" id="mergeDocuments" multiple accept=".pdf" onchange="handleMergeFilesSelect(event)">
+                        <div class="file-input-display">
+                            <span class="file-icon">📄</span>
+                            <span class="file-text">Select PDF files to merge</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="mergeFileList" style="display: none; margin: 15px 0;">
+                    <h4 style="margin-bottom: 10px;">Files to merge (drag to reorder):</h4>
+                    <ul id="mergeSortableList" style="list-style: none; padding: 0; margin: 0;"></ul>
+                </div>
+
+                <div id="mergeActions" style="display: none; margin-top: 15px;">
+                    <div style="margin-bottom: 10px;">
+                        <label for="mergedFileName" style="font-weight: 500;">Output filename:</label>
+                        <input type="text" id="mergedFileName" placeholder="merged_document" style="margin-left: 10px; padding: 5px 10px; border: 1px solid #ddd; border-radius: 4px; width: 250px;">
+                        <span style="color: #666;">.pdf</span>
+                    </div>
+                    <button type="button" class="btn btn-primary" onclick="mergeAndDownload()">
+                        📥 Merge & Download
+                    </button>
+                    <button type="button" class="btn btn-success" onclick="mergeAndUpload()" style="margin-left: 10px;">
+                        ⬆️ Merge & Upload
+                    </button>
+                    <button type="button" class="btn btn-secondary" onclick="clearMergeFiles()" style="margin-left: 10px;">
+                        🗑️ Clear
+                    </button>
+                </div>
+
+                <div id="mergeProgress" style="display: none; margin-top: 15px;">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="mergeProgressFill" style="width: 0%;"></div>
+                    </div>
+                    <p class="progress-text" id="mergeProgressText">Merging documents...</p>
+                </div>
+            </div>
+
             <!-- Required Documents Section -->
             <%
                 // Calculate Financial Years - Fixed to FY2024-25 + 2 previous years
@@ -256,6 +301,9 @@
                             <li>Form 26AS of <%= currentFY %> of (<%= proposal.applicantName %>)</li>
                             <li>Form 26AS of <%= previousFY %> of (<%= proposal.applicantName %>)</li>
                             <li>Form 26AS of <%= precedingFY %> of (<%= proposal.applicantName %>)</li>
+                            <li>Tax Audit Report of FY2022-23</li>
+                            <li>Tax Audit Report of FY2023-24</li>
+                            <li>Tax Audit Report of FY2024-25</li>
                         </ul>
                     </div>
                     <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
@@ -311,6 +359,7 @@
                     <h3 class="category-title">Debt Profile</h3>
                     <ul class="doc-list">
                         <li>All Existing Loan Details</li>
+                        <li>Existing Loans Sanction Letter / RTR / SOA</li>
                     </ul>
                 </div>
 
@@ -642,6 +691,9 @@
                         allDocTypesByCategory.financials.push('Form 26AS of ' + currentFY + ' of ' + proposal.applicantName);
                         allDocTypesByCategory.financials.push('Form 26AS of ' + previousFY + ' of ' + proposal.applicantName);
                         allDocTypesByCategory.financials.push('Form 26AS of ' + precedingFY + ' of ' + proposal.applicantName);
+                        allDocTypesByCategory.financials.push('Tax Audit Report of FY2022-23');
+                        allDocTypesByCategory.financials.push('Tax Audit Report of FY2023-24');
+                        allDocTypesByCategory.financials.push('Tax Audit Report of FY2024-25');
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
                                 if (co.type === 'Individual') {
@@ -672,7 +724,8 @@
                         
                         // Debt Profile
                         allDocTypesByCategory.debtProfile.push('All Existing Loan Details');
-                        
+                        allDocTypesByCategory.debtProfile.push('Existing Loans Sanction Letter / RTR / SOA');
+
                         // Collateral
                         allDocTypesByCategory.collateral.push('Title Documents');
                         allDocTypesByCategory.collateral.push('Tax paid Receipts');
@@ -816,6 +869,14 @@
                         if (!isDocClassified(form26asCurrent)) pendingByCategory.financials.push(form26asCurrent);
                         if (!isDocClassified(form26asPrevious)) pendingByCategory.financials.push(form26asPrevious);
                         if (!isDocClassified(form26asPreceding)) pendingByCategory.financials.push(form26asPreceding);
+
+                        // Tax Audit Reports
+                        const taxAudit2223 = 'Tax Audit Report of FY2022-23';
+                        const taxAudit2324 = 'Tax Audit Report of FY2023-24';
+                        const taxAudit2425 = 'Tax Audit Report of FY2024-25';
+                        if (!isDocClassified(taxAudit2223)) pendingByCategory.financials.push(taxAudit2223);
+                        if (!isDocClassified(taxAudit2324)) pendingByCategory.financials.push(taxAudit2324);
+                        if (!isDocClassified(taxAudit2425)) pendingByCategory.financials.push(taxAudit2425);
 
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
@@ -1007,7 +1068,9 @@
 
                         // Debt Profile
                         const debtDoc = 'All Existing Loan Details';
+                        const sanctionLetterRtr = 'Existing Loans Sanction Letter / RTR / SOA';
                         if (!isDocClassified(debtDoc)) pendingByCategory.debtProfile.push(debtDoc);
+                        if (!isDocClassified(sanctionLetterRtr)) pendingByCategory.debtProfile.push(sanctionLetterRtr);
 
                         // EMI Verification for Debt Profile
                         if (debtProfiles && debtProfiles.length > 0) {
@@ -1044,6 +1107,14 @@
                         if (!isDocClassified(sanctionPlan)) pendingByCategory.collateral.push(sanctionPlan);
                         if (!isDocClassified(encumbCert)) pendingByCategory.collateral.push(encumbCert);
                         if (!isDocClassified(titleUnreg)) pendingByCategory.collateral.push(titleUnreg);
+
+                        // Filter out dismissed pending items
+                        const dismissedItems = proposal.dismissedPendingDocs || [];
+                        Object.keys(pendingByCategory).forEach(cat => {
+                            pendingByCategory[cat] = pendingByCategory[cat].filter(item => {
+                                return !dismissedItems.some(d => d.category === cat && d.text === item);
+                            });
+                        });
 
                         // Calculate all pending documents
                         let allPending = [];
@@ -1087,10 +1158,12 @@
                         <div class="pending-category-content" data-pending-category="personalId" style="display: none;">
                             <% if (pendingByCategory.personalId.length > 0) { %>
                                 <ul class="pending-list">
-                                    <% pendingByCategory.personalId.forEach(doc => { %>
-                                        <li class="pending-item">
-                                            <span class="warning-icon">⚠️</span>
-                                            <%= doc %>
+                                    <% pendingByCategory.personalId.forEach((doc, idx) => { %>
+                                        <li class="pending-item" data-pending-text="<%= doc.replace(/"/g, '&quot;') %>">
+                                            <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                                                <div><span class="warning-icon">⚠️</span> <%= doc %></div>
+                                                <button onclick="dismissPendingItem('personalId', <%= idx %>, this)" style="background: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85em; white-space: nowrap;" title="Mark as not required">✕ Dismiss</button>
+                                            </div>
                                         </li>
                                     <% }); %>
                                 </ul>
@@ -1103,10 +1176,12 @@
                         <div class="pending-category-content" data-pending-category="businessId" style="display: none;">
                             <% if (pendingByCategory.businessId.length > 0) { %>
                                 <ul class="pending-list">
-                                    <% pendingByCategory.businessId.forEach(doc => { %>
-                                        <li class="pending-item">
-                                            <span class="warning-icon">⚠️</span>
-                                            <%= doc %>
+                                    <% pendingByCategory.businessId.forEach((doc, idx) => { %>
+                                        <li class="pending-item" data-pending-text="<%= doc.replace(/"/g, '&quot;') %>">
+                                            <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                                                <div><span class="warning-icon">⚠️</span> <%= doc %></div>
+                                                <button onclick="dismissPendingItem('businessId', <%= idx %>, this)" style="background: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85em; white-space: nowrap;" title="Mark as not required">✕ Dismiss</button>
+                                            </div>
                                         </li>
                                     <% }); %>
                                 </ul>
@@ -1119,10 +1194,12 @@
                         <div class="pending-category-content" data-pending-category="incorporation" style="display: none;">
                             <% if (pendingByCategory.incorporation.length > 0) { %>
                                 <ul class="pending-list">
-                                    <% pendingByCategory.incorporation.forEach(doc => { %>
-                                        <li class="pending-item">
-                                            <span class="warning-icon">⚠️</span>
-                                            <%= doc %>
+                                    <% pendingByCategory.incorporation.forEach((doc, idx) => { %>
+                                        <li class="pending-item" data-pending-text="<%= doc.replace(/"/g, '&quot;') %>">
+                                            <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                                                <div><span class="warning-icon">⚠️</span> <%= doc %></div>
+                                                <button onclick="dismissPendingItem('incorporation', <%= idx %>, this)" style="background: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85em; white-space: nowrap;" title="Mark as not required">✕ Dismiss</button>
+                                            </div>
                                         </li>
                                     <% }); %>
                                 </ul>
@@ -1369,10 +1446,12 @@
                         <div class="pending-category-content" data-pending-category="creditReports" style="display: none;">
                             <% if (pendingByCategory.creditReports.length > 0) { %>
                                 <ul class="pending-list">
-                                    <% pendingByCategory.creditReports.forEach(doc => { %>
-                                        <li class="pending-item">
-                                            <span class="warning-icon">⚠️</span>
-                                            <%= doc %>
+                                    <% pendingByCategory.creditReports.forEach((doc, idx) => { %>
+                                        <li class="pending-item" data-pending-text="<%= doc.replace(/"/g, '&quot;') %>">
+                                            <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                                                <div><span class="warning-icon">⚠️</span> <%= doc %></div>
+                                                <button onclick="dismissPendingItem('creditReports', <%= idx %>, this)" style="background: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85em; white-space: nowrap;" title="Mark as not required">✕ Dismiss</button>
+                                            </div>
                                         </li>
                                     <% }); %>
                                 </ul>
@@ -1710,10 +1789,12 @@
                             <% if (pendingByCategory.financials.length > 0) { %>
                                 <h4 style="margin: 20px 0 10px 0; color: #d32f2f;">📋 Pending Financial Documents:</h4>
                                 <ul class="pending-list">
-                                    <% pendingByCategory.financials.forEach(doc => { %>
-                                        <li class="pending-item">
-                                            <span class="warning-icon">⚠️</span>
-                                            <%= doc %>
+                                    <% pendingByCategory.financials.forEach((doc, idx) => { %>
+                                        <li class="pending-item" data-pending-text="<%= doc.replace(/"/g, '&quot;') %>">
+                                            <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                                                <div><span class="warning-icon">⚠️</span> <%= doc %></div>
+                                                <button onclick="dismissPendingItem('financials', <%= idx %>, this)" style="background: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85em; white-space: nowrap;" title="Mark as not required">✕ Dismiss</button>
+                                            </div>
                                         </li>
                                     <% }); %>
                                 </ul>
@@ -1765,71 +1846,66 @@
                                     </div>
                                 <% } %>
                             <% } %>
-                            
+
+                            <%
+                            // Group bank statements by account number (declare outside if block for later use)
+                            let statementsByAccount = {};
+                            let accountCoverages = {};
+                            %>
+
                             <% if (hasBankingDocs && bankStatements.length > 0) { %>
-                                <!-- Bank Statement Summary -->
-                                <div style="margin-bottom: 25px; padding: 20px; background: #ffffff; border-radius: 10px; border: 2px solid #1976d2; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-                                    <h3 style="margin: 0 0 15px 0; color: #1976d2; display: flex; align-items: center; gap: 10px;">
-                                        <span style="font-size: 1.3em;">🏦</span>
-                                        Bank Statement Summary (<%= bankStatements.length %> statement<%= bankStatements.length > 1 ? 's' : '' %>)
-                                    </h3>
-                                    
-                                    <div style="overflow-x: auto;">
-                                        <table style="width: 100%; border-collapse: collapse; background: white;">
-                                            <thead>
-                                                <tr style="background: #f5f5f5; border-bottom: 2px solid #e0e0e0;">
-                                                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #666;">Bank Name</th>
-                                                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #666;">Account Holder</th>
-                                                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #666;">Account Number</th>
-                                                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #666;">Period</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <% bankStatements.forEach((stmt, idx) => { %>
-                                                    <tr style="border-bottom: 1px solid #e0e0e0; <%= idx % 2 === 0 ? 'background: #fafafa;' : '' %>">
-                                                        <td style="padding: 12px; color: #333;"><%= stmt.bankName %></td>
-                                                        <td style="padding: 12px; color: #333;"><%= stmt.accountHolder %></td>
-                                                        <td style="padding: 12px; color: #333; font-family: monospace;"><%= stmt.accountNumber %></td>
-                                                        <td style="padding: 12px; color: #333;"><%= stmt.period %></td>
-                                                    </tr>
-                                                <% }); %>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                    
-                                    <%
-                                    // Calculate coverage - use same period as pending documents
-                                    const coverageToday = new Date();
-                                    const coverageOneYearAgo = new Date(coverageToday);
-                                    coverageOneYearAgo.setFullYear(coverageToday.getFullYear() - 1);
-                                    const formatCoverageDate = (d) => String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
-                                    const requiredStart = formatCoverageDate(coverageOneYearAgo);
-                                    const requiredEnd = formatCoverageDate(coverageToday);
+                                <%
+                                // Populate statementsByAccount
+                                bankStatements.forEach(stmt => {
+                                    const accountKey = stmt.accountNumber && stmt.accountNumber !== 'N/A'
+                                        ? stmt.accountNumber
+                                        : 'Unknown_' + stmt.bankName;
+                                    if (!statementsByAccount[accountKey]) {
+                                        statementsByAccount[accountKey] = {
+                                            bankName: stmt.bankName,
+                                            accountHolder: stmt.accountHolder,
+                                            accountNumber: stmt.accountNumber,
+                                            statements: []
+                                        };
+                                    }
+                                    statementsByAccount[accountKey].statements.push(stmt);
+                                });
 
-                                    // Helper to parse date for coverage calculation
-                                    const parseCoverageDate = (dateStr) => {
-                                        if (!dateStr || dateStr === 'N/A') return null;
-                                        const parts = dateStr.split(/[\/\-]/);
-                                        if (parts.length === 3) {
-                                            const day = parseInt(parts[0]);
-                                            const month = parseInt(parts[1]) - 1;
-                                            const year = parseInt(parts[2].length === 2 ? '20' + parts[2] : parts[2]);
-                                            return new Date(year, month, day);
-                                        }
-                                        return null;
-                                    };
+                                // Coverage calculation helpers
+                                const coverageToday = new Date();
+                                const coverageOneYearAgo = new Date(coverageToday);
+                                coverageOneYearAgo.setFullYear(coverageToday.getFullYear() - 1);
+                                const formatCoverageDate = (d) => String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
+                                const requiredStart = formatCoverageDate(coverageOneYearAgo);
+                                const requiredEnd = formatCoverageDate(coverageToday);
+                                const totalRequiredDays = Math.ceil((coverageToday - coverageOneYearAgo) / (1000 * 60 * 60 * 24));
 
-                                    // Count how many statements have valid period information
-                                    const validStatements = bankStatements.filter(s => s.period !== 'N/A');
+                                const parseCoverageDate = (dateStr) => {
+                                    if (!dateStr || dateStr === 'N/A') return null;
+                                    const parts = dateStr.split(/[\/\-]/);
+                                    if (parts.length === 3) {
+                                        const day = parseInt(parts[0]);
+                                        const month = parseInt(parts[1]) - 1;
+                                        const year = parseInt(parts[2].length === 2 ? '20' + parts[2] : parts[2]);
+                                        return new Date(year, month, day);
+                                    }
+                                    return null;
+                                };
 
-                                    // Calculate actual coverage percentage based on periods
-                                    let totalCoveredDays = 0;
-                                    const totalRequiredDays = Math.ceil((coverageToday - coverageOneYearAgo) / (1000 * 60 * 60 * 24));
+                                // Calculate coverage for each account
+                                Object.keys(statementsByAccount).forEach(accountKey => {
+                                    const account = statementsByAccount[accountKey];
+                                    const validStmts = account.statements.filter(s => s.period !== 'N/A');
+
                                     let earliestDate = null;
                                     let latestDate = null;
 
-                                    validStatements.forEach(stmt => {
-                                        const periodParts = stmt.period.split(' - ');
+                                    validStmts.forEach(stmt => {
+                                        // Handle both " - " and " to " separators
+                                        let periodParts = stmt.period.split(' - ');
+                                        if (periodParts.length !== 2) {
+                                            periodParts = stmt.period.split(/\s+to\s+/i);
+                                        }
                                         if (periodParts.length === 2) {
                                             const fromDate = parseCoverageDate(periodParts[0].trim());
                                             const toDate = parseCoverageDate(periodParts[1].trim());
@@ -1840,91 +1916,129 @@
                                         }
                                     });
 
+                                    let coveredDays = 0;
+                                    let missingPeriods = [];
+
                                     if (earliestDate && latestDate) {
-                                        // Clamp to required period
                                         const effectiveStart = earliestDate < coverageOneYearAgo ? coverageOneYearAgo : earliestDate;
                                         const effectiveEnd = latestDate > coverageToday ? coverageToday : latestDate;
-                                        totalCoveredDays = Math.ceil((effectiveEnd - effectiveStart) / (1000 * 60 * 60 * 24));
-                                        if (totalCoveredDays < 0) totalCoveredDays = 0;
-                                    }
+                                        coveredDays = Math.ceil((effectiveEnd - effectiveStart) / (1000 * 60 * 60 * 24));
+                                        if (coveredDays < 0) coveredDays = 0;
 
-                                    const coveragePercentage = totalRequiredDays > 0 ? Math.round((totalCoveredDays / totalRequiredDays) * 100) : 0;
-
-                                    // Calculate missing periods
-                                    let missingPeriodStart = null;
-                                    let missingPeriodEnd = null;
-                                    let missingDays = 0;
-
-                                    if (earliestDate && latestDate) {
+                                        // Calculate missing periods
                                         if (earliestDate > coverageOneYearAgo) {
-                                            missingPeriodStart = coverageOneYearAgo;
-                                            missingPeriodEnd = new Date(earliestDate.getTime() - 86400000);
-                                            missingDays = Math.ceil((earliestDate - coverageOneYearAgo) / (1000 * 60 * 60 * 24));
-                                        } else if (latestDate < coverageToday) {
-                                            missingPeriodStart = new Date(latestDate.getTime() + 86400000);
-                                            missingPeriodEnd = coverageToday;
-                                            missingDays = Math.ceil((coverageToday - latestDate) / (1000 * 60 * 60 * 24));
+                                            const missingDays = Math.ceil((earliestDate - coverageOneYearAgo) / (1000 * 60 * 60 * 24));
+                                            missingPeriods.push({
+                                                from: coverageOneYearAgo,
+                                                to: new Date(earliestDate.getTime() - 86400000),
+                                                days: missingDays
+                                            });
+                                        }
+                                        if (latestDate < coverageToday) {
+                                            const missingDays = Math.ceil((coverageToday - latestDate) / (1000 * 60 * 60 * 24));
+                                            missingPeriods.push({
+                                                from: new Date(latestDate.getTime() + 86400000),
+                                                to: coverageToday,
+                                                days: missingDays
+                                            });
                                         }
                                     }
-                                    %>
-                                    
-                                    <!-- Bank Statement Coverage -->
-                                    <div style="margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 8px; border-left: 4px solid #1976d2;">
-                                        <h4 style="margin: 0 0 12px 0; color: #1565c0; display: flex; align-items: center; gap: 8px;">
+
+                                    const percentage = totalRequiredDays > 0 ? Math.round((coveredDays / totalRequiredDays) * 100) : 0;
+
+                                    accountCoverages[accountKey] = {
+                                        percentage,
+                                        coveredDays,
+                                        earliestDate,
+                                        latestDate,
+                                        missingPeriods,
+                                        validStatementsCount: validStmts.length
+                                    };
+                                });
+
+                                const accountKeys = Object.keys(statementsByAccount);
+                                %>
+
+                                <!-- Bank Statement Summary - Per Account -->
+                                <% accountKeys.forEach((accountKey, accountIdx) => {
+                                    const account = statementsByAccount[accountKey];
+                                    const coverage = accountCoverages[accountKey];
+                                %>
+                                <div style="margin-bottom: 25px; padding: 20px; background: #ffffff; border-radius: 10px; border: 2px solid #1976d2; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                                    <h3 style="margin: 0 0 15px 0; color: #1976d2; display: flex; align-items: center; gap: 10px;">
+                                        <span style="font-size: 1.3em;">🏦</span>
+                                        <%= account.bankName %> - A/C: <%= account.accountNumber !== 'N/A' ? account.accountNumber : 'Unknown' %>
+                                        <span style="font-size: 0.8em; color: #666; font-weight: normal;">
+                                            (<%= account.statements.length %> statement<%= account.statements.length > 1 ? 's' : '' %>)
+                                        </span>
+                                    </h3>
+
+                                    <div style="margin-bottom: 10px; color: #555;">
+                                        <strong>Account Holder:</strong> <%= account.accountHolder %>
+                                    </div>
+
+                                    <div style="overflow-x: auto;">
+                                        <table style="width: 100%; border-collapse: collapse; background: white;">
+                                            <thead>
+                                                <tr style="background: #f5f5f5; border-bottom: 2px solid #e0e0e0;">
+                                                    <th style="padding: 10px; text-align: left; font-weight: 600; color: #666;">File</th>
+                                                    <th style="padding: 10px; text-align: left; font-weight: 600; color: #666;">Period</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <% account.statements.forEach((stmt, idx) => { %>
+                                                    <tr style="border-bottom: 1px solid #e0e0e0; <%= idx % 2 === 0 ? 'background: #fafafa;' : '' %>">
+                                                        <td style="padding: 10px; color: #333;"><%= stmt.filename || 'Bank Statement' %></td>
+                                                        <td style="padding: 10px; color: #333;"><%= stmt.period %></td>
+                                                    </tr>
+                                                <% }); %>
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    <!-- Coverage for this account -->
+                                    <div style="margin-top: 15px; padding: 15px; background: #e3f2fd; border-radius: 8px; border-left: 4px solid #1976d2;">
+                                        <h4 style="margin: 0 0 10px 0; color: #1565c0; display: flex; align-items: center; gap: 8px;">
                                             <span style="font-size: 1.1em;">📅</span>
-                                            Bank Statement Coverage (Last 1 Year)
+                                            Coverage (Last 1 Year)
                                         </h4>
-                                        
+
                                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                                            <span style="color: #555; font-weight: 500;">Required Period: <%= requiredStart %> to <%= requiredEnd %></span>
-                                            <span style="font-weight: 600; color: <%= coveragePercentage >= 80 ? '#2e7d32' : coveragePercentage >= 50 ? '#f57c00' : '#d32f2f' %>; font-size: 1.1em;">
-                                                Overall: <%= coveragePercentage %>% Coverage
+                                            <span style="color: #555; font-weight: 500;">Required: <%= requiredStart %> to <%= requiredEnd %></span>
+                                            <span style="font-weight: 600; color: <%= coverage.percentage >= 80 ? '#2e7d32' : coverage.percentage >= 50 ? '#f57c00' : '#d32f2f' %>; font-size: 1.1em;">
+                                                <%= coverage.percentage %>% Coverage
                                             </span>
                                         </div>
-                                        
-                                        <% if (validStatements.length > 0) { %>
-                                            <div style="margin-top: 15px; padding: 12px; background: white; border-radius: 6px;">
-                                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                                    <strong style="color: #1976d2;">
-                                                        <% 
-                                                        // Group by bank name and account
-                                                        const uniqueBanks = [...new Set(validStatements.map(s => s.bankName))];
-                                                        %>
-                                                        <%= uniqueBanks[0] || 'Bank' %>
-                                                        <% if (validStatements[0] && validStatements[0].accountNumber !== 'N/A') { %>
-                                                            (<%= validStatements[0].accountNumber %>)
-                                                        <% } %>
-                                                    </strong>
-                                                    <span style="font-weight: 600; color: <%= coveragePercentage >= 80 ? '#2e7d32' : coveragePercentage >= 50 ? '#f57c00' : '#d32f2f' %>;">
-                                                        <%= coveragePercentage %>% Coverage
-                                                    </span>
-                                                </div>
-                                                
-                                                <% if (coveragePercentage < 100 && missingPeriodStart && missingPeriodEnd) { %>
+
+                                        <% if (coverage.validStatementsCount > 0 && coverage.earliestDate && coverage.latestDate) { %>
+                                            <div style="color: #555; font-size: 0.9em; margin-bottom: 8px;">
+                                                Available: <%= formatCoverageDate(coverage.earliestDate) %> to <%= formatCoverageDate(coverage.latestDate) %>
+                                            </div>
+
+                                            <% if (coverage.missingPeriods.length > 0) { %>
+                                                <% coverage.missingPeriods.forEach(missing => { %>
                                                     <div style="margin-top: 8px; padding: 10px; background: #fff3e0; border-left: 3px solid #f57c00; border-radius: 4px;">
                                                         <div style="display: flex; align-items: center; gap: 8px; color: #e65100;">
                                                             <span style="font-size: 1.2em;">⚠</span>
                                                             <strong>Missing:</strong>
-                                                            <span><%= formatCoverageDate(missingPeriodStart) %> to <%= formatCoverageDate(missingPeriodEnd) %> (<%= missingDays %> days)</span>
+                                                            <span><%= formatCoverageDate(missing.from) %> to <%= formatCoverageDate(missing.to) %> (<%= missing.days %> days)</span>
                                                         </div>
                                                     </div>
-                                                <% } %>
-                                            </div>
+                                                <% }); %>
+                                            <% } %>
                                         <% } else { %>
-                                            <div style="margin-top: 10px; padding: 12px; background: #ffebee; border-left: 3px solid #d32f2f; border-radius: 4px;">
-                                                <strong style="color: #c62828;">⚠️ No valid statement periods found</strong>
-                                                <p style="margin: 5px 0 0 0; color: #666;">
-                                                    Please upload bank statements or click "Reprocess All Documents" to extract period information.
-                                                </p>
+                                            <div style="padding: 10px; background: #ffebee; border-left: 3px solid #d32f2f; border-radius: 4px;">
+                                                <strong style="color: #c62828;">⚠️ Period information not extracted</strong>
                                             </div>
                                         <% } %>
                                     </div>
-                                    
-                                    <div style="margin-top: 15px; text-align: right;">
-                                        <button onclick="reprocessBankingDocs()" class="btn btn-primary" style="font-size: 0.9em; padding: 8px 16px;">
-                                            🔄 Re-extract Bank Statement Details
-                                        </button>
-                                    </div>
+                                </div>
+                                <% }); %>
+
+                                <div style="margin-bottom: 20px; text-align: right;">
+                                    <button onclick="reprocessBankingDocs()" class="btn btn-primary" style="font-size: 0.9em; padding: 8px 16px;">
+                                        🔄 Re-extract Bank Statement Details
+                                    </button>
                                 </div>
                             <% } %>
                             
@@ -1945,41 +2059,69 @@
                                 if (combinedBankText.length > 500) {
                                     emiVerificationPossible = true;
 
+                                    // Helper function to check if EMI exists in context (near debit keywords or loan bank name)
+                                    const checkEmiInContext = (text, emiAmount, loanBankName) => {
+                                        const emiStr = String(emiAmount);
+                                        const emiFormatted = emiAmount.toLocaleString('en-IN');
+
+                                        // Keywords that indicate EMI/loan debit
+                                        const emiKeywords = ['emi', 'loan', 'equated monthly', 'instalment', 'installment', 'nach', 'ecs', 'auto debit', 'si:', 'standing instruction'];
+                                        const debitKeywords = ['dr', 'debit', 'withdrawal', 'transfer to', 'neft', 'rtgs', 'imps', 'upi'];
+
+                                        // Normalize loan bank name for matching
+                                        const bankNameLower = (loanBankName || '').toLowerCase().trim();
+                                        const bankNameParts = bankNameLower.split(/[\s\-]+/).filter(p => p.length > 2);
+
+                                        // Split text into lines/transactions for contextual matching
+                                        const lines = text.split(/[\n\r]+/);
+
+                                        for (const line of lines) {
+                                            const lineLower = line.toLowerCase();
+
+                                            // Check if this line contains the EMI amount
+                                            const hasEmiAmount = lineLower.includes(emiStr) || lineLower.includes(emiFormatted) ||
+                                                                 lineLower.includes((emiAmount - 1).toString()) ||
+                                                                 lineLower.includes((emiAmount + 1).toString());
+
+                                            if (hasEmiAmount) {
+                                                // Check if line has EMI-related keywords
+                                                const hasEmiKeyword = emiKeywords.some(kw => lineLower.includes(kw));
+
+                                                // Check if line has debit keywords
+                                                const hasDebitKeyword = debitKeywords.some(kw => lineLower.includes(kw));
+
+                                                // Check if loan bank name appears in line
+                                                const hasBankName = bankNameParts.length > 0 && bankNameParts.some(part => lineLower.includes(part));
+
+                                                // EMI is valid if it has EMI keyword OR (debit keyword AND bank name)
+                                                if (hasEmiKeyword || (hasDebitKeyword && hasBankName) || hasBankName) {
+                                                    return true;
+                                                }
+                                            }
+                                        }
+
+                                        return false;
+                                    };
+
                                     // Check each EMI from debt profiles
                                     debtProfiles.forEach(profile => {
                                         if (profile.emi && profile.emi > 0) {
                                             const emiAmount = Math.round(profile.emi);
-                                            // Generate many variations of the EMI amount to match different formats
-                                            const emiVariations = [
-                                                emiAmount.toString(),
-                                                emiAmount.toLocaleString('en-IN'),
-                                                (emiAmount - 1).toString(), // Allow ±1 variance
-                                                (emiAmount + 1).toString(),
-                                                (emiAmount - 2).toString(), // Allow ±2 variance
-                                                (emiAmount + 2).toString(),
-                                                String(emiAmount).replace(/,/g, ''),
-                                                emiAmount.toFixed(2),
-                                                emiAmount.toLocaleString('en-IN', {minimumFractionDigits: 2}),
-                                                // Additional formats
-                                                emiAmount.toFixed(0),
-                                                String(emiAmount).padStart(6, '0'), // With leading zeros
-                                                emiAmount.toLocaleString('en-US'), // US format with commas
-                                                String(emiAmount).replace(/\B(?=(\d{3})+(?!\d))/g, ','), // Manual comma format
-                                                String(emiAmount).replace(/\B(?=(\d{2})+(?!\d))/g, ','), // Indian comma format attempt
-                                            ];
+                                            const loanBankName = profile.bank || '';
 
-                                            // Check each bank statement individually to find which account has the EMI
+                                            // Check each bank statement individually
                                             let foundInAccount = null;
                                             let foundInAnyDoc = false;
 
                                             for (const doc of bankingDocs) {
                                                 if (doc.extractedText) {
                                                     const docText = doc.extractedText.toLowerCase();
-                                                    // Check if any EMI variation exists in this document
-                                                    const emiFound = emiVariations.some(emi => docText.includes(String(emi).toLowerCase()));
+
+                                                    // Use contextual EMI check
+                                                    const emiFound = checkEmiInContext(docText, emiAmount, loanBankName);
+
                                                     if (emiFound) {
                                                         foundInAnyDoc = true;
-                                                        // Try to get the account number if available
                                                         if (doc.extractedDetails && doc.extractedDetails.accountNumber && doc.extractedDetails.accountNumber !== 'N/A') {
                                                             foundInAccount = doc.extractedDetails.accountNumber;
                                                             break;
@@ -1989,43 +2131,35 @@
                                             }
 
                                             if (foundInAnyDoc) {
-                                                // EMI found in a bank statement
+                                                // EMI found in a bank statement with proper context
                                                 emiFoundInAccounts[profile._id] = {
                                                     found: true,
                                                     accountNumber: foundInAccount || ''
                                                 };
                                             } else {
-                                                // Also check combined text as a fallback
-                                                const emiInCombined = emiVariations.some(emi => combinedBankText.includes(String(emi).toLowerCase()));
-                                                if (emiInCombined) {
-                                                    emiFoundInAccounts[profile._id] = {
-                                                        found: true,
-                                                        accountNumber: ''
-                                                    };
-                                                } else {
-                                                    emiFoundInAccounts[profile._id] = { found: false, accountNumber: '' };
+                                                // EMI not found - mark as missing
+                                                emiFoundInAccounts[profile._id] = { found: false, accountNumber: '' };
 
-                                                    // Calculate required period
-                                                    let requiredPeriod = 'last 12 months';
-                                                    if (profile.emiStartDate) {
-                                                        const startParts = profile.emiStartDate.split('/');
-                                                        if (startParts.length === 3) {
-                                                            const startDate = new Date(startParts[2], startParts[1] - 1, startParts[0]);
-                                                            const monthsAgo = Math.floor((new Date() - startDate) / (30 * 24 * 60 * 60 * 1000));
-                                                            if (monthsAgo < 12) {
-                                                                requiredPeriod = `from ${profile.emiStartDate} (${monthsAgo} months)`;
-                                                            }
+                                                // Calculate required period for missing EMIs
+                                                let requiredPeriod = 'last 12 months';
+                                                if (profile.emiStartDate) {
+                                                    const startParts = profile.emiStartDate.split('/');
+                                                    if (startParts.length === 3) {
+                                                        const startDate = new Date(startParts[2], startParts[1] - 1, startParts[0]);
+                                                        const monthsAgo = Math.floor((new Date() - startDate) / (30 * 24 * 60 * 60 * 1000));
+                                                        if (monthsAgo < 12) {
+                                                            requiredPeriod = `from ${profile.emiStartDate} (${monthsAgo} months)`;
                                                         }
                                                     }
-
-                                                    missingEmiBankStatements.push({
-                                                        bank: profile.bank,
-                                                        emi: emiAmount,
-                                                        loanType: profile.loanType,
-                                                        applicant: profile.loanApplicant,
-                                                        requiredPeriod: requiredPeriod
-                                                    });
                                                 }
+
+                                                missingEmiBankStatements.push({
+                                                    bank: profile.bank,
+                                                    emi: emiAmount,
+                                                    loanType: profile.loanType,
+                                                    applicant: profile.loanApplicant,
+                                                    requiredPeriod: requiredPeriod
+                                                });
                                             }
                                         }
                                     });
@@ -2092,12 +2226,53 @@
                                 </div>
                             <% } %>
 
+                            <%
+                            // Calculate coverage summary for pending section
+                            if (typeof accountCoverages !== 'undefined' && Object.keys(accountCoverages).length > 0) {
+                            %>
+                            <div style="margin-bottom: 20px; padding: 15px; background: #e3f2fd; border-radius: 8px; border-left: 4px solid #1976d2;">
+                                <h4 style="margin: 0 0 12px 0; color: #1565c0;">📊 Coverage Summary by Account</h4>
+                                <div style="display: flex; flex-wrap: wrap; gap: 15px;">
+                                    <% Object.keys(statementsByAccount).forEach(accountKey => {
+                                        const account = statementsByAccount[accountKey];
+                                        const coverage = accountCoverages[accountKey];
+                                        const coverageColor = coverage.percentage >= 80 ? '#2e7d32' : coverage.percentage >= 50 ? '#f57c00' : '#d32f2f';
+                                    %>
+                                    <div style="flex: 1; min-width: 250px; padding: 12px; background: white; border-radius: 6px; border: 1px solid #e0e0e0;">
+                                        <div style="font-weight: 600; color: #1976d2; margin-bottom: 6px;">
+                                            <%= account.bankName %> - <%= account.accountNumber !== 'N/A' ? account.accountNumber : 'Unknown' %>
+                                        </div>
+                                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                                            <span style="color: #666; font-size: 0.9em;"><%= account.accountHolder %></span>
+                                            <span style="font-weight: 700; color: <%= coverageColor %>; font-size: 1.1em;">
+                                                <%= coverage.percentage %>%
+                                            </span>
+                                        </div>
+                                        <div style="margin-top: 8px; height: 6px; background: #e0e0e0; border-radius: 3px; overflow: hidden;">
+                                            <div style="height: 100%; width: <%= coverage.percentage %>%; background: <%= coverageColor %>; border-radius: 3px;"></div>
+                                        </div>
+                                    </div>
+                                    <% }); %>
+                                </div>
+                            </div>
+                            <% } %>
+
                             <% if (pendingByCategory.banking.length > 0) { %>
-                                <ul class="pending-list">
-                                    <% pendingByCategory.banking.forEach(doc => { %>
-                                        <li class="pending-item">
-                                            <span class="warning-icon">⚠️</span>
-                                            <%= doc %>
+                                <h4 style="margin: 0 0 10px 0; color: #d32f2f;">⚠️ Missing Bank Statements:</h4>
+                                <ul class="pending-list" id="pendingBankingList">
+                                    <% pendingByCategory.banking.forEach((doc, idx) => { %>
+                                        <li class="pending-item" id="pending-banking-<%= idx %>" data-pending-text="<%= doc.replace(/"/g, '&quot;') %>">
+                                            <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                                                <div>
+                                                    <span class="warning-icon">⚠️</span>
+                                                    <%= doc %>
+                                                </div>
+                                                <button onclick="dismissPendingItem('banking', <%= idx %>, this)"
+                                                    style="background: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85em; white-space: nowrap;"
+                                                    title="Mark as not required">
+                                                    ✕ Dismiss
+                                                </button>
+                                            </div>
                                         </li>
                                     <% }); %>
                                 </ul>
@@ -2201,57 +2376,96 @@
                                 }
 
                                 // Track uploaded month-year combinations with form types
-                                // Try extracted text first
-                                let periodMatch = extractedText.match(/Period\s+([A-Za-z]+)/i);
-                                let fyMatch = extractedText.match(/Year\s+(\d{4})-(\d{2})/i);
-                                let yearMatch = extractedText.match(/Year\s+(\d{4})/i);
+                                // Extract from PDF text content only
 
-                                // If not found in text, try to parse from filename (MMYYYY format)
-                                if (!periodMatch) {
-                                    // Filename format: GSTR1_GSTIN_MMYYYY.pdf
-                                    const fileMonthMatch = fileName.match(/_(\d{2})(\d{4})\.PDF$/i);
-                                    if (fileMonthMatch) {
-                                        const monthNum = parseInt(fileMonthMatch[1]) - 1; // 0-indexed
-                                        const calYear = parseInt(fileMonthMatch[2]);
-                                        if (monthNum >= 0 && monthNum < 12) {
-                                            const monthName = monthNames[monthNum];
-                                            const fy = getFinancialYear(monthNum, calYear);
-                                            const monthKey = `${monthName}-${fy}`;
-                                            if (!uploadedMonthsByGstin[gstin][monthKey]) {
-                                                uploadedMonthsByGstin[gstin][monthKey] = { gstr1: false, gstr3b: false };
-                                            }
-                                            if (formType === 'GSTR-1') {
-                                                uploadedMonthsByGstin[gstin][monthKey].gstr1 = true;
-                                            } else if (formType === 'GSTR-3B') {
-                                                uploadedMonthsByGstin[gstin][monthKey].gstr3b = true;
-                                            }
-                                        }
-                                    }
-                                } else if (periodMatch) {
-                                    const monthName = periodMatch[1];
+                                // Pattern 1: "Period\nJanuary" or "Period January" (GSTR-3B format)
+                                let periodMatch = extractedText.match(/Period[\s\n]+([A-Za-z]+)/i);
+                                // Pattern 2: "Year\n2024-25" (GSTR-3B FY format)
+                                let fyMatch = extractedText.match(/Year[\s\n]+(\d{4})-(\d{2})/i);
+                                // Pattern 3: "Return Period January 2025" or "Tax Period: January 2025"
+                                let returnPeriodMatch = extractedText.match(/(?:Return|Tax)\s*Period[:\s]+([A-Za-z]+)\s+(\d{4})/i);
+                                // Pattern 4: "January 2025" standalone month year
+                                let monthYearMatch = extractedText.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b/i);
+
+                                let monthName = null;
+                                let fy = null;
+
+                                // Try Pattern 1 + 2 (GSTR-3B format with separate Period and Year)
+                                if (periodMatch && fyMatch) {
+                                    monthName = periodMatch[1];
+                                    fy = `${fyMatch[1]}-${fyMatch[2]}`;
+                                }
+                                // Try Pattern 3 (Return Period with calendar year)
+                                else if (returnPeriodMatch) {
+                                    monthName = returnPeriodMatch[1];
+                                    const calYear = parseInt(returnPeriodMatch[2]);
                                     const monthIndex = monthNames.findIndex(m => m.toLowerCase() === monthName.toLowerCase());
-
-                                    let fy = '';
-                                    if (fyMatch) {
-                                        // Financial year directly from document (e.g., 2024-25)
-                                        fy = `${fyMatch[1]}-${fyMatch[2]}`;
-                                    } else if (yearMatch && monthIndex !== -1) {
-                                        // Calculate FY from calendar year
-                                        fy = getFinancialYear(monthIndex, parseInt(yearMatch[1]));
+                                    if (monthIndex !== -1) {
+                                        fy = getFinancialYear(monthIndex, calYear);
                                     }
-
-                                    if (fy) {
-                                        const monthKey = `${monthName}-${fy}`;
-                                        if (!uploadedMonthsByGstin[gstin][monthKey]) {
-                                            uploadedMonthsByGstin[gstin][monthKey] = { gstr1: false, gstr3b: false };
-                                        }
-                                        if (formType === 'GSTR-1') {
-                                            uploadedMonthsByGstin[gstin][monthKey].gstr1 = true;
-                                        } else if (formType === 'GSTR-3B') {
-                                            uploadedMonthsByGstin[gstin][monthKey].gstr3b = true;
+                                }
+                                // Try Pattern 4 (standalone month year)
+                                else if (monthYearMatch) {
+                                    monthName = monthYearMatch[1];
+                                    const calYear = parseInt(monthYearMatch[2]);
+                                    const monthIndex = monthNames.findIndex(m => m.toLowerCase() === monthName.toLowerCase());
+                                    if (monthIndex !== -1) {
+                                        fy = getFinancialYear(monthIndex, calYear);
+                                    }
+                                }
+                                // Try just Period match with Year match
+                                else if (periodMatch) {
+                                    monthName = periodMatch[1];
+                                    const yearMatch = extractedText.match(/Year[\s\n]+(\d{4})/i);
+                                    if (yearMatch) {
+                                        const monthIndex = monthNames.findIndex(m => m.toLowerCase() === monthName.toLowerCase());
+                                        if (monthIndex !== -1) {
+                                            fy = getFinancialYear(monthIndex, parseInt(yearMatch[1]));
                                         }
                                     }
                                 }
+
+                                if (monthName && fy) {
+                                    const monthKey = `${monthName}-${fy}`;
+                                    if (!uploadedMonthsByGstin[gstin][monthKey]) {
+                                        uploadedMonthsByGstin[gstin][monthKey] = { gstr1: false, gstr3b: false };
+                                    }
+                                    if (formType === 'GSTR-1') {
+                                        uploadedMonthsByGstin[gstin][monthKey].gstr1 = true;
+                                    } else if (formType === 'GSTR-3B') {
+                                        uploadedMonthsByGstin[gstin][monthKey].gstr3b = true;
+                                    }
+                                }
+                            });
+
+                            // Sort GST returns by financial year and month (chronological order)
+                            Object.keys(gstReturnsByGstin).forEach(gstin => {
+                                gstReturnsByGstin[gstin].sort((a, b) => {
+                                    const textA = a.extractedText || '';
+                                    const textB = b.extractedText || '';
+
+                                    // Extract year and month from text
+                                    const fyMatchA = textA.match(/Year[\s\n]+(\d{4})-(\d{2})/i);
+                                    const fyMatchB = textB.match(/Year[\s\n]+(\d{4})-(\d{2})/i);
+                                    const periodMatchA = textA.match(/Period[\s\n]+([A-Za-z]+)/i);
+                                    const periodMatchB = textB.match(/Period[\s\n]+([A-Za-z]+)/i);
+
+                                    // Get FY start year (e.g., 2024 from 2024-25)
+                                    const yearA = fyMatchA ? parseInt(fyMatchA[1]) : 9999;
+                                    const yearB = fyMatchB ? parseInt(fyMatchB[1]) : 9999;
+
+                                    // Get month index (0-11, with April=0 for FY order)
+                                    const monthOrderFY = {
+                                        'april': 0, 'may': 1, 'june': 2, 'july': 3, 'august': 4, 'september': 5,
+                                        'october': 6, 'november': 7, 'december': 8, 'january': 9, 'february': 10, 'march': 11
+                                    };
+                                    const monthA = periodMatchA ? (monthOrderFY[periodMatchA[1].toLowerCase()] ?? 99) : 99;
+                                    const monthB = periodMatchB ? (monthOrderFY[periodMatchB[1].toLowerCase()] ?? 99) : 99;
+
+                                    // Sort by year first, then by month within FY
+                                    if (yearA !== yearB) return yearA - yearB;
+                                    return monthA - monthB;
+                                });
                             });
 
                             // Calculate last 12 months (from previous month going back)
@@ -2301,10 +2515,12 @@
                             <!-- Existing pending items -->
                             <% if (pendingByCategory.turnover.length > 0) { %>
                                 <ul class="pending-list">
-                                    <% pendingByCategory.turnover.forEach(doc => { %>
-                                        <li class="pending-item">
-                                            <span class="warning-icon">⚠️</span>
-                                            <%= doc %>
+                                    <% pendingByCategory.turnover.forEach((doc, idx) => { %>
+                                        <li class="pending-item" data-pending-text="<%= doc.replace(/"/g, '&quot;') %>">
+                                            <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                                                <div><span class="warning-icon">⚠️</span> <%= doc %></div>
+                                                <button onclick="dismissPendingItem('turnover', <%= idx %>, this)" style="background: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85em; white-space: nowrap;" title="Mark as not required">✕ Dismiss</button>
+                                            </div>
                                         </li>
                                     <% }); %>
                                 </ul>
@@ -2415,7 +2631,12 @@
 
                             <!-- Uploaded GST Returns List -->
                             <div style="margin-top: 20px; margin-bottom: 30px;">
-                                <h3>Uploaded GST Returns</h3>
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                                    <h3 style="margin: 0;">Uploaded GST Returns</h3>
+                                    <button onclick="extractTurnoverDocuments()" class="btn btn-primary" style="font-size: 0.85em; padding: 6px 12px;">
+                                        🔄 Re-extract GST Return Details
+                                    </button>
+                                </div>
                                 <% if (allGstReturns.length > 0) { %>
                                     <% Object.keys(gstReturnsByGstin).forEach(gstin => { %>
                                         <div style="margin-bottom: 24px;">
@@ -2454,11 +2675,20 @@
                                                             formType = 'GSTR-1';
                                                         }
 
-                                                        // Extract period/month from text or filename
+                                                        // Extract period/month and year from PDF text content only
                                                         let month = '-';
                                                         let year = '-';
-                                                        const periodMatch = docText.match(/Period\s+([A-Za-z]+)/i);
-                                                        const yearTextMatch = docText.match(/Year\s+([0-9\-]+)/i);
+
+                                                        // Pattern 1: "Period\nJanuary" or "Period January" (GSTR-3B format)
+                                                        const periodMatch = docText.match(/Period[\s\n]+([A-Za-z]+)/i);
+                                                        // Pattern 2: "Year\n2024-25" or "Year 2024-25" (GSTR-3B format)
+                                                        const yearTextMatch = docText.match(/Year[\s\n]+(\d{4}-\d{2})/i);
+
+                                                        // Pattern 3: "Return Period January 2025" or "Tax Period: January 2025"
+                                                        const returnPeriodMatch = docText.match(/(?:Return|Tax)\s*Period[:\s]+([A-Za-z]+)\s+(\d{4})/i);
+
+                                                        // Pattern 4: "January 2025" standalone month year
+                                                        const monthYearMatch = docText.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b/i);
 
                                                         if (periodMatch) {
                                                             month = periodMatch[1];
@@ -2467,17 +2697,25 @@
                                                             year = yearTextMatch[1];
                                                         }
 
-                                                        // If not found in text, try filename (MMYYYY format)
-                                                        if (month === '-' || year === '-') {
-                                                            const fileMonthMatch = docFileName.match(/_(\d{2})(\d{4})\.PDF$/i);
-                                                            if (fileMonthMatch) {
-                                                                const monthNum = parseInt(fileMonthMatch[1]) - 1;
-                                                                const calYear = parseInt(fileMonthMatch[2]);
-                                                                if (monthNum >= 0 && monthNum < 12) {
-                                                                    month = monthNames[monthNum];
-                                                                    // Calculate FY
-                                                                    const fy = getFinancialYear(monthNum, calYear);
-                                                                    year = fy;
+                                                        // If year not found in FY format, try to extract from return period
+                                                        if (year === '-' && returnPeriodMatch) {
+                                                            if (month === '-') month = returnPeriodMatch[1];
+                                                            // Convert calendar year to FY
+                                                            const calYear = parseInt(returnPeriodMatch[2]);
+                                                            const monthIndex = monthNames.findIndex(m => m.toLowerCase() === returnPeriodMatch[1].toLowerCase());
+                                                            if (monthIndex !== -1) {
+                                                                year = getFinancialYear(monthIndex, calYear);
+                                                            }
+                                                        }
+
+                                                        // Fallback: try standalone month year pattern
+                                                        if ((month === '-' || year === '-') && monthYearMatch) {
+                                                            if (month === '-') month = monthYearMatch[1];
+                                                            if (year === '-') {
+                                                                const calYear = parseInt(monthYearMatch[2]);
+                                                                const monthIndex = monthNames.findIndex(m => m.toLowerCase() === monthYearMatch[1].toLowerCase());
+                                                                if (monthIndex !== -1) {
+                                                                    year = getFinancialYear(monthIndex, calYear);
                                                                 }
                                                             }
                                                         }
@@ -2508,10 +2746,12 @@
                         <div class="pending-category-content" data-pending-category="debtProfile" style="display: none;">
                             <% if (pendingByCategory.debtProfile.length > 0) { %>
                                 <ul class="pending-list">
-                                    <% pendingByCategory.debtProfile.forEach(doc => { %>
-                                        <li class="pending-item">
-                                            <span class="warning-icon">⚠️</span>
-                                            <%= doc %>
+                                    <% pendingByCategory.debtProfile.forEach((doc, idx) => { %>
+                                        <li class="pending-item" data-pending-text="<%= doc.replace(/"/g, '&quot;') %>">
+                                            <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                                                <div><span class="warning-icon">⚠️</span> <%= doc %></div>
+                                                <button onclick="dismissPendingItem('debtProfile', <%= idx %>, this)" style="background: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85em; white-space: nowrap;" title="Mark as not required">✕ Dismiss</button>
+                                            </div>
                                         </li>
                                     <% }); %>
                                 </ul>
@@ -2754,10 +2994,12 @@
                         <div class="pending-category-content" data-pending-category="collateral" style="display: none;">
                             <% if (pendingByCategory.collateral.length > 0) { %>
                                 <ul class="pending-list">
-                                    <% pendingByCategory.collateral.forEach(doc => { %>
-                                        <li class="pending-item">
-                                            <span class="warning-icon">⚠️</span>
-                                            <%= doc %>
+                                    <% pendingByCategory.collateral.forEach((doc, idx) => { %>
+                                        <li class="pending-item" data-pending-text="<%= doc.replace(/"/g, '&quot;') %>">
+                                            <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                                                <div><span class="warning-icon">⚠️</span> <%= doc %></div>
+                                                <button onclick="dismissPendingItem('collateral', <%= idx %>, this)" style="background: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85em; white-space: nowrap;" title="Mark as not required">✕ Dismiss</button>
+                                            </div>
                                         </li>
                                     <% }); %>
                                 </ul>
@@ -2783,9 +3025,9 @@
     </div>
 
     <!-- Document Preview Popup (placed at body level for proper fixed positioning) -->
-    <div id="documentPreview" class="document-preview-popup" style="display: none;" 
-         onmouseenter="cancelHidePreview()" 
-         onmouseleave="hidePreview()">
+    <div id="documentPreview" class="document-preview-popup" style="display: none;"
+         onmouseenter="cancelHidePreview(); cancelMergeHidePreview();"
+         onmouseleave="hidePreview(); hideMergePreview();">
         <div class="preview-content">
             <button class="preview-close" onclick="hidePreview()">✕</button>
             <div id="previewLoader" class="preview-loader">Loading preview...</div>
@@ -2795,8 +3037,337 @@
         </div>
     </div>
 
+    <!-- PDF Password Modal -->
+    <div id="pdfPasswordModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10001; justify-content: center; align-items: center;">
+        <div style="background: white; padding: 24px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); max-width: 400px; width: 90%;">
+            <h3 style="margin: 0 0 16px 0; color: #333;">🔒 Password Protected PDF</h3>
+            <p style="margin: 0 0 16px 0; color: #666; font-size: 14px;">This PDF is password protected. Enter the password to unlock and save it without protection.</p>
+            <input type="password" id="pdfPasswordInput" placeholder="Enter PDF password"
+                   style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; box-sizing: border-box; margin-bottom: 16px;"
+                   onkeypress="if(event.key === 'Enter') decryptPdfWithPassword()">
+            <div id="pdfPasswordError" style="color: #d32f2f; font-size: 13px; margin-bottom: 12px; display: none;"></div>
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button onclick="closePdfPasswordModal()" style="padding: 8px 16px; border: 1px solid #ddd; background: #f5f5f5; border-radius: 4px; cursor: pointer;">Cancel</button>
+                <button onclick="decryptPdfWithPassword()" id="decryptPdfBtn" style="padding: 8px 16px; border: none; background: #1976d2; color: white; border-radius: 4px; cursor: pointer;">Unlock PDF</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- PDF-lib for merging PDFs -->
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+
     <script>
         const proposalId = '<%= proposal.id %>';
+
+        // ========== Merge Documents Functionality ==========
+        let mergeFiles = [];
+
+        function handleMergeFilesSelect(event) {
+            const files = Array.from(event.target.files);
+            mergeFiles = mergeFiles.concat(files.filter(f => f.type === 'application/pdf'));
+            renderMergeFileList();
+        }
+
+        function renderMergeFileList() {
+            const listContainer = document.getElementById('mergeFileList');
+            const list = document.getElementById('mergeSortableList');
+            const actions = document.getElementById('mergeActions');
+
+            if (mergeFiles.length === 0) {
+                listContainer.style.display = 'none';
+                actions.style.display = 'none';
+                return;
+            }
+
+            listContainer.style.display = 'block';
+            actions.style.display = 'block';
+            list.innerHTML = '';
+
+            mergeFiles.forEach((file, index) => {
+                const li = document.createElement('li');
+                li.style.cssText = 'display: flex; align-items: center; padding: 10px; margin: 5px 0; background: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; cursor: move;';
+                li.draggable = true;
+                li.dataset.index = index;
+                li.innerHTML = `
+                    <span style="margin-right: 10px; color: #666; font-weight: 500;">${index + 1}.</span>
+                    <span class="merge-file-name"
+                          style="flex: 1; cursor: pointer; padding: 5px 10px; border-radius: 3px; transition: background 0.2s; background: #fff; border: 1px dashed #ccc;"
+                          onmouseenter="this.style.background='#e3f2fd'; this.style.borderColor='#1976d2'; showMergePreview(${index}, this)"
+                          onmouseleave="this.style.background='#fff'; this.style.borderColor='#ccc'; scheduleMergeHidePreview()"
+                          title="Hover to preview document">
+                        📄 ${file.name} <span style="color: #1976d2; font-size: 0.8em;">(hover to preview)</span>
+                    </span>
+                    <span style="color: #888; margin-right: 10px; font-size: 0.85em;">${(file.size / 1024).toFixed(1)} KB</span>
+                    <button type="button" class="merge-preview-btn"
+                            onmouseenter="showMergePreview(${index}, this)"
+                            onmouseleave="scheduleMergeHidePreview()"
+                            style="border: none; background: #e8f5e9; color: #2e7d32; padding: 3px 8px; margin-right: 5px; cursor: pointer; border-radius: 3px;"
+                            title="Preview document">👁️</button>
+                    <button type="button" onclick="moveMergeFile(${index}, -1)" style="border: none; background: #e3f2fd; padding: 3px 8px; margin-right: 5px; cursor: pointer; border-radius: 3px;" title="Move up">▲</button>
+                    <button type="button" onclick="moveMergeFile(${index}, 1)" style="border: none; background: #e3f2fd; padding: 3px 8px; margin-right: 5px; cursor: pointer; border-radius: 3px;" title="Move down">▼</button>
+                    <button type="button" onclick="removeMergeFile(${index})" style="border: none; background: #ffebee; color: #c62828; padding: 3px 8px; cursor: pointer; border-radius: 3px;" title="Remove">✕</button>
+                `;
+
+                // Drag and drop handlers
+                li.addEventListener('dragstart', handleDragStart);
+                li.addEventListener('dragover', handleDragOver);
+                li.addEventListener('drop', handleDrop);
+                li.addEventListener('dragend', handleDragEnd);
+
+                list.appendChild(li);
+            });
+
+            // Set default filename based on first file
+            const fileNameInput = document.getElementById('mergedFileName');
+            if (!fileNameInput.value && mergeFiles.length > 0) {
+                fileNameInput.value = 'merged_' + mergeFiles[0].name.replace('.pdf', '');
+            }
+        }
+
+        let draggedItem = null;
+
+        function handleDragStart(e) {
+            draggedItem = this;
+            this.style.opacity = '0.5';
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            this.style.borderTop = '2px solid #1976d2';
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            this.style.borderTop = '';
+            if (draggedItem !== this) {
+                const fromIndex = parseInt(draggedItem.dataset.index);
+                const toIndex = parseInt(this.dataset.index);
+                const [movedFile] = mergeFiles.splice(fromIndex, 1);
+                mergeFiles.splice(toIndex, 0, movedFile);
+                renderMergeFileList();
+            }
+        }
+
+        function handleDragEnd(e) {
+            this.style.opacity = '1';
+            document.querySelectorAll('#mergeSortableList li').forEach(li => {
+                li.style.borderTop = '';
+            });
+        }
+
+        function moveMergeFile(index, direction) {
+            const newIndex = index + direction;
+            if (newIndex < 0 || newIndex >= mergeFiles.length) return;
+            const [movedFile] = mergeFiles.splice(index, 1);
+            mergeFiles.splice(newIndex, 0, movedFile);
+            renderMergeFileList();
+        }
+
+        function removeMergeFile(index) {
+            mergeFiles.splice(index, 1);
+            renderMergeFileList();
+        }
+
+        function clearMergeFiles() {
+            mergeFiles = [];
+            // Revoke any existing preview URLs
+            if (currentMergePreviewUrl) {
+                URL.revokeObjectURL(currentMergePreviewUrl);
+                currentMergePreviewUrl = null;
+            }
+            document.getElementById('mergeDocuments').value = '';
+            document.getElementById('mergedFileName').value = '';
+            renderMergeFileList();
+        }
+
+        // Merge Preview Functions
+        let mergeHideTimeout = null;
+        let currentMergePreviewUrl = null;
+
+        function showMergePreview(fileIndex, buttonElement) {
+            // Cancel any pending hide
+            if (mergeHideTimeout) {
+                clearTimeout(mergeHideTimeout);
+                mergeHideTimeout = null;
+            }
+
+            const file = mergeFiles[fileIndex];
+            if (!file) return;
+
+            const preview = document.getElementById('documentPreview');
+            const loader = document.getElementById('previewLoader');
+            const iframe = document.getElementById('previewFrame');
+            const image = document.getElementById('previewImage');
+            const text = document.getElementById('previewText');
+
+            // Reset all preview elements
+            loader.style.display = 'block';
+            loader.textContent = 'Loading preview...';
+            iframe.style.display = 'none';
+            image.style.display = 'none';
+            text.style.display = 'none';
+
+            // Revoke previous URL if exists
+            if (currentMergePreviewUrl) {
+                URL.revokeObjectURL(currentMergePreviewUrl);
+            }
+
+            // Get button position
+            if (buttonElement) {
+                const rect = buttonElement.getBoundingClientRect();
+                const previewWidth = 600;
+                const previewHeight = 500;
+                const viewportWidth = window.innerWidth;
+                const viewportHeight = window.innerHeight;
+
+                let leftPos = rect.left - previewWidth - 30;
+                let topPos = rect.top;
+
+                if (leftPos < 10) {
+                    leftPos = rect.right + 20;
+                }
+                if (leftPos + previewWidth > viewportWidth - 10) {
+                    leftPos = Math.max(10, (viewportWidth - previewWidth) / 2);
+                }
+                if (topPos + previewHeight > viewportHeight - 10) {
+                    topPos = Math.max(10, viewportHeight - previewHeight - 10);
+                }
+
+                preview.style.left = leftPos + 'px';
+                preview.style.top = topPos + 'px';
+            }
+
+            preview.style.display = 'block';
+
+            // Create object URL for the local file
+            currentMergePreviewUrl = URL.createObjectURL(file);
+
+            // Show PDF in iframe
+            iframe.src = currentMergePreviewUrl;
+            iframe.onload = function() {
+                loader.style.display = 'none';
+                iframe.style.display = 'block';
+            };
+            iframe.onerror = function() {
+                loader.textContent = 'Unable to preview this PDF';
+            };
+        }
+
+        function scheduleMergeHidePreview() {
+            mergeHideTimeout = setTimeout(function() {
+                hideMergePreview();
+            }, 300);
+        }
+
+        function cancelMergeHidePreview() {
+            if (mergeHideTimeout) {
+                clearTimeout(mergeHideTimeout);
+                mergeHideTimeout = null;
+            }
+        }
+
+        function hideMergePreview() {
+            const preview = document.getElementById('documentPreview');
+            const iframe = document.getElementById('previewFrame');
+
+            preview.style.display = 'none';
+            iframe.src = '';
+
+            // Revoke the URL to free memory
+            if (currentMergePreviewUrl) {
+                URL.revokeObjectURL(currentMergePreviewUrl);
+                currentMergePreviewUrl = null;
+            }
+        }
+
+        async function mergePDFs() {
+            const { PDFDocument } = PDFLib;
+            const mergedPdf = await PDFDocument.create();
+
+            for (const file of mergeFiles) {
+                const arrayBuffer = await file.arrayBuffer();
+                const pdf = await PDFDocument.load(arrayBuffer);
+                const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+                copiedPages.forEach(page => mergedPdf.addPage(page));
+            }
+
+            return await mergedPdf.save();
+        }
+
+        async function mergeAndDownload() {
+            if (mergeFiles.length < 2) {
+                alert('Please select at least 2 PDF files to merge');
+                return;
+            }
+
+            const progress = document.getElementById('mergeProgress');
+            const progressText = document.getElementById('mergeProgressText');
+            progress.style.display = 'block';
+            progressText.textContent = 'Merging documents...';
+
+            try {
+                const mergedPdfBytes = await mergePDFs();
+                const blob = new Blob([mergedPdfBytes], { type: 'application/pdf' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                const fileName = document.getElementById('mergedFileName').value || 'merged_document';
+                link.download = fileName.endsWith('.pdf') ? fileName : fileName + '.pdf';
+                link.click();
+                URL.revokeObjectURL(url);
+
+                progressText.textContent = '✓ Merge complete! File downloaded.';
+                setTimeout(() => { progress.style.display = 'none'; }, 2000);
+            } catch (error) {
+                alert('Error merging PDFs: ' + error.message);
+                progress.style.display = 'none';
+            }
+        }
+
+        async function mergeAndUpload() {
+            if (mergeFiles.length < 2) {
+                alert('Please select at least 2 PDF files to merge');
+                return;
+            }
+
+            const progress = document.getElementById('mergeProgress');
+            const progressText = document.getElementById('mergeProgressText');
+            progress.style.display = 'block';
+            progressText.textContent = 'Merging documents...';
+
+            try {
+                const mergedPdfBytes = await mergePDFs();
+                progressText.textContent = 'Uploading merged document...';
+
+                const fileName = (document.getElementById('mergedFileName').value || 'merged_document') + '.pdf';
+                const blob = new Blob([mergedPdfBytes], { type: 'application/pdf' });
+                const file = new File([blob], fileName, { type: 'application/pdf' });
+
+                const formData = new FormData();
+                formData.append('documents', file);
+
+                const response = await fetch(`/stage2/${proposalId}/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    progressText.textContent = '✓ Merged document uploaded successfully!';
+                    setTimeout(() => {
+                        clearMergeFiles();
+                        window.location.reload();
+                    }, 1500);
+                } else {
+                    throw new Error(result.error || 'Upload failed');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                progress.style.display = 'none';
+            }
+        }
+        // ========== End Merge Documents Functionality ==========
         const bulkFileInput = document.getElementById('bulkDocuments');
         const bulkFilePreview = document.getElementById('bulkFilePreview');
         const bulkUploadForm = document.getElementById('bulkUploadForm');
@@ -2970,7 +3541,10 @@
         function showTab(category) {
             const allRows = document.querySelectorAll('#filesTableBody tr');
             const tabBtns = document.querySelectorAll('.tab-btn');
-            
+
+            // Save active tab to sessionStorage for restoration after reload
+            sessionStorage.setItem('activeDocTab', category);
+
             // Update active tab button
             tabBtns.forEach(btn => btn.classList.remove('active'));
             event.target.classList.add('active');
@@ -3254,7 +3828,10 @@
             const mainTabBtns = document.querySelectorAll('.main-tab-btn');
             const uploadedSection = document.getElementById('uploadedSection');
             const pendingSection = document.getElementById('pendingSection');
-            
+
+            // Save active main tab to sessionStorage for restoration after reload
+            sessionStorage.setItem('activeMainTab', tabName);
+
             // Update active button
             mainTabBtns.forEach(btn => btn.classList.remove('active'));
             event.target.classList.add('active');
@@ -3628,6 +4205,63 @@
             console.log('Modal appended to body');
         }
 
+        // Dismiss a pending document item (mark as not required)
+        async function dismissPendingItem(category, index, button) {
+            const listItem = button.closest('li');
+            const pendingText = listItem.getAttribute('data-pending-text');
+
+            if (!confirm('Are you sure you want to dismiss this pending item?\n\n"' + pendingText + '"\n\nThis will mark it as not required.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/stage2/${proposalId}/dismiss-pending`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ category, pendingText })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    // Animate removal
+                    listItem.style.transition = 'all 0.3s ease';
+                    listItem.style.opacity = '0';
+                    listItem.style.transform = 'translateX(20px)';
+                    setTimeout(() => {
+                        listItem.remove();
+                        // Update the count in the tab button
+                        updatePendingTabCount(category);
+                    }, 300);
+                } else {
+                    alert('Failed to dismiss: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        // Update the pending tab count after dismissing an item
+        function updatePendingTabCount(category) {
+            const tabBtn = document.querySelector(`.tab-btn-pending[onclick*="'${category}'"]`);
+            if (tabBtn) {
+                const match = tabBtn.textContent.match(/\((\d+)\)/);
+                if (match) {
+                    const newCount = parseInt(match[1]) - 1;
+                    tabBtn.textContent = tabBtn.textContent.replace(/\(\d+\)/, `(${newCount})`);
+                }
+            }
+            // Also update ALL tab count
+            const allTabBtn = document.querySelector('.tab-btn-pending[onclick*="\'all\'"]');
+            if (allTabBtn) {
+                const match = allTabBtn.textContent.match(/\((\d+)\)/);
+                if (match) {
+                    const newCount = parseInt(match[1]) - 1;
+                    allTabBtn.textContent = allTabBtn.textContent.replace(/\(\d+\)/, `(${newCount})`);
+                }
+            }
+        }
+
         // Reprocess ONLY banking documents to extract bank statement details
         async function reprocessBankingDocs() {
             const btn = event.target;
@@ -3691,6 +4325,38 @@
                 tablesDiv.style.display = 'none';
                 button.textContent = 'Show Tables';
                 button.style.background = '#4caf50';
+            }
+        }
+
+        // Extract turnover/GST return documents to get period and year from PDF content
+        async function extractTurnoverDocuments() {
+            const btn = event.target;
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Extracting GST Return Details...';
+
+            try {
+                const response = await fetch(`/stage2/${proposalId}/extract-turnover`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    alert(`✓ ${result.message}`);
+                    window.location.reload();
+                } else {
+                    alert('Extraction failed: ' + result.message);
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
             }
         }
 
@@ -3764,8 +4430,11 @@
 
         // Document preview functions
         let hideTimeout = null;
-        
+        let currentPreviewFile = null; // Track current file for password unlock
+
         function showPreview(filename, originalName, proposalId, buttonElement) {
+            // Store current file info for password modal
+            currentPreviewFile = { filename, originalName, proposalId, buttonElement };
             // Cancel any pending hide
             if (hideTimeout) {
                 clearTimeout(hideTimeout);
@@ -3831,12 +4500,36 @@
             
             // Load appropriate preview based on file type
             if (ext === 'pdf') {
-                // Add PDF viewer parameters to show single page without sidebar
-                iframe.src = fileUrl + '#view=FitH&toolbar=0&navpanes=0&scrollbar=0';
-                iframe.onload = function() {
-                    loader.style.display = 'none';
-                    iframe.style.display = 'block';
-                };
+                // Check if PDF is password protected using pdf-lib
+                checkPdfPasswordProtection(fileUrl).then(isProtected => {
+                    if (isProtected) {
+                        // Show password prompt
+                        loader.style.display = 'none';
+                        text.innerHTML = `<div style="text-align: center; padding: 20px;">
+                            <div style="font-size: 48px; margin-bottom: 16px;">🔒</div>
+                            <strong>Password Protected PDF</strong><br><br>
+                            <button onclick="showPdfPasswordModal()" style="padding: 10px 20px; background: #1976d2; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">
+                                Enter Password to Unlock
+                            </button>
+                        </div>`;
+                        text.style.display = 'block';
+                    } else {
+                        // Normal PDF - show in iframe
+                        iframe.src = fileUrl + '#view=FitH&toolbar=0&navpanes=0&scrollbar=0';
+                        iframe.onload = function() {
+                            loader.style.display = 'none';
+                            iframe.style.display = 'block';
+                        };
+                    }
+                }).catch(err => {
+                    console.error('Error checking PDF:', err);
+                    // Fallback: try to show in iframe anyway
+                    iframe.src = fileUrl + '#view=FitH&toolbar=0&navpanes=0&scrollbar=0';
+                    iframe.onload = function() {
+                        loader.style.display = 'none';
+                        iframe.style.display = 'block';
+                    };
+                });
             } else if (['jpg', 'jpeg', 'png', 'gif'].includes(ext)) {
                 image.src = fileUrl;
                 image.onload = function() {
@@ -3868,11 +4561,121 @@
             const preview = document.getElementById('documentPreview');
             const iframe = document.getElementById('previewFrame');
             const image = document.getElementById('previewImage');
-            
+
             preview.style.display = 'none';
             preview.style.transform = 'none';
             iframe.src = '';
             image.src = '';
+        }
+
+        // Check if PDF is password protected
+        async function checkPdfPasswordProtection(url) {
+            try {
+                const response = await fetch(url);
+                const arrayBuffer = await response.arrayBuffer();
+                const uint8Array = new Uint8Array(arrayBuffer);
+
+                // Check for encryption dictionary in PDF header/trailer
+                // Look for /Encrypt in the PDF content (first 10KB should be enough)
+                const textDecoder = new TextDecoder('latin1');
+                const pdfText = textDecoder.decode(uint8Array.slice(0, Math.min(10000, uint8Array.length)));
+
+                // Check for encryption markers in PDF structure
+                if (pdfText.includes('/Encrypt')) {
+                    return true;
+                }
+
+                // Also check near the end of PDF for xref/trailer with Encrypt
+                if (uint8Array.length > 10000) {
+                    const tailText = textDecoder.decode(uint8Array.slice(-5000));
+                    if (tailText.includes('/Encrypt')) {
+                        return true;
+                    }
+                }
+
+                return false;
+            } catch (error) {
+                console.error('Error checking PDF protection:', error);
+                return false;
+            }
+        }
+
+        // PDF Password Modal functions
+        function showPdfPasswordModal() {
+            const modal = document.getElementById('pdfPasswordModal');
+            const input = document.getElementById('pdfPasswordInput');
+            const errorDiv = document.getElementById('pdfPasswordError');
+
+            modal.style.display = 'flex';
+            errorDiv.style.display = 'none';
+            input.value = '';
+            input.focus();
+        }
+
+        function closePdfPasswordModal() {
+            const modal = document.getElementById('pdfPasswordModal');
+            modal.style.display = 'none';
+        }
+
+        async function decryptPdfWithPassword() {
+            const input = document.getElementById('pdfPasswordInput');
+            const errorDiv = document.getElementById('pdfPasswordError');
+            const btn = document.getElementById('decryptPdfBtn');
+            const password = input.value.trim();
+
+            if (!password) {
+                errorDiv.textContent = 'Please enter a password';
+                errorDiv.style.display = 'block';
+                return;
+            }
+
+            if (!currentPreviewFile) {
+                errorDiv.textContent = 'No file selected';
+                errorDiv.style.display = 'block';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Unlocking...';
+            errorDiv.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/decrypt-pdf', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        proposalId: currentPreviewFile.proposalId,
+                        filename: currentPreviewFile.filename,
+                        password: password
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    closePdfPasswordModal();
+                    // Refresh the preview with decrypted PDF
+                    hidePreview();
+                    setTimeout(() => {
+                        showPreview(
+                            currentPreviewFile.filename,
+                            currentPreviewFile.originalName,
+                            currentPreviewFile.proposalId,
+                            currentPreviewFile.buttonElement
+                        );
+                    }, 100);
+                    alert('PDF unlocked successfully! The file is now saved without password protection.');
+                } else {
+                    errorDiv.textContent = result.error || 'Failed to unlock PDF';
+                    errorDiv.style.display = 'block';
+                }
+            } catch (error) {
+                errorDiv.textContent = 'Error: ' + error.message;
+                errorDiv.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Unlock PDF';
+            }
         }
 
         // Classification dropdown functions
@@ -3971,8 +4774,78 @@
             populateClassificationDropdowns();
             initTableAutoScroll();
             restoreTableScrollPosition();
+            restoreActiveTabs();
             autoSaveEmiVerification();
         });
+
+        // Restore active tabs after page reload
+        function restoreActiveTabs() {
+            // Restore main tab (uploaded/pending)
+            const savedMainTab = sessionStorage.getItem('activeMainTab');
+            if (savedMainTab) {
+                const mainTabBtns = document.querySelectorAll('.main-tab-btn');
+                const uploadedSection = document.getElementById('uploadedSection');
+                const pendingSection = document.getElementById('pendingSection');
+
+                mainTabBtns.forEach(btn => btn.classList.remove('active'));
+
+                if (savedMainTab === 'pending') {
+                    uploadedSection.style.display = 'none';
+                    pendingSection.style.display = 'block';
+                    mainTabBtns.forEach(btn => {
+                        if (btn.textContent.includes('Pending')) btn.classList.add('active');
+                    });
+                } else {
+                    uploadedSection.style.display = 'block';
+                    pendingSection.style.display = 'none';
+                    mainTabBtns.forEach(btn => {
+                        if (btn.textContent.includes('Uploaded')) btn.classList.add('active');
+                    });
+                }
+            }
+
+            // Restore document category tab (all/unclassified/personalId/etc.)
+            const savedDocTab = sessionStorage.getItem('activeDocTab');
+            if (savedDocTab) {
+                const tabBtns = document.querySelectorAll('.tab-btn');
+                const allRows = document.querySelectorAll('#filesTableBody tr');
+
+                // Update active tab button
+                tabBtns.forEach(btn => {
+                    btn.classList.remove('active');
+                    // Match tab by checking onclick attribute
+                    const onclickAttr = btn.getAttribute('onclick') || '';
+                    if (onclickAttr.includes(`'${savedDocTab}'`)) {
+                        btn.classList.add('active');
+                    }
+                });
+
+                // Filter rows by category
+                if (savedDocTab === 'all') {
+                    allRows.forEach(row => row.style.display = '');
+                } else if (savedDocTab === 'unclassified') {
+                    allRows.forEach(row => {
+                        const rowClassification = row.getAttribute('data-classification');
+                        if (!rowClassification || rowClassification.trim() === '') {
+                            row.style.display = '';
+                        } else {
+                            row.style.display = 'none';
+                        }
+                    });
+                } else {
+                    allRows.forEach(row => {
+                        const rowCategory = row.getAttribute('data-category');
+                        if (rowCategory === savedDocTab) {
+                            row.style.display = '';
+                        } else {
+                            row.style.display = 'none';
+                        }
+                    });
+                }
+
+                updateBulkActions();
+            }
+        }
 
         // Auto-save EMI verification results to database
         async function autoSaveEmiVerification() {

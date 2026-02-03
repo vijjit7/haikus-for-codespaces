@@ -20,6 +20,7 @@ const axios = require('axios');
 const { spawn } = require('child_process');
 const FormData = require('form-data');
 const xlsx = require('xlsx');
+const { PDFDocument } = require('pdf-lib');
 
 // Claude Agent API Endpoint
 app.post('/api/claude', (req, res) => {
@@ -158,6 +159,12 @@ function getRowValue(row, ...possibleNames) {
 // Helper function to process debt profile Excel data
 function processDebtProfileData(data, proposalId) {
   return data.map((row, idx) => {
+    // Skip if row is essentially empty
+    const bank = getRowValue(row, 'Bank Name', 'Bank', 'Lender', 'Financial Institution', 'bank name');
+    const loanAmount = getRowValue(row, 'Loan Amount', 'Amount', 'Sanctioned Amount', 'loan amount');
+    if (!bank && !loanAmount) {
+      return null; // Will be filtered out below
+    }
     // Get values using flexible matching
     const emiStartDate = getRowValue(row, 'EMI Start Date', 'EMI Start', 'Start Date', 'emi start date');
     const tenure = getRowValue(row, 'Tenure', 'Loan Tenure', 'Tenure (Months)', 'tenure');
@@ -183,7 +190,7 @@ function processDebtProfileData(data, proposalId) {
       percentTenureCompleted: percentCompleted,
       proposalId: proposalId || ''
     };
-  });
+  }).filter(item => item !== null);
 }
 
 // Route to upload Excel and store debt profile data
@@ -260,7 +267,18 @@ function findHeaderRowAndParseExcel(sheet) {
     });
 
     // Only add if there's meaningful data (at least has a loan amount or bank name)
-    if (obj['loan amount'] || obj[' loan amount'] || obj['bank name'] || obj['bank'] || obj['emi']) {
+    // Use case-insensitive check
+    const objLower = {};
+    Object.keys(obj).forEach(k => {
+      objLower[k.toLowerCase().trim()] = obj[k];
+    });
+
+    const hasData = objLower['loan amount'] || objLower['loanamount'] || objLower['amount'] ||
+                    objLower['bank name'] || objLower['bankname'] || objLower['bank'] ||
+                    objLower['emi'] || objLower['monthly emi'] ||
+                    objLower['lender'] || objLower['financial institution'];
+
+    if (hasData) {
       result.push(obj);
     }
   }
@@ -298,11 +316,29 @@ app.post('/stage2/:proposalId/extract-debt-profile', async (req, res) => {
           const sheetName = workbook.SheetNames[0];
           const sheet = workbook.Sheets[sheetName];
 
+          console.log('\n========================================');
+          console.log('📊 PROCESSING EXCEL FILE:', doc.originalName || doc.filename);
+          console.log('Sheet name:', sheetName);
+
           // Use smart header detection
           const data = findHeaderRowAndParseExcel(sheet);
-          console.log('Parsed Excel data:', JSON.stringify(data.slice(0, 2), null, 2));
+          console.log('Rows found after parsing:', data.length);
+          if (data.length > 0) {
+            console.log('Column headers:', Object.keys(data[0]));
+            console.log('First row sample:', JSON.stringify(data[0], null, 2));
+          } else {
+            // Try fallback: read raw data to see what's there
+            const rawData = xlsx.utils.sheet_to_json(sheet, { defval: '', header: 1 });
+            console.log('Raw data rows:', rawData.length);
+            if (rawData.length > 0) {
+              console.log('First 5 raw rows:');
+              rawData.slice(0, 5).forEach((row, i) => console.log(`Row ${i}:`, row));
+            }
+          }
+          console.log('========================================\n');
 
           const mappedData = processDebtProfileData(data, proposalId);
+          console.log('Mapped debt profiles:', mappedData.length);
           allDebtProfiles = allDebtProfiles.concat(mappedData);
         } catch (excelErr) {
           console.error(`Error reading Excel file ${doc.filename}:`, excelErr);
@@ -1501,6 +1537,48 @@ Respond ONLY with valid JSON in this exact format:
     }
   ]
 }`;
+    } else if (documentType === 'private-limited') {
+      prompt = `You are a document extraction AI. Extract the following from this Private Limited company incorporation document (MOA/AOA/Certificate of Incorporation):
+
+1. Company Name: The full registered name of the company
+2. CIN (Corporate Identification Number): 21-character alphanumeric code starting with L/U
+3. Date of Incorporation: When the company was registered
+4. Shareholders/Members: List of all shareholders with their shareholding details
+5. Directors: List of all directors with their DIN (Director Identification Number - 8 digits)
+
+Document Text:
+${text.substring(0, 12000)}
+
+${tables.length > 0 ? `\n\nDetected Tables:\n${JSON.stringify(tables, null, 2)}` : ''}
+
+IMPORTANT INSTRUCTIONS:
+- Extract ONLY actual person names as shareholders and directors (not clauses or legal text)
+- A valid person name typically has 2-4 words, starts with capital letter, contains only alphabets and spaces
+- DIN is always exactly 8 digits
+- Shareholders may have share counts or percentages mentioned
+- Ignore text that looks like legal clauses, article numbers, or document headings
+- Directors are actual people who serve on the board, NOT random text
+
+Respond ONLY with valid JSON in this exact format:
+{
+  "companyName": "Company Name Private Limited" or null,
+  "cin": "U12345MH2020PTC123456" or null,
+  "dateOfIncorporation": "DD/MM/YYYY" or null,
+  "shareholders": [
+    {
+      "name": "Full Name",
+      "shares": "1000" or null,
+      "percentage": "50" or null
+    }
+  ],
+  "directors": [
+    {
+      "name": "Full Name",
+      "din": "12345678" or null,
+      "designation": "Director" or "Managing Director" etc.
+    }
+  ]
+}`;
     } else if (documentType === 'bank-statement') {
       prompt = `You are a document extraction AI. Extract the following from this bank statement:
 
@@ -2050,6 +2128,148 @@ function extractPrivateLimitedDetails(fullText, tables = []) {
 
   console.log('Extracting Private Limited details from text length:', fullText.length);
 
+  // SPECIAL HANDLING: Line-by-line format (common in List of Directors & Shareholders PDFs)
+  // Format: Each field on separate line - Name, then DIN, then Designation
+  const lines = fullText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+  // Check if this is a directors/shareholders list document
+  const hasDirectorsList = fullText.includes('LIST OF DIRECTORS') || fullText.includes('Name of the Director');
+  const hasShareholdersList = fullText.includes('SHAREHOLDING PATTERN') || fullText.includes('Name of the Shareholder');
+
+  if (hasDirectorsList || hasShareholdersList) {
+    console.log('Detected structured Directors/Shareholders list format');
+
+    // Find director entries - look for 8-digit DIN and get name from previous line
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Check if this line is a DIN (8 digits)
+      if (/^\d{8}$/.test(line)) {
+        const din = line;
+        // Name should be in previous line
+        const nameLine = lines[i - 1];
+        // Designation might be in next lines
+        let designation = 'Director';
+        if (i + 1 < lines.length) {
+          const nextLine = lines[i + 1];
+          if (/chairman|managing|director|whole\s*time|executive/i.test(nextLine)) {
+            designation = nextLine;
+            // Check if designation continues on next line
+            if (i + 2 < lines.length && /director/i.test(lines[i + 2]) && !/\d{8}/.test(lines[i + 2])) {
+              designation += ' ' + lines[i + 2];
+            }
+          }
+        }
+
+        if (nameLine && !/^\d+$/.test(nameLine) && !/S\.?No|DIN|Designation|Name of/i.test(nameLine)) {
+          const cleanName = nameLine.trim();
+          if (cleanName.length > 2 && cleanName.length < 60) {
+            details.directors.push({
+              name: cleanName,
+              din: din,
+              designation: designation.trim()
+            });
+            console.log(`Found director (line format): ${cleanName} (DIN: ${din}, ${designation.trim()})`);
+          }
+        }
+      }
+    }
+
+    // Find shareholder entries - look for share counts (numbers with commas or plain numbers)
+    // Format: Name, then Shares, then Value, then Percentage
+    let inShareholderSection = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      if (/SHAREHOLDING PATTERN|Name of the Shareholder/i.test(line)) {
+        inShareholderSection = true;
+        continue;
+      }
+
+      if (inShareholderSection) {
+        // Look for share count pattern (e.g., "15,000" or "15000" or just "1")
+        if (/^[\d,]+$/.test(line) && !lines[i-1]?.match(/^\d+$/)) {
+          const shares = line.replace(/,/g, '');
+          // Name should be in previous line (skip if it's a serial number)
+          let nameLineIdx = i - 1;
+          while (nameLineIdx >= 0 && /^\d+$/.test(lines[nameLineIdx])) {
+            nameLineIdx--;
+          }
+          const nameLine = lines[nameLineIdx];
+
+          // Percentage might be a few lines ahead
+          let percentage = null;
+          for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+            if (/^\d+\.?\d*$/.test(lines[j]) && parseFloat(lines[j]) <= 100) {
+              percentage = lines[j];
+              break;
+            }
+          }
+
+          if (nameLine && !/S\.?No|Shares|Held|Value|Percentage|Name of/i.test(nameLine)) {
+            const cleanName = nameLine.trim();
+            // Check if this shareholder already exists
+            const exists = details.shareholders.some(s => s.name.toLowerCase() === cleanName.toLowerCase());
+            if (!exists && cleanName.length > 2 && cleanName.length < 60) {
+              details.shareholders.push({
+                name: cleanName,
+                shares: shares,
+                percentage: percentage
+              });
+              console.log(`Found shareholder (line format): ${cleanName} (${shares} shares, ${percentage}%)`);
+            }
+          }
+        }
+      }
+    }
+
+    // If we found data in structured format, return early
+    if (details.directors.length > 0 || details.shareholders.length > 0) {
+      console.log('Extraction from structured format complete. Directors:', details.directors.length, 'Shareholders:', details.shareholders.length);
+      return details;
+    }
+  }
+
+  // Helper function to validate if a string looks like a real person name
+  function isValidPersonName(name) {
+    if (!name || name.length < 3 || name.length > 50) return false;
+
+    // Must have at least 2 words for a full name (first + last)
+    const words = name.trim().split(/\s+/);
+    if (words.length < 1 || words.length > 5) return false;
+
+    // Each word should be a proper name (starts with capital, mostly letters)
+    for (const word of words) {
+      if (!/^[A-Z][a-zA-Z]*$/.test(word)) return false;
+    }
+
+    // Reject common legal terms and clauses
+    const invalidTerms = [
+      'share', 'capital', 'rights', 'provided', 'company', 'director', 'board',
+      'meeting', 'shall', 'may', 'article', 'clause', 'section', 'memorandum',
+      'association', 'resolution', 'business', 'object', 'liability', 'limited',
+      'private', 'registered', 'office', 'subscriber', 'witness', 'authorized',
+      'issued', 'paid', 'ordinary', 'preference', 'equity', 'transfer', 'transmission',
+      'general', 'extraordinary', 'annual', 'statutory', 'dividend', 'bonus',
+      'appointment', 'removal', 'resignation', 'vacation', 'qualification',
+      'remuneration', 'power', 'duty', 'indemnity', 'seal', 'notice', 'winding',
+      'dissolution', 'guarantee', 'subscription', 'stamp', 'execution', 'schedule'
+    ];
+
+    const lowerName = name.toLowerCase();
+    for (const term of invalidTerms) {
+      if (lowerName.includes(term)) return false;
+    }
+
+    // Reject if it's all uppercase (likely a heading)
+    if (name === name.toUpperCase() && name.length > 10) return false;
+
+    // Reject if it contains numbers (except in DIN context)
+    if (/\d/.test(name)) return false;
+
+    return true;
+  }
+
   // Extract company name
   const companyNamePatterns = [
     /(?:company\s+name|name\s+of\s+(?:the\s+)?company)[\s:]+([A-Z][A-Za-z\s]+(?:PRIVATE|PVT\.?)\s*(?:LIMITED|LTD\.?))/gi,
@@ -2065,14 +2285,12 @@ function extractPrivateLimitedDetails(fullText, tables = []) {
     }
   }
 
-  // Extract shareholders from text
+  // Extract shareholders from text - more specific patterns
   const shareholderPatterns = [
-    // Pattern: "Name - X shares" or "Name holding X shares"
-    /([A-Z][a-zA-Z\s]+?)(?:\s*[-–]\s*|\s+holding\s+|\s+holds\s+)(\d+(?:,\d+)?)\s*(?:equity\s+)?shares/gi,
+    // Pattern: "Name holding X shares" or "Name - X shares"
+    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})(?:\s*[-–]\s*|\s+holding\s+|\s+holds\s+)(\d+(?:,\d+)?)\s*(?:equity\s+)?shares/gi,
     // Pattern: "X shares held by Name"
-    /(\d+(?:,\d+)?)\s*(?:equity\s+)?shares?\s+(?:held\s+by|of)\s+([A-Z][a-zA-Z\s]+)/gi,
-    // Pattern from table: Name | Shares | Percentage
-    /([A-Z][a-zA-Z\s]+?)\s+(\d+(?:,\d+)?)\s+(\d+(?:\.\d+)?)\s*%/g
+    /(\d+(?:,\d+)?)\s*(?:equity\s+)?shares?\s+(?:held\s+by|of)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/gi
   ];
 
   const foundShareholders = new Map();
@@ -2082,7 +2300,6 @@ function extractPrivateLimitedDetails(fullText, tables = []) {
     for (const match of matches) {
       let name, shares;
       if (match[1] && !isNaN(parseInt(match[1].replace(/,/g, '')))) {
-        // Pattern where shares come first
         shares = match[1].replace(/,/g, '');
         name = match[2];
       } else {
@@ -2090,14 +2307,47 @@ function extractPrivateLimitedDetails(fullText, tables = []) {
         shares = match[2] ? match[2].replace(/,/g, '') : null;
       }
 
-      if (name && name.length > 2 && name.length < 100) {
-        const cleanName = name.trim().replace(/\s+/g, ' ');
-        if (!foundShareholders.has(cleanName.toLowerCase())) {
-          foundShareholders.set(cleanName.toLowerCase(), {
-            name: cleanName,
-            shares: shares || '-',
-            percentage: match[3] || null
+      const cleanName = name ? name.trim().replace(/\s+/g, ' ') : '';
+      if (isValidPersonName(cleanName) && !foundShareholders.has(cleanName.toLowerCase())) {
+        foundShareholders.set(cleanName.toLowerCase(), {
+          name: cleanName,
+          shares: shares || '-',
+          percentage: match[3] || null
+        });
+      }
+    }
+  }
+
+  // For messy OCR text: Find share counts and look for names nearby
+  // Look for patterns like "9,999" or "10,000" shares
+  const sharePatterns = [
+    /(\d{1,3}(?:,\d{3})*)\s*(?:Equity\s*)?Shares?/gi,
+    /(\d+)\s*\(\s*[A-Za-z\s]+\)\s*(?:Equity\s*)?Shares?/gi
+  ];
+
+  for (const sharePattern of sharePatterns) {
+    const shareMatches = fullText.matchAll(sharePattern);
+    for (const shareMatch of shareMatches) {
+      const shares = shareMatch[1].replace(/,/g, '');
+      const shareIndex = shareMatch.index;
+
+      // Look for names within 300 chars before the share count
+      const contextBefore = fullText.substring(Math.max(0, shareIndex - 300), shareIndex);
+
+      // Look for capitalized names (2-4 words, each starting with capital)
+      const namePatternStrict = /\b([A-Z][A-Z]+(?:\s+[A-Z][A-Z]+){1,3})\b/g;
+
+      const namesBefore = [...contextBefore.matchAll(namePatternStrict)];
+      for (const nm of namesBefore.reverse()) {
+        const candidateName = nm[1].split(/\s+/).map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+        if (isValidPersonName(candidateName) && !foundShareholders.has(candidateName.toLowerCase())) {
+          foundShareholders.set(candidateName.toLowerCase(), {
+            name: candidateName,
+            shares: shares,
+            percentage: null
           });
+          console.log(`Found shareholder from shares context: ${candidateName} (${shares} shares)`);
+          break;
         }
       }
     }
@@ -2106,16 +2356,14 @@ function extractPrivateLimitedDetails(fullText, tables = []) {
   details.shareholders = Array.from(foundShareholders.values());
   console.log('Found shareholders:', details.shareholders.length);
 
-  // Extract directors from text
+  // Extract directors from text - focus on DIN pattern which is most reliable
   const directorPatterns = [
+    // Pattern: "Name (DIN: XXXXXXXX)" or "Name DIN XXXXXXXX"
+    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s*\(?DIN[\s:]*(\d{8})\)?/gi,
     // Pattern: "DIN: XXXXXXXX Name"
-    /DIN[\s:]+(\d{8})\s+([A-Z][a-zA-Z\s]+?)(?:\s+(?:Director|Managing|Whole|Executive))/gi,
-    // Pattern: "Name (DIN: XXXXXXXX)"
-    /([A-Z][a-zA-Z\s]+?)\s*\(?\s*DIN[\s:]+(\d{8})\s*\)?/gi,
-    // Pattern: "Director Name" or "Managing Director Name"
-    /(?:Director|Managing\s+Director|Whole\s+Time\s+Director)[\s:]+([A-Z][a-zA-Z\s]+?)(?:\s*[-–,]|\s+DIN)/gi,
-    // Pattern from table with DIN
-    /([A-Z][a-zA-Z\s]+?)\s+(\d{8})\s+(Director|Managing|Whole|Executive)/gi
+    /DIN[\s:]*(\d{8})[\s,]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/gi,
+    // Pattern from table: Name | DIN | Designation
+    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s+(\d{8})\s+(?:Director|Managing Director|Whole Time Director)/gi
   ];
 
   const foundDirectors = new Map();
@@ -2123,29 +2371,75 @@ function extractPrivateLimitedDetails(fullText, tables = []) {
   for (const pattern of directorPatterns) {
     const matches = fullText.matchAll(pattern);
     for (const match of matches) {
-      let name, din, designation;
+      let name, din;
 
       // Check if first group is DIN (8 digits)
       if (match[1] && /^\d{8}$/.test(match[1])) {
         din = match[1];
         name = match[2];
-        designation = match[3] || 'Director';
       } else {
         name = match[1];
         din = match[2] && /^\d{8}$/.test(match[2]) ? match[2] : null;
-        designation = match[3] || 'Director';
       }
 
-      if (name && name.length > 2 && name.length < 100) {
-        const cleanName = name.trim().replace(/\s+/g, ' ');
-        if (!foundDirectors.has(cleanName.toLowerCase())) {
-          foundDirectors.set(cleanName.toLowerCase(), {
-            name: cleanName,
-            din: din || '-',
-            designation: designation || 'Director'
-          });
+      const cleanName = name ? name.trim().replace(/\s+/g, ' ') : '';
+      if (isValidPersonName(cleanName) && !foundDirectors.has(cleanName.toLowerCase())) {
+        foundDirectors.set(cleanName.toLowerCase(), {
+          name: cleanName,
+          din: din || '-',
+          designation: 'Director'
+        });
+      }
+    }
+  }
+
+  // For messy OCR text: Find all 8-digit DIN numbers and look for names nearby
+  const dinMatches = fullText.matchAll(/(\d{8})/g);
+  for (const dinMatch of dinMatches) {
+    const din = dinMatch[1];
+    // Skip if this DIN is already found
+    const existingDirector = Array.from(foundDirectors.values()).find(d => d.din === din);
+    if (existingDirector) continue;
+
+    // Look for names within 200 chars before/after the DIN
+    const dinIndex = dinMatch.index;
+    const contextBefore = fullText.substring(Math.max(0, dinIndex - 200), dinIndex);
+    const contextAfter = fullText.substring(dinIndex + 8, Math.min(fullText.length, dinIndex + 208));
+
+    // Look for capitalized names (2-4 words, each starting with capital)
+    const namePatternStrict = /\b([A-Z][A-Z]+(?:\s+[A-Z][A-Z]+){1,3})\b/g;
+
+    let foundName = null;
+
+    // Check context before DIN
+    const namesBefore = [...contextBefore.matchAll(namePatternStrict)];
+    for (const nm of namesBefore.reverse()) {
+      const candidateName = nm[1].split(/\s+/).map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+      if (isValidPersonName(candidateName)) {
+        foundName = candidateName;
+        break;
+      }
+    }
+
+    // Check context after DIN if not found
+    if (!foundName) {
+      const namesAfter = [...contextAfter.matchAll(namePatternStrict)];
+      for (const nm of namesAfter) {
+        const candidateName = nm[1].split(/\s+/).map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+        if (isValidPersonName(candidateName)) {
+          foundName = candidateName;
+          break;
         }
       }
+    }
+
+    if (foundName && !foundDirectors.has(foundName.toLowerCase())) {
+      foundDirectors.set(foundName.toLowerCase(), {
+        name: foundName,
+        din: din,
+        designation: 'Director'
+      });
+      console.log(`Found director from DIN context: ${foundName} (DIN: ${din})`);
     }
   }
 
@@ -2801,14 +3095,72 @@ app.post('/stage2/:proposalId/delete-document', (req, res) => {
 app.get('/uploads/:proposalId/:filename', (req, res) => {
   const { proposalId, filename } = req.params;
   const filepath = path.join(__dirname, 'uploads', proposalId, filename);
-  
+
   // Check if file exists
   if (!fs.existsSync(filepath)) {
     return res.status(404).send('File not found');
   }
-  
+
   // Send the file
   res.sendFile(filepath);
+});
+
+// Decrypt password-protected PDF and save without password
+app.post('/api/decrypt-pdf', async (req, res) => {
+  try {
+    const { proposalId, filename, password } = req.body;
+
+    if (!proposalId || !filename || !password) {
+      return res.status(400).json({ success: false, error: 'Missing required fields' });
+    }
+
+    const filepath = path.join(__dirname, 'uploads', proposalId, filename);
+
+    if (!fs.existsSync(filepath)) {
+      return res.status(404).json({ success: false, error: 'File not found' });
+    }
+
+    // Use Python script with PyMuPDF for better PDF decryption support
+    const pythonScript = path.join(__dirname, 'decrypt_pdf.py');
+
+    return new Promise((resolve, reject) => {
+      const pythonProcess = spawn('python', [pythonScript, filepath, password]);
+
+      let stdout = '';
+      let stderr = '';
+
+      pythonProcess.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      pythonProcess.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      pythonProcess.on('close', (code) => {
+        if (code === 0) {
+          res.json({ success: true, message: 'PDF decrypted successfully' });
+        } else {
+          // Check for specific error messages
+          const errorMsg = stderr.trim();
+          if (errorMsg.includes('Incorrect password')) {
+            res.status(401).json({ success: false, error: 'Incorrect password' });
+          } else {
+            res.status(500).json({ success: false, error: errorMsg || 'Failed to decrypt PDF' });
+          }
+        }
+        resolve();
+      });
+
+      pythonProcess.on('error', (err) => {
+        res.status(500).json({ success: false, error: 'Failed to run decryption: ' + err.message });
+        resolve();
+      });
+    });
+  } catch (error) {
+    console.error('PDF decryption error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to decrypt PDF' });
+  }
 });
 
 app.post('/stage2/:proposalId/categorize', (req, res) => {
@@ -2893,18 +3245,30 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
     // Process each incorporation document
     for (let i = 0; i < proposal.documents.length; i++) {
       const doc = proposal.documents[i];
-      
+
       if (doc.category === 'incorporation') {
         const filePath = path.join(proposalDir, doc.filename);
-        
+
         if (fs.existsSync(filePath) && doc.originalName.toLowerCase().endsWith('.pdf')) {
+          // For Private Limited companies, only process "List of Shareholders" documents
+          if (proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') {
+            const classification = (doc.classification || '').toLowerCase();
+            const isShareholderDoc = classification.includes('list of shareholders');
+
+            if (!isShareholderDoc) {
+              console.log(`⏭️ Skipping ${doc.originalName} - not a List of Shareholders document (classification: ${doc.classification || 'none'})`);
+              continue;
+            }
+          }
+
           try {
             // Use table-aware extraction for reprocessing
             const pdfResult = await extractPDFWithTableDetection(filePath);
             const fullText = pdfResult.text;
-            
+
             console.log('\n========================================');
             console.log('📄 EXTRACTING:', doc.originalName);
+            console.log('Classification:', doc.classification || 'None');
             console.log('========================================');
             console.log('Method:', pdfResult.method);
             console.log('Text length:', fullText.length);
@@ -2912,7 +3276,7 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
             console.log('\n--- EXTRACTED TEXT START ---');
             console.log(fullText);
             console.log('--- EXTRACTED TEXT END ---\n');
-            
+
             if (pdfResult.tables && pdfResult.tables.length > 0) {
               console.log('📊 TABLES DETECTED:');
               pdfResult.tables.forEach((table, idx) => {
@@ -2923,7 +3287,7 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
               });
               console.log('');
             }
-            
+
             let extractedDetails;
             let rawExtraction = {
               textLength: fullText.length,
@@ -2935,9 +3299,34 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
             // Check applicant type and use appropriate extraction
             if (proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') {
               // Extract shareholders and directors for Private Limited companies
-              console.log('📊 Extracting Private Limited company details...');
-              extractedDetails = extractPrivateLimitedDetails(fullText, pdfResult.tables || []);
-              rawExtraction.method = 'Private Limited Extraction';
+              console.log('📊 Extracting Private Limited company details from List of Shareholders document...');
+
+              // Try Document AI first for better accuracy
+              try {
+                console.log('🤖 Attempting Document AI extraction for Private Limited...');
+                const aiResult = await extractWithDocumentAI(fullText, 'private-limited', pdfResult.tables || []);
+
+                if (aiResult.success && aiResult.data) {
+                  console.log('✓ Document AI extraction successful for Private Limited');
+                  extractedDetails = {
+                    companyName: aiResult.data.companyName || null,
+                    cin: aiResult.data.cin || null,
+                    dateOfIncorporation: aiResult.data.dateOfIncorporation || null,
+                    shareholders: aiResult.data.shareholders || [],
+                    directors: aiResult.data.directors || []
+                  };
+                  rawExtraction.method = 'Document AI (Private Limited)';
+                } else {
+                  console.log('⚠ Document AI failed, using fallback extraction');
+                  extractedDetails = extractPrivateLimitedDetails(fullText, pdfResult.tables || []);
+                  rawExtraction.method = 'Pattern Matching (Private Limited)';
+                }
+              } catch (aiErr) {
+                console.log('⚠ Document AI error, using fallback:', aiErr.message);
+                extractedDetails = extractPrivateLimitedDetails(fullText, pdfResult.tables || []);
+                rawExtraction.method = 'Pattern Matching (Private Limited)';
+              }
+
               rawExtraction.rawResponse = extractedDetails;
               console.log('Private Limited Extracted Data:', JSON.stringify(extractedDetails, null, 2));
             } else {
@@ -2952,7 +3341,8 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
             console.log('\n📋 FINAL EXTRACTED DETAILS:');
             console.log(JSON.stringify(extractedDetails, null, 2));
             console.log('========================================\n');
-            
+
+            proposal.documents[i].extractedText = fullText; // Save extracted text
             proposal.documents[i].extractedDetails = extractedDetails;
             proposal.documents[i].pages = pdfResult.numPages; // Save page count
             
@@ -2987,6 +3377,39 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
     });
   } catch (error) {
     console.error('Reprocess error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Dismiss a pending document item (mark as not required)
+app.post('/stage2/:proposalId/dismiss-pending', (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const { category, pendingText } = req.body;
+
+    const proposal = getProposalById(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ success: false, error: 'Proposal not found' });
+    }
+
+    // Initialize dismissedPendingDocs if not exists
+    if (!proposal.dismissedPendingDocs) {
+      proposal.dismissedPendingDocs = [];
+    }
+
+    // Add to dismissed list
+    proposal.dismissedPendingDocs.push({
+      category,
+      text: pendingText,
+      dismissedAt: new Date().toISOString()
+    });
+
+    // Save proposal
+    saveProposal(proposal);
+
+    res.json({ success: true, message: 'Pending item dismissed' });
+  } catch (error) {
+    console.error('Error dismissing pending item:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -3056,10 +3479,42 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
               bankStatementDetails = extractBankStatementDetailsFallback(fullText);
             }
             
+            // Fallback: Try to extract dates from filename if still N/A
+            if (bankStatementDetails.periodFrom === 'N/A' || bankStatementDetails.periodTo === 'N/A') {
+              const filename = doc.originalName || '';
+              // Match patterns like: dd-mm-yyyy, dd/mm/yyyy, dd.mm.yyyy
+              const datePatterns = [
+                /(\d{1,2}[-\/\.]\d{1,2}[-\/\.]\d{2,4})\s*(?:to|TO|-)\s*(\d{1,2}[-\/\.]\d{1,2}[-\/\.]\d{2,4})/,
+                /(\d{1,2}[-\/\.]\d{1,2}[-\/\.]\d{2,4}).*?(\d{1,2}[-\/\.]\d{1,2}[-\/\.]\d{2,4})/
+              ];
+
+              for (const pattern of datePatterns) {
+                const match = filename.match(pattern);
+                if (match) {
+                  // Normalize date format to dd/mm/yyyy
+                  const normalizeDate = (dateStr) => {
+                    const parts = dateStr.split(/[-\/\.]/);
+                    if (parts.length === 3) {
+                      let [d, m, y] = parts;
+                      if (y.length === 2) y = '20' + y;
+                      return `${d.padStart(2, '0')}/${m.padStart(2, '0')}/${y}`;
+                    }
+                    return dateStr;
+                  };
+
+                  bankStatementDetails.periodFrom = normalizeDate(match[1]);
+                  bankStatementDetails.periodTo = normalizeDate(match[2]);
+                  bankStatementDetails.period = `${bankStatementDetails.periodFrom} - ${bankStatementDetails.periodTo}`;
+                  console.log('✓ Extracted dates from filename:', bankStatementDetails.period);
+                  break;
+                }
+              }
+            }
+
             console.log('\n📋 FINAL EXTRACTED BANK DETAILS:');
             console.log(JSON.stringify(bankStatementDetails, null, 2));
             console.log('========================================\n');
-            
+
             proposal.documents[i].extractedDetails = bankStatementDetails;
             proposal.documents[i].extractedText = fullText; // Save full text for EMI verification
             proposal.documents[i].pages = pdfResult.numPages;
@@ -3228,18 +3683,83 @@ function extractBankStatementDetailsFallback(text) {
     periodTo: 'N/A',
     period: 'N/A'
   };
-  
-  // Bank name patterns
-  const bankPatterns = [
-    /(?:HDFC|ICICI|SBI|STATE BANK|AXIS|KOTAK|PUNJAB NATIONAL|CANARA|BANK OF BARODA|INDIAN OVERSEAS|FEDERAL|BANDHAN|KARUR VYSYA|SOUTH INDIAN|KARNATAKA|UNION|CENTRAL|INDUSIND|YES|RBL|IDBI|DCB|CITY UNION|TMB|TAMILNAD MERCANTILE)\s*BANK/i,
-    /Bank\s+Name[:\s]+([A-Za-z\s]+(?:Bank|BANK))/i
+
+  // Only look in the first 800 characters for bank name (letterhead area only)
+  // This avoids matching bank names in transaction descriptions or opening balance sections
+  const headerText = text.substring(0, 800);
+
+  // Exclude text that appears to be transaction-related
+  // Remove lines containing transaction keywords before searching for bank name
+  const transactionKeywords = /(?:NEFT|RTGS|IMPS|UPI|TRANSFER|TRF|TO\s+[A-Z]+\s+BANK|FROM\s+[A-Z]+\s+BANK|OPENING\s*BALANCE|CLOSING\s*BALANCE|DEBIT|CREDIT|WITHDRAWAL|DEPOSIT)/i;
+  const cleanHeaderLines = headerText.split('\n')
+    .filter(line => !transactionKeywords.test(line))
+    .join('\n');
+
+  // Bank name patterns - ordered by specificity (longer names first to avoid partial matches)
+  const bankNames = [
+    'KOTAK MAHINDRA BANK', 'STATE BANK OF INDIA', 'PUNJAB NATIONAL BANK',
+    'INDIAN OVERSEAS BANK', 'TAMILNAD MERCANTILE BANK', 'BANK OF BARODA',
+    'SOUTH INDIAN BANK', 'KARUR VYSYA BANK', 'KARNATAKA BANK',
+    'CITY UNION BANK', 'CENTRAL BANK OF INDIA', 'UNION BANK OF INDIA',
+    'HDFC BANK', 'ICICI BANK', 'AXIS BANK', 'CANARA BANK',
+    'FEDERAL BANK', 'BANDHAN BANK', 'INDUSIND BANK', 'YES BANK',
+    'RBL BANK', 'IDBI BANK', 'DCB BANK', 'KOTAK BANK',
+    'CENTRAL BANK', 'UNION BANK', 'PNB', 'SBI', 'IOB', 'TMB'
   ];
-  
-  for (const pattern of bankPatterns) {
-    const match = text.match(pattern);
+
+  // First, try to find bank name in official statement header patterns
+  // These patterns specifically look for the issuing bank, not transferred-to banks
+  const headerPatterns = [
+    // Pattern: "Account Statement" or "Statement of Account" with bank name nearby
+    /(?:Account\s*Statement|Statement\s*of\s*Account|Bank\s*Statement)[\s\S]{0,50}?(HDFC BANK|ICICI BANK|STATE BANK OF INDIA|SBI|AXIS BANK|KOTAK MAHINDRA BANK|KOTAK BANK|PUNJAB NATIONAL BANK|PNB|CANARA BANK|BANK OF BARODA|INDIAN OVERSEAS BANK|IOB|FEDERAL BANK|BANDHAN BANK|INDUSIND BANK|YES BANK|RBL BANK|IDBI BANK|UNION BANK|CENTRAL BANK)/i,
+    // Pattern: Bank name at the very start (first 200 chars - likely letterhead)
+    /^[\s\S]{0,200}?(HDFC BANK|ICICI BANK|STATE BANK OF INDIA|AXIS BANK|KOTAK MAHINDRA BANK|PUNJAB NATIONAL BANK|CANARA BANK|BANK OF BARODA|INDIAN OVERSEAS BANK|FEDERAL BANK|BANDHAN BANK|INDUSIND BANK|YES BANK|RBL BANK|IDBI BANK|UNION BANK|CENTRAL BANK)/i,
+    // Pattern: "Bank Name:" label
+    /Bank\s*Name[:\s]+([A-Za-z\s]+(?:Bank|BANK))/i,
+    // Pattern: Branch name indicating the bank
+    /Branch[:\s]+[A-Za-z\s,]+[\s,]+(HDFC|ICICI|SBI|STATE BANK|AXIS|KOTAK|PUNJAB NATIONAL|CANARA|BANK OF BARODA|INDIAN OVERSEAS|FEDERAL|BANDHAN|INDUSIND|YES|RBL|IDBI|UNION|CENTRAL)(?:\s*BANK)?/i
+  ];
+
+  for (const pattern of headerPatterns) {
+    const match = cleanHeaderLines.match(pattern);
     if (match) {
-      result.bankName = match[0].trim();
+      let bankName = (match[1] || match[0]).trim();
+      // Normalize to standard bank names
+      const bankUpper = bankName.toUpperCase();
+      if (bankUpper.includes('HDFC')) result.bankName = 'HDFC BANK';
+      else if (bankUpper.includes('ICICI')) result.bankName = 'ICICI BANK';
+      else if (bankUpper.includes('SBI') || bankUpper.includes('STATE BANK')) result.bankName = 'STATE BANK OF INDIA';
+      else if (bankUpper.includes('AXIS')) result.bankName = 'AXIS BANK';
+      else if (bankUpper.includes('KOTAK')) result.bankName = 'KOTAK MAHINDRA BANK';
+      else if (bankUpper.includes('INDUSIND')) result.bankName = 'INDUSIND BANK';
+      else if (bankUpper.includes('YES')) result.bankName = 'YES BANK';
+      else if (bankUpper.includes('CANARA')) result.bankName = 'CANARA BANK';
+      else if (bankUpper.includes('FEDERAL')) result.bankName = 'FEDERAL BANK';
+      else if (bankUpper.includes('BANDHAN')) result.bankName = 'BANDHAN BANK';
+      else if (bankUpper.includes('BARODA')) result.bankName = 'BANK OF BARODA';
+      else if (bankUpper.includes('PUNJAB') || bankUpper.includes('PNB')) result.bankName = 'PUNJAB NATIONAL BANK';
+      else if (bankUpper.includes('INDIAN OVERSEAS') || bankUpper.includes('IOB')) result.bankName = 'INDIAN OVERSEAS BANK';
+      else if (bankUpper.includes('RBL')) result.bankName = 'RBL BANK';
+      else if (bankUpper.includes('IDBI')) result.bankName = 'IDBI BANK';
+      else if (bankUpper.includes('UNION')) result.bankName = 'UNION BANK OF INDIA';
+      else if (bankUpper.includes('CENTRAL')) result.bankName = 'CENTRAL BANK OF INDIA';
+      else result.bankName = bankName;
       break;
+    }
+  }
+
+  // If still not found, check for bank name at the very beginning (first 300 chars only)
+  // This should only be letterhead area, not transaction area
+  if (result.bankName === 'N/A') {
+    const firstLines = text.substring(0, 300).toUpperCase();
+    // Exclude if it looks like a transaction line
+    if (!transactionKeywords.test(firstLines)) {
+      for (const bankName of bankNames) {
+        if (firstLines.includes(bankName)) {
+          result.bankName = bankName;
+          break;
+        }
+      }
     }
   }
   
