@@ -923,32 +923,71 @@
                         // Get all banking docs for this proposal
                         const bankingDocsForPending = uploadedFiles.filter(f => f.category === 'banking');
 
-                        // Get banking docs with extracted details (bank name, account number, period)
+                        // Get banking docs with extracted details (must have period data, bank name optional)
+                        // Changed: Include docs with N/A bank name as long as they have period data
                         const bankingDocsWithDetails = bankingDocsForPending.filter(f =>
                             f.extractedDetails &&
-                            f.extractedDetails.bankName &&
-                            f.extractedDetails.bankName !== 'N/A'
+                            (f.extractedDetails.periodFrom && f.extractedDetails.periodFrom !== 'N/A') &&
+                            (f.extractedDetails.periodTo && f.extractedDetails.periodTo !== 'N/A')
                         );
 
                         const bankStmt = 'Bank Statement of ' + proposal.applicantName;
                         const odStmt = 'Overdraft Bank Statement of ' + proposal.applicantName;
 
-                        // Group bank statements by account (bankName + accountNumber)
+                        // Group bank statements by account number (last 4 digits only)
+                        // This ensures statements with same account but different bank name detection get grouped together
+                        // e.g., "N/A - A/C: 720305000315" and "ICICI BANK - A/C: 720305000315" are the same account
                         const accountGroups = {};
                         bankingDocsWithDetails.forEach(doc => {
                             const details = doc.extractedDetails || {};
                             const bankName = details.bankName || 'Unknown Bank';
                             const acNo = details.accountNumber && details.accountNumber !== 'N/A' ? details.accountNumber : 'XXXX';
                             const holderName = details.accountHolder && details.accountHolder !== 'N/A' ? details.accountHolder : proposal.applicantName;
-                            const key = bankName + '_' + acNo;
+                            
+                            // Use last 4 digits ONLY for grouping key (not bank name)
+                            // This ensures same account gets grouped even if bank name differs
+                            let last4 = details.last4Digits || 'XXXX';
+                            if (last4 === 'N/A') {
+                                // Fallback: extract last 4 digits from account number
+                                const digitsOnly = acNo.replace(/[^0-9]/g, '');
+                                last4 = digitsOnly.length >= 4 ? digitsOnly.slice(-4) : (digitsOnly || 'XXXX');
+                            }
+                            
+                            // Key is just the last 4 digits (not including bank name)
+                            const key = last4;
 
                             if (!accountGroups[key]) {
                                 accountGroups[key] = {
                                     bankName: bankName,
                                     accountNumber: acNo,
+                                    last4Digits: last4,
                                     holderName: holderName,
                                     periods: []
                                 };
+                            } else {
+                                // If we find a better bank name (not N/A or Unknown), use it
+                                const existingBankIsUnknown = accountGroups[key].bankName === 'N/A' || 
+                                    accountGroups[key].bankName === 'Unknown Bank' ||
+                                    accountGroups[key].bankName === 'Unknown';
+                                const newBankIsKnown = bankName !== 'N/A' && 
+                                    bankName !== 'Unknown Bank' && 
+                                    bankName !== 'Unknown';
+                                if (existingBankIsUnknown && newBankIsKnown) {
+                                    accountGroups[key].bankName = bankName;
+                                }
+                                
+                                // If we find a fuller account number, use it (prefer full over masked)
+                                const existingDigits = accountGroups[key].accountNumber.replace(/[^0-9]/g, '').length;
+                                const newDigits = acNo.replace(/[^0-9]/g, '').length;
+                                if (newDigits > existingDigits) {
+                                    accountGroups[key].accountNumber = acNo;
+                                }
+                                
+                                // If we find a better holder name (not N/A), use it
+                                if ((accountGroups[key].holderName === proposal.applicantName || accountGroups[key].holderName === 'N/A') &&
+                                    holderName !== 'N/A' && holderName !== proposal.applicantName) {
+                                    accountGroups[key].holderName = holderName;
+                                }
                             }
 
                             const docFrom = parseDate(details.periodFrom);
@@ -1849,24 +1888,59 @@
 
                             <%
                             // Group bank statements by account number (declare outside if block for later use)
+                            // Uses last 4 digits ONLY for matching (not bank name)
+                            // This ensures same account gets grouped even if bank name detection differs
                             let statementsByAccount = {};
                             let accountCoverages = {};
                             %>
 
                             <% if (hasBankingDocs && bankStatements.length > 0) { %>
                                 <%
-                                // Populate statementsByAccount
+                                // Populate statementsByAccount using last 4 digits as key (not bank name)
                                 bankStatements.forEach(stmt => {
-                                    const accountKey = stmt.accountNumber && stmt.accountNumber !== 'N/A'
-                                        ? stmt.accountNumber
-                                        : 'Unknown_' + stmt.bankName;
+                                    // Extract last 4 digits for grouping key
+                                    let last4 = 'XXXX';
+                                    if (stmt.accountNumber && stmt.accountNumber !== 'N/A') {
+                                        const digitsOnly = stmt.accountNumber.replace(/[^0-9]/g, '');
+                                        last4 = digitsOnly.length >= 4 ? digitsOnly.slice(-4) : (digitsOnly || 'XXXX');
+                                    }
+                                    // Key is just the last 4 digits (not including bank name)
+                                    const accountKey = last4;
+                                    
                                     if (!statementsByAccount[accountKey]) {
                                         statementsByAccount[accountKey] = {
                                             bankName: stmt.bankName,
                                             accountHolder: stmt.accountHolder,
                                             accountNumber: stmt.accountNumber,
+                                            last4Digits: last4,
                                             statements: []
                                         };
+                                    } else {
+                                        // If we find a better bank name (not N/A or Unknown), use it
+                                        const existingBankIsUnknown = statementsByAccount[accountKey].bankName === 'N/A' || 
+                                            statementsByAccount[accountKey].bankName === 'Unknown Bank' ||
+                                            statementsByAccount[accountKey].bankName === 'Unknown';
+                                        const newBankIsKnown = stmt.bankName && 
+                                            stmt.bankName !== 'N/A' && 
+                                            stmt.bankName !== 'Unknown Bank' && 
+                                            stmt.bankName !== 'Unknown';
+                                        if (existingBankIsUnknown && newBankIsKnown) {
+                                            statementsByAccount[accountKey].bankName = stmt.bankName;
+                                        }
+                                        
+                                        // If we find a fuller account number, use it (prefer full over masked)
+                                        const existingDigits = statementsByAccount[accountKey].accountNumber.replace(/[^0-9]/g, '').length;
+                                        const newDigits = (stmt.accountNumber || '').replace(/[^0-9]/g, '').length;
+                                        if (newDigits > existingDigits) {
+                                            statementsByAccount[accountKey].accountNumber = stmt.accountNumber;
+                                        }
+                                        
+                                        // If we find a better holder name, use it
+                                        const existingHolderIsDefault = !statementsByAccount[accountKey].accountHolder || 
+                                            statementsByAccount[accountKey].accountHolder === 'N/A';
+                                        if (existingHolderIsDefault && stmt.accountHolder && stmt.accountHolder !== 'N/A') {
+                                            statementsByAccount[accountKey].accountHolder = stmt.accountHolder;
+                                        }
                                     }
                                     statementsByAccount[accountKey].statements.push(stmt);
                                 });
@@ -2063,9 +2137,10 @@
                                     const checkEmiInContext = (text, emiAmount, loanBankName) => {
                                         const emiStr = String(emiAmount);
                                         const emiFormatted = emiAmount.toLocaleString('en-IN');
-
+                                        const emiWithDecimals = emiFormatted + '.00'; // Bank statements often have .00 suffix
+                                        
                                         // Keywords that indicate EMI/loan debit
-                                        const emiKeywords = ['emi', 'loan', 'equated monthly', 'instalment', 'installment', 'nach', 'ecs', 'auto debit', 'si:', 'standing instruction'];
+                                        const emiKeywords = ['emi', 'loan', 'equated monthly', 'instalment', 'installment', 'nach', 'ecs', 'auto debit', 'si:', 'standing instruction', 'ach d-', 'ach-d'];
                                         const debitKeywords = ['dr', 'debit', 'withdrawal', 'transfer to', 'neft', 'rtgs', 'imps', 'upi'];
 
                                         // Normalize loan bank name for matching
@@ -2075,28 +2150,40 @@
                                         // Split text into lines/transactions for contextual matching
                                         const lines = text.split(/[\n\r]+/);
 
-                                        for (const line of lines) {
-                                            const lineLower = line.toLowerCase();
+                                        // Bank statements have amount on separate lines after transaction description
+                                        // Look for EMI amount within 5 lines of an EMI keyword
+                                        for (let i = 0; i < lines.length; i++) {
+                                            const lineLower = lines[i].toLowerCase();
 
-                                            // Check if this line contains the EMI amount
-                                            const hasEmiAmount = lineLower.includes(emiStr) || lineLower.includes(emiFormatted) ||
-                                                                 lineLower.includes((emiAmount - 1).toString()) ||
-                                                                 lineLower.includes((emiAmount + 1).toString());
-
-                                            if (hasEmiAmount) {
-                                                // Check if line has EMI-related keywords
-                                                const hasEmiKeyword = emiKeywords.some(kw => lineLower.includes(kw));
-
-                                                // Check if line has debit keywords
-                                                const hasDebitKeyword = debitKeywords.some(kw => lineLower.includes(kw));
-
-                                                // Check if loan bank name appears in line
-                                                const hasBankName = bankNameParts.length > 0 && bankNameParts.some(part => lineLower.includes(part));
-
-                                                // EMI is valid if it has EMI keyword OR (debit keyword AND bank name)
-                                                if (hasEmiKeyword || (hasDebitKeyword && hasBankName) || hasBankName) {
-                                                    return true;
+                                            // Check if this line contains EMI-related keywords or bank name
+                                            const hasEmiKeyword = emiKeywords.some(kw => lineLower.includes(kw));
+                                            const hasBankName = bankNameParts.length > 0 && bankNameParts.some(part => lineLower.includes(part));
+                                            
+                                            if (hasEmiKeyword || hasBankName) {
+                                                // Look for the EMI amount within next 5 lines (amount typically 2-3 lines after description)
+                                                for (let j = i; j < Math.min(i + 6, lines.length); j++) {
+                                                    const checkLine = lines[j].toLowerCase();
+                                                    const hasEmiAmount = checkLine.includes(emiStr) || 
+                                                                         checkLine.includes(emiFormatted.toLowerCase()) ||
+                                                                         checkLine.includes(emiWithDecimals.toLowerCase()) ||
+                                                                         checkLine.includes((emiAmount - 1).toString()) ||
+                                                                         checkLine.includes((emiAmount + 1).toString());
+                                                    
+                                                    if (hasEmiAmount) {
+                                                        return true;
+                                                    }
                                                 }
+                                            }
+                                        }
+                                        
+                                        // Also check if EMI amount appears anywhere with comma formatting (as fallback)
+                                        const textLower = text.toLowerCase();
+                                        if (textLower.includes(emiWithDecimals.toLowerCase()) || textLower.includes(emiFormatted.toLowerCase())) {
+                                            // Amount exists, check if any EMI keyword exists in entire document
+                                            const hasAnyEmiKeyword = emiKeywords.some(kw => textLower.includes(kw));
+                                            const hasAnyBankName = bankNameParts.some(part => textLower.includes(part));
+                                            if (hasAnyEmiKeyword || hasAnyBankName) {
+                                                return true;
                                             }
                                         }
 
@@ -2946,14 +3033,17 @@
                                                             const details = doc.extractedDetails;
                                                             if (details.accountNumber && details.accountNumber !== 'N/A') {
                                                                 const bankName = details.bankName || 'Unknown';
-                                                                const acKey = bankName + '_' + details.accountNumber;
-                                                                if (!bankAccounts.find(a => a.key === acKey)) {
-                                                                    bankAccounts.push({ key: acKey, bankName: bankName, accountNumber: details.accountNumber });
+                                                                const last4 = details.accountNumber.replace(/\D/g, '').slice(-4);
+                                                                // Use last4 as key to avoid duplicates from masked/full account numbers
+                                                                if (!bankAccounts.find(a => a.last4 === last4)) {
+                                                                    bankAccounts.push({ last4: last4, bankName: bankName, accountNumber: details.accountNumber });
                                                                 }
                                                             }
                                                         });
+                                                        // Get last 4 digits of selected account for matching
+                                                        const selectedLast4 = selectedAccount ? selectedAccount.replace(/\D/g, '').slice(-4) : '';
                                                         bankAccounts.forEach(account => { %>
-                                                            <option value="<%= account.accountNumber %>" <%= selectedAccount === account.accountNumber ? 'selected' : '' %>>
+                                                            <option value="<%= account.accountNumber %>" <%= selectedLast4 === account.last4 ? 'selected' : '' %>>
                                                                 <%= account.bankName %> - <%= account.accountNumber.slice(-4) %>
                                                             </option>
                                                         <% }); %>
@@ -2979,6 +3069,7 @@
                                 </tfoot>
                             </table>
                             </div>
+                            
                             <% } else { %>
                                 <p style="color: #666; font-style: italic; margin-top: 15px;">
                                     <% if (debtProfileExcelFiles.length > 0) { %>

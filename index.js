@@ -2602,12 +2602,13 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
       const docIndex = proposal.documents.findIndex(d => d.filename === fileDetail.filename);
       if (docIndex !== -1) {
         proposal.documents[docIndex].pages = pageCount;
-        // Store full text for financial and turnover documents to extract detailed data
+        // Store full text for financial, turnover, and banking documents
         // For financials: detect all components (ITR, Computation, Balance Sheet, P&L)
         // For turnover: extract GST outward supplies and tax values from GSTR-3B
+        // For banking: full text needed for EMI verification
         // For other documents, store truncated text to save space
-        if (fileDetail.category === 'financials' || fileDetail.category === 'turnover') {
-          proposal.documents[docIndex].extractedText = fullText; // Full text for financials and turnover
+        if (fileDetail.category === 'financials' || fileDetail.category === 'turnover' || fileDetail.category === 'banking') {
+          proposal.documents[docIndex].extractedText = fullText; // Full text for financials, turnover, and banking
         } else {
           proposal.documents[docIndex].extractedText = extractedText; // Truncated for others
         }
@@ -3463,10 +3464,16 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
               console.log('✓ Document AI extraction successful for:', doc.originalName);
               console.log('AI Extracted Data:', JSON.stringify(aiResult.data, null, 2));
               
+              // Extract last 4 digits from account number for matching masked accounts
+              const acNo = aiResult.data.accountNumber || '';
+              const digitsOnly = acNo.replace(/[^0-9]/g, '');
+              const last4 = digitsOnly.length >= 4 ? digitsOnly.slice(-4) : (digitsOnly || 'N/A');
+              
               bankStatementDetails = {
                 bankName: aiResult.data.bankName || 'N/A',
                 accountHolder: aiResult.data.accountHolder || 'N/A',
                 accountNumber: aiResult.data.accountNumber || 'N/A',
+                last4Digits: last4,
                 periodFrom: aiResult.data.periodFrom || 'N/A',
                 periodTo: aiResult.data.periodTo || 'N/A',
                 period: (aiResult.data.periodFrom && aiResult.data.periodTo) 
@@ -3476,7 +3483,7 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
             } else {
               console.log('⚠ Document AI failed, using fallback for:', doc.originalName);
               // Fallback pattern matching for bank statements
-              bankStatementDetails = extractBankStatementDetailsFallback(fullText);
+              bankStatementDetails = extractBankStatementDetailsFallback(fullText, doc.originalName);
             }
             
             // Fallback: Try to extract dates from filename if still N/A
@@ -3674,11 +3681,12 @@ app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
 });
 
 // Fallback pattern matching for bank statement details
-function extractBankStatementDetailsFallback(text) {
+function extractBankStatementDetailsFallback(text, filename = '') {
   const result = {
     bankName: 'N/A',
     accountHolder: 'N/A',
     accountNumber: 'N/A',
+    last4Digits: 'N/A',
     periodFrom: 'N/A',
     periodTo: 'N/A',
     period: 'N/A'
@@ -3707,44 +3715,73 @@ function extractBankStatementDetailsFallback(text) {
     'CENTRAL BANK', 'UNION BANK', 'PNB', 'SBI', 'IOB', 'TMB'
   ];
 
-  // First, try to find bank name in official statement header patterns
-  // These patterns specifically look for the issuing bank, not transferred-to banks
-  const headerPatterns = [
-    // Pattern: "Account Statement" or "Statement of Account" with bank name nearby
-    /(?:Account\s*Statement|Statement\s*of\s*Account|Bank\s*Statement)[\s\S]{0,50}?(HDFC BANK|ICICI BANK|STATE BANK OF INDIA|SBI|AXIS BANK|KOTAK MAHINDRA BANK|KOTAK BANK|PUNJAB NATIONAL BANK|PNB|CANARA BANK|BANK OF BARODA|INDIAN OVERSEAS BANK|IOB|FEDERAL BANK|BANDHAN BANK|INDUSIND BANK|YES BANK|RBL BANK|IDBI BANK|UNION BANK|CENTRAL BANK)/i,
-    // Pattern: Bank name at the very start (first 200 chars - likely letterhead)
-    /^[\s\S]{0,200}?(HDFC BANK|ICICI BANK|STATE BANK OF INDIA|AXIS BANK|KOTAK MAHINDRA BANK|PUNJAB NATIONAL BANK|CANARA BANK|BANK OF BARODA|INDIAN OVERSEAS BANK|FEDERAL BANK|BANDHAN BANK|INDUSIND BANK|YES BANK|RBL BANK|IDBI BANK|UNION BANK|CENTRAL BANK)/i,
-    // Pattern: "Bank Name:" label
-    /Bank\s*Name[:\s]+([A-Za-z\s]+(?:Bank|BANK))/i,
-    // Pattern: Branch name indicating the bank
-    /Branch[:\s]+[A-Za-z\s,]+[\s,]+(HDFC|ICICI|SBI|STATE BANK|AXIS|KOTAK|PUNJAB NATIONAL|CANARA|BANK OF BARODA|INDIAN OVERSEAS|FEDERAL|BANDHAN|INDUSIND|YES|RBL|IDBI|UNION|CENTRAL)(?:\s*BANK)?/i
+  // Check for bank website URLs (e.g., sbi.co.in, hdfcbank.com) - very reliable indicator
+  const bankUrlPatterns = [
+    { pattern: /sbi\.co\.in/i, name: 'STATE BANK OF INDIA' },
+    { pattern: /hdfcbank\.com/i, name: 'HDFC BANK' },
+    { pattern: /icicibank\.com/i, name: 'ICICI BANK' },
+    { pattern: /axisbank\.com/i, name: 'AXIS BANK' },
+    { pattern: /kotak\.com/i, name: 'KOTAK MAHINDRA BANK' },
+    { pattern: /pnbindia\.in/i, name: 'PUNJAB NATIONAL BANK' },
+    { pattern: /canarabank\.com/i, name: 'CANARA BANK' },
+    { pattern: /bankofbaroda\.in/i, name: 'BANK OF BARODA' },
+    { pattern: /iob\.in/i, name: 'INDIAN OVERSEAS BANK' },
+    { pattern: /federalbank\.co\.in/i, name: 'FEDERAL BANK' },
+    { pattern: /bandhanbank\.com/i, name: 'BANDHAN BANK' },
+    { pattern: /indusind\.com/i, name: 'INDUSIND BANK' },
+    { pattern: /yesbank\.in/i, name: 'YES BANK' },
+    { pattern: /rblbank\.com/i, name: 'RBL BANK' },
+    { pattern: /idbibank\.in/i, name: 'IDBI BANK' },
+    { pattern: /unionbankofindia\.co\.in/i, name: 'UNION BANK OF INDIA' },
   ];
 
-  for (const pattern of headerPatterns) {
-    const match = cleanHeaderLines.match(pattern);
-    if (match) {
-      let bankName = (match[1] || match[0]).trim();
-      // Normalize to standard bank names
-      const bankUpper = bankName.toUpperCase();
-      if (bankUpper.includes('HDFC')) result.bankName = 'HDFC BANK';
-      else if (bankUpper.includes('ICICI')) result.bankName = 'ICICI BANK';
-      else if (bankUpper.includes('SBI') || bankUpper.includes('STATE BANK')) result.bankName = 'STATE BANK OF INDIA';
-      else if (bankUpper.includes('AXIS')) result.bankName = 'AXIS BANK';
-      else if (bankUpper.includes('KOTAK')) result.bankName = 'KOTAK MAHINDRA BANK';
-      else if (bankUpper.includes('INDUSIND')) result.bankName = 'INDUSIND BANK';
-      else if (bankUpper.includes('YES')) result.bankName = 'YES BANK';
-      else if (bankUpper.includes('CANARA')) result.bankName = 'CANARA BANK';
-      else if (bankUpper.includes('FEDERAL')) result.bankName = 'FEDERAL BANK';
-      else if (bankUpper.includes('BANDHAN')) result.bankName = 'BANDHAN BANK';
-      else if (bankUpper.includes('BARODA')) result.bankName = 'BANK OF BARODA';
-      else if (bankUpper.includes('PUNJAB') || bankUpper.includes('PNB')) result.bankName = 'PUNJAB NATIONAL BANK';
-      else if (bankUpper.includes('INDIAN OVERSEAS') || bankUpper.includes('IOB')) result.bankName = 'INDIAN OVERSEAS BANK';
-      else if (bankUpper.includes('RBL')) result.bankName = 'RBL BANK';
-      else if (bankUpper.includes('IDBI')) result.bankName = 'IDBI BANK';
-      else if (bankUpper.includes('UNION')) result.bankName = 'UNION BANK OF INDIA';
-      else if (bankUpper.includes('CENTRAL')) result.bankName = 'CENTRAL BANK OF INDIA';
-      else result.bankName = bankName;
+  for (const { pattern, name } of bankUrlPatterns) {
+    if (pattern.test(text)) {
+      result.bankName = name;
       break;
+    }
+  }
+
+  // First, try to find bank name in official statement header patterns
+  // These patterns specifically look for the issuing bank, not transferred-to banks
+  if (result.bankName === 'N/A') {
+    const headerPatterns = [
+      // Pattern: "Account Statement" or "Statement of Account" with bank name nearby
+      /(?:Account\s*Statement|Statement\s*of\s*Account|Bank\s*Statement)[\s\S]{0,50}?(HDFC BANK|ICICI BANK|STATE BANK OF INDIA|SBI|AXIS BANK|KOTAK MAHINDRA BANK|KOTAK BANK|PUNJAB NATIONAL BANK|PNB|CANARA BANK|BANK OF BARODA|INDIAN OVERSEAS BANK|IOB|FEDERAL BANK|BANDHAN BANK|INDUSIND BANK|YES BANK|RBL BANK|IDBI BANK|UNION BANK|CENTRAL BANK)/i,
+      // Pattern: Bank name at the very start (first 200 chars - likely letterhead)
+      /^[\s\S]{0,200}?(HDFC BANK|ICICI BANK|STATE BANK OF INDIA|AXIS BANK|KOTAK MAHINDRA BANK|PUNJAB NATIONAL BANK|CANARA BANK|BANK OF BARODA|INDIAN OVERSEAS BANK|FEDERAL BANK|BANDHAN BANK|INDUSIND BANK|YES BANK|RBL BANK|IDBI BANK|UNION BANK|CENTRAL BANK)/i,
+      // Pattern: "Bank Name:" label
+      /Bank\s*Name[:\s]+([A-Za-z\s]+(?:Bank|BANK))/i,
+      // Pattern: Branch name indicating the bank
+      /Branch[:\s]+[A-Za-z\s,]+[\s,]+(HDFC|ICICI|SBI|STATE BANK|AXIS|KOTAK|PUNJAB NATIONAL|CANARA|BANK OF BARODA|INDIAN OVERSEAS|FEDERAL|BANDHAN|INDUSIND|YES|RBL|IDBI|UNION|CENTRAL)(?:\s*BANK)?/i
+    ];
+
+    for (const pattern of headerPatterns) {
+      const match = cleanHeaderLines.match(pattern);
+      if (match) {
+        let bankName = (match[1] || match[0]).trim();
+        // Normalize to standard bank names
+        const bankUpper = bankName.toUpperCase();
+        if (bankUpper.includes('HDFC')) result.bankName = 'HDFC BANK';
+        else if (bankUpper.includes('ICICI')) result.bankName = 'ICICI BANK';
+        else if (bankUpper.includes('SBI') || bankUpper.includes('STATE BANK')) result.bankName = 'STATE BANK OF INDIA';
+        else if (bankUpper.includes('AXIS')) result.bankName = 'AXIS BANK';
+        else if (bankUpper.includes('KOTAK')) result.bankName = 'KOTAK MAHINDRA BANK';
+        else if (bankUpper.includes('INDUSIND')) result.bankName = 'INDUSIND BANK';
+        else if (bankUpper.includes('YES')) result.bankName = 'YES BANK';
+        else if (bankUpper.includes('CANARA')) result.bankName = 'CANARA BANK';
+        else if (bankUpper.includes('FEDERAL')) result.bankName = 'FEDERAL BANK';
+        else if (bankUpper.includes('BANDHAN')) result.bankName = 'BANDHAN BANK';
+        else if (bankUpper.includes('BARODA')) result.bankName = 'BANK OF BARODA';
+        else if (bankUpper.includes('PUNJAB') || bankUpper.includes('PNB')) result.bankName = 'PUNJAB NATIONAL BANK';
+        else if (bankUpper.includes('INDIAN OVERSEAS') || bankUpper.includes('IOB')) result.bankName = 'INDIAN OVERSEAS BANK';
+        else if (bankUpper.includes('RBL')) result.bankName = 'RBL BANK';
+        else if (bankUpper.includes('IDBI')) result.bankName = 'IDBI BANK';
+        else if (bankUpper.includes('UNION')) result.bankName = 'UNION BANK OF INDIA';
+        else if (bankUpper.includes('CENTRAL')) result.bankName = 'CENTRAL BANK OF INDIA';
+        else result.bankName = bankName;
+        break;
+      }
     }
   }
 
@@ -3763,9 +3800,13 @@ function extractBankStatementDetailsFallback(text) {
     }
   }
   
-  // Account number patterns
+  // Account number patterns - look for full or masked account numbers
   const accountPatterns = [
+    // Full account number with label (e.g., "Account Number : 00000020005843572")
     /(?:Account\s*(?:No|Number|#)[:\s]*|A\/c\s*No[:\s]*|Acct\s*No[:\s]*)(\d{9,18})/i,
+    // Masked account number (e.g., "XXXXXXX3572" or "XXXX1234")
+    /(?:Account\s*(?:No|Number|#)?[:\s]*)?([X]{3,}\d{3,6})/i,
+    // Full account number without label
     /(\d{9,18})/
   ];
   
@@ -3777,8 +3818,26 @@ function extractBankStatementDetailsFallback(text) {
     }
   }
   
+  // Extract last 4 digits for matching masked account numbers
+  // This allows grouping XXXXXXX3572 with 00000020005843572
+  if (result.accountNumber && result.accountNumber !== 'N/A') {
+    // Get only the numeric digits from end of account number
+    const digitsOnly = result.accountNumber.replace(/[^0-9]/g, '');
+    if (digitsOnly.length >= 4) {
+      result.last4Digits = digitsOnly.slice(-4);
+    } else if (digitsOnly.length > 0) {
+      result.last4Digits = digitsOnly;
+    } else {
+      result.last4Digits = 'N/A';
+    }
+  } else {
+    result.last4Digits = 'N/A';
+  }
+  
   // Account holder patterns - limit to avoid capturing address
+  // Added SBI Welcome pattern: "Welcome Mr. NAME" or "Welcome Mrs. NAME"
   const holderPatterns = [
+    /Welcome\s+(?:Mr\.|Mrs\.|Ms\.?|M\/S\.?)\s*([A-Z][A-Za-z\s&.]+?)(?:\s*\.?\s*(?:As\s*on|$|\n))/i,
     /(?:Account\s*Holder|Customer\s*Name|Name)[:\s]+([A-Z][A-Za-z\s&.]+?)(?:\s+(?:Plot|Door|No\.|House|Flat|Building|Street|Road|Lane|Address|Branch|A\/c|Account|\d|,|\n))/i,
     /(?:Account\s*Holder|Customer\s*Name|Name)[:\s]+([A-Z][A-Za-z\s&.]{2,50})/i,
     /(?:Mr\.|Mrs\.|Ms\.|M\/S)[.\s]+([A-Z][A-Za-z\s&.]+?)(?:\s+(?:Plot|Door|No\.|House|Flat|Building|Street|Road|Lane|Address|\d|,|\n))/i,
@@ -3792,15 +3851,35 @@ function extractBankStatementDetailsFallback(text) {
       let holder = match[1].trim();
       // Remove trailing address-related words if any slipped through
       holder = holder.replace(/\s+(Plot|Door|No|House|Flat|Building|Street|Road|Lane|Address|Branch).*$/i, '').trim();
+      // Remove trailing period
+      holder = holder.replace(/\.\s*$/, '').trim();
       result.accountHolder = holder;
       break;
     }
   }
   
-  // Date period patterns
+  // Helper function to convert "D Mon YYYY" to "DD/MM/YYYY"
+  const convertMonthNameDate = (dateStr) => {
+    const months = {
+      'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04', 'may': '05', 'jun': '06',
+      'jul': '07', 'aug': '08', 'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
+    };
+    // Match patterns like "1 Feb 2025", "28 Feb 2025", "01 Mar 2025"
+    const match = dateStr.match(/(\d{1,2})\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*(\d{4})/i);
+    if (match) {
+      const day = match[1].padStart(2, '0');
+      const month = months[match[2].toLowerCase()];
+      const year = match[3];
+      return `${day}/${month}/${year}`;
+    }
+    return dateStr;
+  };
+  
+  // Date period patterns - standard formats (DD-MM-YYYY or DD/MM/YYYY)
   const periodPatterns = [
     /(?:Statement\s*Period|Period)[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s*(?:to|[-–])\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
-    /(?:From)[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s*(?:To)[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i
+    /(?:From)[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s*(?:To)[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+    /Statement\s*From[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s*(?:to|To)[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i
   ];
   
   for (const pattern of periodPatterns) {
@@ -3808,8 +3887,106 @@ function extractBankStatementDetailsFallback(text) {
     if (match) {
       result.periodFrom = match[1];
       result.periodTo = match[2];
-      result.period = `${match[1]} to ${match[2]}`;
+      result.period = `${match[1]} - ${match[2]}`;
+      console.log(`✓ Extracted period from DD-MM-YYYY pattern: ${result.period}`);
       break;
+    }
+  }
+  
+  // If not found with DD-MM-YYYY, try "D Mon YYYY" format (e.g., "1 Feb 2025 to 28 Feb 2025")
+  if (result.periodFrom === 'N/A' || result.periodTo === 'N/A') {
+    // Pattern: "Account Statement from 1 Feb 2025 to 28 Feb 2025" or similar
+    const monthDatePattern = /(?:Account\s*)?Statement\s*(?:from|From)[:\s]*(\d{1,2}\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{4})\s*(?:to|To|-)\s*(\d{1,2}\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{4})/i;
+    const monthMatch = text.match(monthDatePattern);
+    if (monthMatch) {
+      result.periodFrom = convertMonthNameDate(monthMatch[1]);
+      result.periodTo = convertMonthNameDate(monthMatch[2]);
+      result.period = `${result.periodFrom} - ${result.periodTo}`;
+      console.log(`✓ Extracted period from D Mon YYYY pattern: ${result.period}`);
+    }
+  }
+  
+  // If period still not found, try to extract from transaction dates
+  // This handles SBI-style statements that only show "As on DD-MM-YY"
+  if (result.periodFrom === 'N/A' || result.periodTo === 'N/A') {
+    // Look for "As on" date which is typically the end date
+    const asOnMatch = text.match(/As\s*on\s*(\d{1,2}[-\/\.]\d{1,2}[-\/\.]\d{2,4})/i);
+    
+    // Find all transaction dates in DD-MM-YY or DD-MM-YYYY format (excluding loan dates which might be older)
+    const datePattern = /\b(\d{1,2}[-\/]\d{1,2}[-\/](\d{2}|\d{4}))\b/g;
+    const allDates = [];
+    let dateMatch;
+    
+    while ((dateMatch = datePattern.exec(text)) !== null) {
+      const dateStr = dateMatch[1];
+      // Parse the date
+      const parts = dateStr.split(/[-\/]/);
+      if (parts.length === 3) {
+        let [d, m, y] = parts.map(p => parseInt(p, 10));
+        if (y < 100) y += 2000; // Convert 2-digit year to 4-digit
+        // Only include dates from 2020 onwards (to exclude old loan dates)
+        if (y >= 2020 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+          allDates.push({ date: new Date(y, m - 1, d), original: dateStr, y, m, d });
+        }
+      }
+    }
+    
+    if (allDates.length > 0) {
+      // Sort dates and get min/max
+      allDates.sort((a, b) => a.date - b.date);
+      const minDate = allDates[0];
+      const maxDate = allDates[allDates.length - 1];
+      
+      // Format dates as DD/MM/YYYY
+      const formatDate = (d) => {
+        return `${String(d.d).padStart(2, '0')}/${String(d.m).padStart(2, '0')}/${d.y}`;
+      };
+      
+      result.periodFrom = formatDate(minDate);
+      result.periodTo = formatDate(maxDate);
+      result.period = `${result.periodFrom} - ${result.periodTo}`;
+      
+      console.log(`✓ Extracted period from transaction dates: ${result.period}`);
+    } else if (asOnMatch) {
+      // If we only have "As on" date, use it as periodTo and derive periodFrom from filename
+      const asOnDate = asOnMatch[1];
+      const parts = asOnDate.split(/[-\/\.]/);
+      if (parts.length === 3) {
+        let [d, m, y] = parts.map(p => parseInt(p, 10));
+        if (y < 100) y += 2000;
+        
+        result.periodTo = `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+        // Assume first day of same month as periodFrom
+        result.periodFrom = `01/${String(m).padStart(2, '0')}/${y}`;
+        result.period = `${result.periodFrom} - ${result.periodTo}`;
+        
+        console.log(`✓ Extracted period from 'As on' date: ${result.period}`);
+      }
+    }
+  }
+  
+  // If still no period, try to extract from filename (e.g., May2025.pdf, Nov2025.pdf)
+  if ((result.periodFrom === 'N/A' || result.periodTo === 'N/A') && filename) {
+    const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    const filenameLower = filename.toLowerCase();
+    
+    for (let i = 0; i < monthNames.length; i++) {
+      const monthMatch = filenameLower.match(new RegExp(`(${monthNames[i]})[a-z]*[-_\\s]?(\\d{4}|\\d{2})`, 'i'));
+      if (monthMatch) {
+        let year = parseInt(monthMatch[2], 10);
+        if (year < 100) year += 2000;
+        const month = i + 1;
+        
+        // Get last day of month
+        const lastDay = new Date(year, month, 0).getDate();
+        
+        result.periodFrom = `01/${String(month).padStart(2, '0')}/${year}`;
+        result.periodTo = `${String(lastDay).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`;
+        result.period = `${result.periodFrom} - ${result.periodTo}`;
+        
+        console.log(`✓ Extracted period from filename: ${result.period}`);
+        break;
+      }
     }
   }
   
@@ -3833,12 +4010,21 @@ app.post('/stage2/:proposalId/complete', (req, res) => {
 });
 
 // Stage 3: CAM (Credit Appraisal Memo)
-app.get('/stage3/:proposalId', (req, res) => {
+app.get('/stage3/:proposalId', async (req, res) => {
   const proposal = getProposalById(req.params.proposalId);
   if (!proposal) {
     return res.status(404).send('Proposal not found');
   }
-  res.render('stage3-cam', { proposal });
+  
+  // Fetch debt profiles from MongoDB
+  let debtProfiles = [];
+  try {
+    debtProfiles = await DebtProfile.find({ proposalId: req.params.proposalId }).sort({ sNo: 1 });
+  } catch (err) {
+    console.error('Error fetching debt profiles for stage 3:', err);
+  }
+  
+  res.render('stage3-cam', { proposal, debtProfiles });
 });
 
 app.post('/stage3/:proposalId/submit', (req, res) => {

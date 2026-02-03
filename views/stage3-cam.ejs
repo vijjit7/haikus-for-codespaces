@@ -1170,10 +1170,206 @@
 
                 <div id="debtProfilePanel" class="analysis-panel">
                     <h3>Debt Profile Analysis</h3>
+                    
+                    <%
+                    // Initialize debtProfiles if not defined
+                    const debtProfilesList = typeof debtProfiles !== 'undefined' ? debtProfiles : [];
+                    
+                    // Get banking documents from proposal
+                    const bankingDocs = (proposal.documents || []).filter(d => d.category === 'banking');
+                    
+                    // Generate last 12 months headers
+                    const today = new Date();
+                    const months = [];
+                    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                    for (let i = 0; i < 12; i++) {
+                        const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+                        months.push({
+                            month: d.getMonth(),
+                            year: d.getFullYear(),
+                            label: monthNames[d.getMonth()],
+                            fullLabel: monthNames[d.getMonth()] + ' ' + d.getFullYear()
+                        });
+                    }
+                    
+                    // Function to find EMI dates in bank statements
+                    function findEmiDatesInStatements(emiAmount, bankName, bankingDocs) {
+                        const emiDates = [];
+                        if (!emiAmount || !bankingDocs) return emiDates;
+                        
+                        const emiStr = String(Math.round(emiAmount));
+                        const emiFormatted = Math.round(emiAmount).toLocaleString('en-IN');
+                        const emiWithDecimals = emiFormatted + '.00';
+                        
+                        // Bank name parts for matching
+                        const bankNameLower = (bankName || '').toLowerCase();
+                        const bankNameParts = bankNameLower.split(/[\s\-]+/).filter(p => p.length > 2);
+                        
+                        // EMI keywords
+                        const emiKeywords = ['ach d-', 'ach-d', 'nach', 'ecs', 'emi', 'loan', 'auto debit'];
+                        
+                        bankingDocs.forEach(doc => {
+                            if (!doc.extractedText) return;
+                            const text = doc.extractedText.toLowerCase();
+                            const lines = text.split(/[\n\r]+/);
+                            
+                            for (let i = 0; i < lines.length; i++) {
+                                const line = lines[i];
+                                
+                                // Check for EMI keyword or bank name
+                                const hasEmiKeyword = emiKeywords.some(kw => line.includes(kw));
+                                const hasBankName = bankNameParts.some(part => line.includes(part));
+                                
+                                if (hasEmiKeyword || hasBankName) {
+                                    // Look for date at start of line (DD/MM/YY or DD/MM/YYYY)
+                                    const dateMatch = line.match(/^(\d{2})\/(\d{2})\/(\d{2,4})/);
+                                    
+                                    // Look for EMI amount in next few lines
+                                    let foundAmount = false;
+                                    for (let j = i; j < Math.min(i + 5, lines.length); j++) {
+                                        const checkLine = lines[j];
+                                        if (checkLine.includes(emiStr) || 
+                                            checkLine.includes(emiFormatted.toLowerCase()) || 
+                                            checkLine.includes(emiWithDecimals.toLowerCase()) ||
+                                            checkLine.includes((Math.round(emiAmount) - 1).toString()) ||
+                                            checkLine.includes((Math.round(emiAmount) + 1).toString())) {
+                                            foundAmount = true;
+                                            break;
+                                        }
+                                    }
+                                    
+                                    if (dateMatch && foundAmount) {
+                                        const day = parseInt(dateMatch[1]);
+                                        const month = parseInt(dateMatch[2]) - 1; // 0-indexed
+                                        let year = parseInt(dateMatch[3]);
+                                        if (year < 100) year += 2000;
+                                        
+                                        emiDates.push({
+                                            day: day,
+                                            month: month,
+                                            year: year,
+                                            dateStr: dateMatch[0]
+                                        });
+                                    }
+                                }
+                            }
+                        });
+                        
+                        return emiDates;
+                    }
+                    
+                    // EMI verification data structure
+                    const emiFoundInAccounts = {};
+                    %>
+                    
+                    <% if (debtProfilesList.length > 0) { %>
+                    <div style="margin-bottom: 20px;">
+                        <button onclick="refreshEmiTracking()" style="padding: 8px 15px; background: #1976d2; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9em;">
+                            🔄 Refresh EMI Tracking
+                        </button>
+                    </div>
+                    
+                    <div style="overflow-x: auto;">
+                        <table border="1" style="width:100%;border-collapse:collapse;background:#fff;font-size:0.85em;">
+                            <thead>
+                                <tr style="background:#e3f2fd;">
+                                    <th style="padding:6px;min-width:30px;">S.No</th>
+                                    <th style="padding:6px;min-width:120px;">Applicant</th>
+                                    <th style="padding:6px;min-width:150px;">Bank Name</th>
+                                    <th style="padding:6px;min-width:80px;">Loan Amount</th>
+                                    <th style="padding:6px;min-width:60px;">EMI</th>
+                                    <th style="padding:6px;min-width:80px;">EMI in Bank A/C</th>
+                                    <th style="padding:6px;min-width:70px;">EMI Start</th>
+                                    <th style="padding:6px;min-width:50px;">Tenure</th>
+                                    <th style="padding:6px;background:#fff3e0;min-width:60px;font-weight:bold;">Last 12 Months</th>
+                                    <% months.forEach(function(m) { %>
+                                        <th style="padding:4px;min-width:45px;font-size:0.85em;background:#f5f5f5;"><%= m.label %><br><span style="font-size:0.7em;color:#666;"><%= m.year %></span></th>
+                                    <% }); %>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <%
+                                debtProfilesList.forEach(function(profile, idx) {
+                                    // Find EMI dates for this profile
+                                    const emiDates = findEmiDatesInStatements(profile.emi, profile.bank, bankingDocs);
+                                    
+                                    // Get EMI bank account (auto-detected or manual)
+                                    const emiBankAccount = profile.emiBankAccountNumber || '';
+                                    const emiBankLast4 = emiBankAccount ? emiBankAccount.replace(/\D/g, '').slice(-4) : '';
+                                    
+                                    // Count EMIs found per month
+                                    const emiByMonth = {};
+                                    months.forEach(m => {
+                                        emiByMonth[m.month + '-' + m.year] = [];
+                                    });
+                                    
+                                    emiDates.forEach(ed => {
+                                        const key = ed.month + '-' + ed.year;
+                                        if (emiByMonth[key]) {
+                                            emiByMonth[key].push(ed.day);
+                                        }
+                                    });
+                                    
+                                    // Count total months with EMI found
+                                    let monthsWithEmi = 0;
+                                    months.forEach(m => {
+                                        if (emiByMonth[m.month + '-' + m.year].length > 0) monthsWithEmi++;
+                                    });
+                                %>
+                                    <tr>
+                                        <td style="padding:6px;text-align:center;"><%= idx + 1 %></td>
+                                        <td style="padding:6px;font-size:0.9em;"><%= profile.loanApplicant %></td>
+                                        <td style="padding:6px;font-size:0.9em;"><%= profile.bank %></td>
+                                        <td style="padding:6px;text-align:right;"><%= profile.loanAmount ? '₹' + profile.loanAmount.toLocaleString('en-IN') : '' %></td>
+                                        <td style="padding:6px;text-align:right;font-weight:bold;"><%= profile.emi ? '₹' + Math.round(profile.emi).toLocaleString('en-IN') : '' %></td>
+                                        <td style="padding:6px;text-align:center;font-weight:bold;color:#1976d2;">
+                                            <% if (emiBankLast4) { %>
+                                                ****<%= emiBankLast4 %>
+                                            <% } else { %>
+                                                <span style="color:#999;">-</span>
+                                            <% } %>
+                                        </td>
+                                        <td style="padding:6px;text-align:center;font-size:0.85em;"><%= profile.emiStartDate || '-' %></td>
+                                        <td style="padding:6px;text-align:center;"><%= profile.tenure || '-' %></td>
+                                        <td style="padding:6px;text-align:center;background:#fff3e0;font-weight:bold;">
+                                            <span style="color:<%= monthsWithEmi >= 10 ? '#4caf50' : monthsWithEmi >= 6 ? '#ff9800' : '#d32f2f' %>;">
+                                                Tracking
+                                            </span>
+                                        </td>
+                                        <% months.forEach(function(m) { 
+                                            const key = m.month + '-' + m.year;
+                                            const daysFound = emiByMonth[key] || [];
+                                            const hasEmi = daysFound.length > 0;
+                                            const displayDay = hasEmi ? String(daysFound[0]).padStart(2, '0') : '';
+                                            const displayMonth = String(m.month + 1).padStart(2, '0');
+                                        %>
+                                            <td style="padding:4px;text-align:center;background:<%= hasEmi ? '#e8f5e9' : '#ffebee' %>;font-size:0.85em;">
+                                                <% if (hasEmi) { %>
+                                                    <span style="color:#2e7d32;font-weight:bold;" title="EMI found on <%= displayDay %>/<%= displayMonth %>/<%= m.year %>">
+                                                        <%= displayDay %>/<%= displayMonth %>
+                                                    </span>
+                                                <% } else { %>
+                                                    <span style="color:#999;">-</span>
+                                                <% } %>
+                                            </td>
+                                        <% }); %>
+                                    </tr>
+                                <% }); %>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div style="margin-top: 10px; padding: 10px; background: #f5f5f5; border-radius: 4px; font-size: 0.85em;">
+                        <strong>Legend:</strong>
+                        <span style="margin-left: 15px; padding: 2px 8px; background: #e8f5e9; border-radius: 3px;">DD/MM</span> = EMI found on that date
+                        <span style="margin-left: 15px; padding: 2px 8px; background: #ffebee; border-radius: 3px; color: #999;">-</span> = EMI not found for that month
+                    </div>
+                    <% } else { %>
                     <div class="placeholder-content">
                         <div class="icon">💳</div>
-                        <p>Debt profile documents and analysis will be displayed here.</p>
+                        <p>No debt profile data available. Please add debt profile information in Stage 2.</p>
                     </div>
+                    <% } %>
                 </div>
 
                 <div id="collateralPanel" class="analysis-panel">
@@ -1242,6 +1438,36 @@
 
     <script>
         const proposalId = '<%= proposal.id %>';
+
+        // Refresh EMI tracking by reprocessing bank statements
+        async function refreshEmiTracking() {
+            const btn = event.target;
+            const originalText = btn.innerHTML;
+            
+            btn.innerHTML = '⏳ Processing...';
+            btn.disabled = true;
+            
+            try {
+                const response = await fetch(`/stage2/${proposalId}/reprocess-banking`, {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert(`EMI tracking refreshed! Processed ${result.processedCount} bank statement(s).`);
+                    location.reload();
+                } else {
+                    alert('Error: ' + (result.error || 'Failed to refresh EMI tracking'));
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                }
+            } catch (error) {
+                alert('Error refreshing EMI tracking: ' + error.message);
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        }
 
         // Main Tab Switching (CAM / Analysis)
         function showMainTab(tab) {
