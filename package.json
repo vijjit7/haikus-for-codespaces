@@ -10,6 +10,7 @@
         "dev": "nodemon"
     },
     "dependencies": {
+        "@anthropic-ai/sdk": "^0.73.0",
         "adm-zip": "^0.5.16",
         "axios": "^1.13.3",
         "canvas": "^3.2.1",

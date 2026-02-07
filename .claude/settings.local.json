@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell:*)",
+      "Bash(node:*)",
+      "Bash(dir:*)",
+      "Bash(del \"D:\\\\haikus-for-codespaces\\\\views\\\\stage3-cam.ejs\")",
+      "Bash(taskkill:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(npm run dev:*)",
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(git add:*)",
+      "Bash(curl:*)",
+      "Bash(npm start)",
+      "Bash(where:*)",
+      "Bash(choco install:*)",
+      "Bash(more:*)",
+      "Bash(cmd /c \"dir /s /b C:\\\\*tesseract*.exe 2>nul\")",
+      "Bash(cmd /c:*)",
+      "Bash(ping:*)",
+      "Bash(timeout:*)",
+      "Bash(start:*)",
+      "Bash(npm install)",
+      "Bash(npm audit:*)",
+      "Bash(python3:*)",
+      "Bash(npx kill-port 3000)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(\"C:\\\\Program Files\\\\Java\\\\jdk-21\\\\bin\\\\java.exe\" -version)",
+      "Bash(\"C:\\\\Program Files\\\\Java\\\\jdk-21.0.10\\\\bin\\\\java.exe\" -version)",
+      "Bash(del \"D:\\\\haikus-for-codespaces\\\\debug_extract.js\" \"D:\\\\haikus-for-codespaces\\\\debug_extract2.js\" \"D:\\\\haikus-for-codespaces\\\\debug_extract3.js\" \"D:\\\\haikus-for-codespaces\\\\debug_extract4.js\")",
+      "Bash(tasklist:*)",
+      "Bash(del:*)",
+      "Bash(ls:*)"
+    ]
+  }
+}

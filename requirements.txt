@@ -12,6 +12,10 @@ PyMuPDF>=1.23.0
 # Secondary: pdfplumber - Fallback extraction
 pdfplumber>=0.10.0
 
+# Tabula: Table extraction from PDFs (requires Java)
+tabula-py>=2.9.0
+pandas>=2.0.0
+
 # Supporting libraries
 python-multipart>=0.0.6  # For file uploads in FastAPI
 Pillow>=10.0.0           # Image processing support

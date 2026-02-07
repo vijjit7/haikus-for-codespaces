@@ -27,7 +27,7 @@
                             <label for="applicantName">Applicant Name <span class="required">*</span></label>
                             <input type="text" id="applicantName" name="applicantName" value="<%= proposal.applicantName || proposal.customerName || '' %>" required>
                         </div>
-                        
+
                         <div class="form-group">
                             <label for="applicantType">Applicant Type <span class="required">*</span></label>
                             <select id="applicantType" name="applicantType" required>
@@ -41,7 +41,103 @@
                                 <option value="Others" <%= (proposal.applicantType || proposal.customerType) === 'Others' ? 'selected' : '' %>>Others</option>
                             </select>
                         </div>
+
+                        <div class="form-group" id="applicantAgeGroup" style="<%= (proposal.applicantType || proposal.customerType) === 'Individual' ? '' : 'display: none;' %>">
+                            <label for="applicantAge">Age (Years)</label>
+                            <input type="number" id="applicantAge" name="applicantAge" value="<%= proposal.applicantAge || '' %>" min="18" max="100" placeholder="Age">
+                        </div>
+
+                        <div class="form-group" id="applicantCibilGroup" style="<%= (proposal.applicantType || proposal.customerType) === 'Individual' ? '' : 'display: none;' %>">
+                            <label for="applicantCibil">CIBIL Score</label>
+                            <input type="number" id="applicantCibil" name="applicantCibil" value="<%= proposal.applicantCibil || '' %>" min="300" max="900" placeholder="300-900">
+                        </div>
                     </div>
+
+                    <!-- Co-Applicants Section -->
+                    <h3 class="subsection-title">Co-Applicant Details</h3>
+                    <div id="coApplicantsContainer">
+                        <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
+                            <% proposal.coApplicants.forEach((ca, index) => { %>
+                                <div class="co-applicant-entry" data-index="<%= index %>">
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label for="coApplicantName_<%= index %>">Co-Applicant Name</label>
+                                            <input type="text" id="coApplicantName_<%= index %>" name="coApplicants[<%= index %>].name" value="<%= ca.name || '' %>">
+                                        </div>
+
+                                        <div class="form-group">
+                                            <label for="coApplicantType_<%= index %>">Co-Applicant Type</label>
+                                            <select id="coApplicantType_<%= index %>" name="coApplicants[<%= index %>].type">
+                                                <option value="">Select Type</option>
+                                                <option value="Individual" <%= ca.type === 'Individual' ? 'selected' : '' %>>Individual</option>
+                                                <option value="Proprietorship" <%= ca.type === 'Proprietorship' ? 'selected' : '' %>>Proprietorship</option>
+                                                <option value="Partnership" <%= ca.type === 'Partnership' ? 'selected' : '' %>>Partnership</option>
+                                                <option value="LLP" <%= ca.type === 'LLP' ? 'selected' : '' %>>LLP</option>
+                                                <option value="Private Limited" <%= ca.type === 'Private Limited' ? 'selected' : '' %>>Private Limited</option>
+                                                <option value="Public Limited" <%= ca.type === 'Public Limited' ? 'selected' : '' %>>Public Limited</option>
+                                                <option value="Others" <%= ca.type === 'Others' ? 'selected' : '' %>>Others</option>
+                                            </select>
+                                        </div>
+
+                                        <div class="form-group">
+                                            <label for="coApplicantAge_<%= index %>">Age (Years)</label>
+                                            <input type="number" id="coApplicantAge_<%= index %>" name="coApplicants[<%= index %>].age" value="<%= ca.age || '' %>" min="18" max="100" placeholder="Age">
+                                        </div>
+
+                                        <div class="form-group">
+                                            <label for="coApplicantCibil_<%= index %>">CIBIL Score</label>
+                                            <input type="number" id="coApplicantCibil_<%= index %>" name="coApplicants[<%= index %>].cibil" value="<%= ca.cibil || '' %>" min="300" max="900" placeholder="300-900">
+                                        </div>
+
+                                        <% if (index > 0) { %>
+                                        <div class="form-group" style="display: flex; align-items: flex-end;">
+                                            <button type="button" class="btn btn-remove" onclick="removeCoApplicant(<%= index %>)">
+                                                × Remove
+                                            </button>
+                                        </div>
+                                        <% } %>
+                                    </div>
+                                </div>
+                            <% }); %>
+                        <% } else { %>
+                            <div class="co-applicant-entry" data-index="0">
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="coApplicantName_0">Co-Applicant Name</label>
+                                        <input type="text" id="coApplicantName_0" name="coApplicants[0].name">
+                                    </div>
+
+                                    <div class="form-group">
+                                        <label for="coApplicantType_0">Co-Applicant Type</label>
+                                        <select id="coApplicantType_0" name="coApplicants[0].type">
+                                            <option value="">Select Type</option>
+                                            <option value="Individual">Individual</option>
+                                            <option value="Proprietorship">Proprietorship</option>
+                                            <option value="Partnership">Partnership</option>
+                                            <option value="LLP">LLP</option>
+                                            <option value="Private Limited">Private Limited</option>
+                                            <option value="Public Limited">Public Limited</option>
+                                            <option value="Others">Others</option>
+                                        </select>
+                                    </div>
+
+                                    <div class="form-group">
+                                        <label for="coApplicantAge_0">Age (Years)</label>
+                                        <input type="number" id="coApplicantAge_0" name="coApplicants[0].age" min="18" max="100" placeholder="Age">
+                                    </div>
+
+                                    <div class="form-group">
+                                        <label for="coApplicantCibil_0">CIBIL Score</label>
+                                        <input type="number" id="coApplicantCibil_0" name="coApplicants[0].cibil" min="300" max="900" placeholder="300-900">
+                                    </div>
+                                </div>
+                            </div>
+                        <% } %>
+                    </div>
+
+                    <button type="button" class="btn btn-add" onclick="addCoApplicant()">
+                        + Add Another Co-Applicant
+                    </button>
 
                     <!-- Loan Information -->
                     <h3 class="subsection-title">Loan Information</h3>
@@ -50,7 +146,7 @@
                             <label for="loanAmount">Loan Amount (INR) <span class="required">*</span></label>
                             <input type="number" id="loanAmount" name="loanAmount" value="<%= proposal.loanAmount || '' %>" min="0" step="1000" required>
                         </div>
-                        
+
                         <div class="form-group">
                             <label for="natureOfLoan">Nature of Loan <span class="required">*</span></label>
                             <select id="natureOfLoan" name="natureOfLoan" required>
@@ -58,6 +154,22 @@
                                 <option value="Secured" <%= proposal.natureOfLoan === 'Secured' ? 'selected' : '' %>>Secured</option>
                                 <option value="Unsecured" <%= proposal.natureOfLoan === 'Unsecured' ? 'selected' : '' %>>Unsecured</option>
                             </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="loanCategory">Loan Category <span class="required">*</span></label>
+                            <select id="loanCategory" name="loanCategory" required>
+                                <option value="">Select Category</option>
+                                <option value="Fresh Loan" <%= proposal.loanCategory === 'Fresh Loan' ? 'selected' : '' %>>Fresh Loan</option>
+                                <option value="Balance Transfer" <%= proposal.loanCategory === 'Balance Transfer' ? 'selected' : '' %>>Balance Transfer</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" id="btBankGroup" style="<%= proposal.loanCategory === 'Balance Transfer' ? '' : 'display: none;' %>">
+                            <label for="btFromBank">Balance Transfer From (Bank/Financier) <span class="required">*</span></label>
+                            <input type="text" id="btFromBank" name="btFromBank" value="<%= proposal.btFromBank || '' %>" placeholder="Enter Bank/Financier name" <%= proposal.loanCategory === 'Balance Transfer' ? 'required' : '' %>>
                         </div>
                     </div>
 
@@ -74,7 +186,7 @@
                                 <option value="Others" <%= proposal.typeOfLoan === 'Others' ? 'selected' : '' %>>Others</option>
                             </select>
                         </div>
-                        
+
                         <div class="form-group" id="collateralGroup">
                             <label for="natureOfCollateral">Nature of Collateral <span class="required">*</span></label>
                             <select id="natureOfCollateral" name="natureOfCollateral" required>
@@ -85,6 +197,37 @@
                                 <option value="Commercial Land" <%= proposal.natureOfCollateral === 'Commercial Land' ? 'selected' : '' %>>Commercial Land</option>
                                 <option value="Other Non-Standard Collateral" <%= proposal.natureOfCollateral === 'Other Non-Standard Collateral' ? 'selected' : '' %>>Other Non-Standard Collateral</option>
                             </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="loanTenure">Loan Tenure Sought (Years) <span class="required">*</span></label>
+                            <select id="loanTenure" name="loanTenure" required>
+                                <option value="">Select Tenure</option>
+                                <% for (let i = 1; i <= 30; i++) { %>
+                                    <option value="<%= i %>" <%= proposal.loanTenure == i ? 'selected' : '' %>><%= i %> Year<%= i > 1 ? 's' : '' %></option>
+                                <% } %>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="endUseOfFunds">End Use of Funds <span class="required">*</span></label>
+                            <select id="endUseOfFunds" name="endUseOfFunds" required>
+                                <option value="">Select End Use</option>
+                                <option value="Working Capital" <%= proposal.endUseOfFunds === 'Working Capital' ? 'selected' : '' %>>Working Capital</option>
+                                <option value="Debt Consolidation" <%= proposal.endUseOfFunds === 'Debt Consolidation' ? 'selected' : '' %>>Debt Consolidation</option>
+                                <option value="Purchase of Property" <%= proposal.endUseOfFunds === 'Purchase of Property' ? 'selected' : '' %>>Purchase of Property</option>
+                                <option value="Business Expansion" <%= proposal.endUseOfFunds === 'Business Expansion' ? 'selected' : '' %>>Business Expansion</option>
+                                <option value="Others" <%= proposal.endUseOfFunds === 'Others' ? 'selected' : '' %>>Others</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row" id="endUseOthersGroup" style="<%= proposal.endUseOfFunds === 'Others' ? '' : 'display: none;' %>">
+                        <div class="form-group" style="flex: 1;">
+                            <label for="endUseOthersDesc">Please specify End Use <span class="required">*</span></label>
+                            <textarea id="endUseOthersDesc" name="endUseOthersDesc" rows="2" placeholder="Describe the end use of funds..." <%= proposal.endUseOfFunds === 'Others' ? 'required' : '' %>><%= proposal.endUseOthersDesc || '' %></textarea>
                         </div>
                     </div>
                 </section>
@@ -114,6 +257,11 @@
                         <div class="form-group">
                             <label for="phone">Phone Number <span class="required">*</span></label>
                             <input type="tel" id="phone" name="phone" value="<%= proposal.phone || '' %>" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="website">Website (if any)</label>
+                            <input type="url" id="website" name="website" value="<%= proposal.website || '' %>" placeholder="https://www.example.com">
                         </div>
                     </div>
 
@@ -177,11 +325,67 @@
     <script>
         const form = document.getElementById('editProposalForm');
         const proposalId = '<%= proposal.id %>';
+        let coApplicantCount = <%= (proposal.coApplicants && proposal.coApplicants.length > 0) ? proposal.coApplicants.length : 1 %>;
 
         // Nature of Loan toggle for collateral field
         const natureOfLoanSelect = document.getElementById('natureOfLoan');
         const collateralGroup = document.getElementById('collateralGroup');
         const collateralSelect = document.getElementById('natureOfCollateral');
+
+        // Add Co-Applicant functionality
+        function addCoApplicant() {
+            const container = document.getElementById('coApplicantsContainer');
+            const newEntry = document.createElement('div');
+            newEntry.className = 'co-applicant-entry';
+            newEntry.setAttribute('data-index', coApplicantCount);
+            newEntry.innerHTML = `
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="coApplicantName_${coApplicantCount}">Co-Applicant Name</label>
+                        <input type="text" id="coApplicantName_${coApplicantCount}" name="coApplicants[${coApplicantCount}].name">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="coApplicantType_${coApplicantCount}">Co-Applicant Type</label>
+                        <select id="coApplicantType_${coApplicantCount}" name="coApplicants[${coApplicantCount}].type">
+                            <option value="">Select Type</option>
+                            <option value="Individual">Individual</option>
+                            <option value="Proprietorship">Proprietorship</option>
+                            <option value="Partnership">Partnership</option>
+                            <option value="LLP">LLP</option>
+                            <option value="Private Limited">Private Limited</option>
+                            <option value="Public Limited">Public Limited</option>
+                            <option value="Others">Others</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="coApplicantAge_${coApplicantCount}">Age (Years)</label>
+                        <input type="number" id="coApplicantAge_${coApplicantCount}" name="coApplicants[${coApplicantCount}].age" min="18" max="100" placeholder="Age">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="coApplicantCibil_${coApplicantCount}">CIBIL Score</label>
+                        <input type="number" id="coApplicantCibil_${coApplicantCount}" name="coApplicants[${coApplicantCount}].cibil" min="300" max="900" placeholder="300-900">
+                    </div>
+
+                    <div class="form-group" style="display: flex; align-items: flex-end;">
+                        <button type="button" class="btn btn-remove" onclick="removeCoApplicant(${coApplicantCount})">
+                            × Remove
+                        </button>
+                    </div>
+                </div>
+            `;
+            container.appendChild(newEntry);
+            coApplicantCount++;
+        }
+
+        function removeCoApplicant(index) {
+            const entry = document.querySelector(`.co-applicant-entry[data-index="${index}"]`);
+            if (entry) {
+                entry.remove();
+            }
+        }
 
         function toggleCollateralField() {
             if (natureOfLoanSelect.value === 'Unsecured') {
@@ -198,14 +402,94 @@
         // Initialize on page load
         toggleCollateralField();
 
+        // Applicant Type toggle for Age/CIBIL fields (show for Individual only)
+        const applicantTypeSelect = document.getElementById('applicantType');
+        const applicantAgeGroup = document.getElementById('applicantAgeGroup');
+        const applicantCibilGroup = document.getElementById('applicantCibilGroup');
+
+        function toggleApplicantFields() {
+            if (applicantTypeSelect.value === 'Individual') {
+                applicantAgeGroup.style.display = '';
+                applicantCibilGroup.style.display = '';
+            } else {
+                applicantAgeGroup.style.display = 'none';
+                applicantCibilGroup.style.display = 'none';
+            }
+        }
+
+        applicantTypeSelect.addEventListener('change', toggleApplicantFields);
+        // Initialize on page load
+        toggleApplicantFields();
+
+        // Loan Category toggle for Balance Transfer bank field
+        const loanCategorySelect = document.getElementById('loanCategory');
+        const btBankGroup = document.getElementById('btBankGroup');
+        const btFromBankInput = document.getElementById('btFromBank');
+
+        function toggleBTBankField() {
+            if (loanCategorySelect.value === 'Balance Transfer') {
+                btBankGroup.style.display = '';
+                btFromBankInput.setAttribute('required', 'required');
+            } else {
+                btBankGroup.style.display = 'none';
+                btFromBankInput.removeAttribute('required');
+                btFromBankInput.value = '';
+            }
+        }
+
+        loanCategorySelect.addEventListener('change', toggleBTBankField);
+        // Initialize on page load
+        toggleBTBankField();
+
+        // End Use of Funds toggle for Others description
+        const endUseSelect = document.getElementById('endUseOfFunds');
+        const endUseOthersGroup = document.getElementById('endUseOthersGroup');
+        const endUseOthersDesc = document.getElementById('endUseOthersDesc');
+
+        function toggleEndUseOthers() {
+            if (endUseSelect.value === 'Others') {
+                endUseOthersGroup.style.display = '';
+                endUseOthersDesc.setAttribute('required', 'required');
+            } else {
+                endUseOthersGroup.style.display = 'none';
+                endUseOthersDesc.removeAttribute('required');
+                endUseOthersDesc.value = '';
+            }
+        }
+
+        endUseSelect.addEventListener('change', toggleEndUseOthers);
+        // Initialize on page load
+        toggleEndUseOthers();
+
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
-            
+
             const formData = new FormData(form);
             const data = {};
-            
+
+            // Handle regular inputs and co-applicants
             for (let [key, value] of formData.entries()) {
-                data[key] = value;
+                if (key.startsWith('coApplicants[')) {
+                    // Parse co-applicant data
+                    const match = key.match(/coApplicants\[(\d+)\]\.(\w+)/);
+                    if (match) {
+                        if (!data.coApplicants) data.coApplicants = [];
+                        const index = parseInt(match[1]);
+                        const field = match[2];
+
+                        if (!data.coApplicants[index]) {
+                            data.coApplicants[index] = {};
+                        }
+                        data.coApplicants[index][field] = value;
+                    }
+                } else {
+                    data[key] = value;
+                }
+            }
+
+            // Filter out empty co-applicants
+            if (data.coApplicants) {
+                data.coApplicants = data.coApplicants.filter(ca => ca && ca.name && ca.name.trim() !== '');
             }
 
             try {

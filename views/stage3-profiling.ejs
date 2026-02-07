@@ -34,6 +34,167 @@
         </div>
 
         <div class="profiling-container">
+            <!-- Debt Profile Analysis Section -->
+            <section class="form-section">
+                <h2>📊 Debt Profile Analysis</h2>
+                
+                <% if (debtProfiles && debtProfiles.length > 0) { %>
+                <%
+                // EMI Calculation function: EMI = P × r × (1+r)^n / ((1+r)^n - 1)
+                function calculateEMI(principal, annualRate, tenureMonths) {
+                    if (!principal || !annualRate || !tenureMonths || principal <= 0 || tenureMonths <= 0) {
+                        return null;
+                    }
+                    const monthlyRate = annualRate / 12 / 100;
+                    if (monthlyRate === 0) {
+                        return Math.round(principal / tenureMonths);
+                    }
+                    const emi = principal * monthlyRate * Math.pow(1 + monthlyRate, tenureMonths) / (Math.pow(1 + monthlyRate, tenureMonths) - 1);
+                    return Math.round(emi);
+                }
+
+                // POS (Principal Outstanding) Calculation: POS = P × [(1+r)^n - (1+r)^k] / [(1+r)^n - 1]
+                function calculatePOS(principal, annualRate, tenureMonths, monthsCompleted) {
+                    if (!principal || !tenureMonths || principal <= 0 || tenureMonths <= 0) {
+                        return null;
+                    }
+                    if (!monthsCompleted || monthsCompleted <= 0) {
+                        return principal;
+                    }
+                    if (monthsCompleted >= tenureMonths) {
+                        return 0;
+                    }
+                    const monthlyRate = annualRate / 12 / 100;
+                    if (monthlyRate === 0) {
+                        return Math.round(principal - (principal / tenureMonths) * monthsCompleted);
+                    }
+                    const n = tenureMonths;
+                    const k = monthsCompleted;
+                    const pos = principal * (Math.pow(1 + monthlyRate, n) - Math.pow(1 + monthlyRate, k)) / (Math.pow(1 + monthlyRate, n) - 1);
+                    return Math.round(pos);
+                }
+
+                // Check EMI tolerance (allow 2% variance)
+                function isEMIMatching(enteredEMI, calculatedEMI) {
+                    if (!enteredEMI || !calculatedEMI) return true;
+                    const tolerance = calculatedEMI * 0.02;
+                    return Math.abs(enteredEMI - calculatedEMI) <= tolerance;
+                }
+                %>
+                <div style="overflow-x:auto; margin-top: 15px;">
+                <table border="1" style="width:100%;border-collapse:collapse;background:#fff;font-size:0.9em;">
+                    <thead>
+                        <tr style="background:#e3f2fd;">
+                            <th style="padding:8px;">S.No</th>
+                            <th style="padding:8px;">Applicant</th>
+                            <th style="padding:8px;">Bank Name</th>
+                            <th style="padding:8px;">Loan Type</th>
+                            <th style="padding:8px;">Loan Amount</th>
+                            <th style="padding:8px;">POS</th>
+                            <th style="padding:8px;">EMI (Entered)</th>
+                            <th style="padding:8px;">EMI (Calculated)</th>
+                            <th style="padding:8px;">ROI %</th>
+                            <th style="padding:8px;">Sanction Date</th>
+                            <th style="padding:8px;">Tenure (Months)</th>
+                            <th style="padding:8px;">EMI Start Date</th>
+                            <th style="padding:8px;">EMI End Date</th>
+                            <th style="padding:8px;">Months Completed</th>
+                            <th style="padding:8px;">% Tenure Completed</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <%
+                        let totalLoanAmount = 0;
+                        let totalEmi = 0;
+                        let totalCalculatedEmi = 0;
+                        let totalPOS = 0;
+                        debtProfiles.forEach(function(profile) {
+                            totalLoanAmount += profile.loanAmount || 0;
+                            totalEmi += profile.emi || 0;
+
+                            const calculatedEMI = calculateEMI(profile.loanAmount, profile.roi, profile.tenure);
+                            if (calculatedEMI) totalCalculatedEmi += calculatedEMI;
+                            const emiMatches = isEMIMatching(profile.emi, calculatedEMI);
+
+                            const pos = calculatePOS(profile.loanAmount, profile.roi, profile.tenure, profile.monthsCompleted);
+                            if (pos !== null) totalPOS += pos;
+                        %>
+                            <tr>
+                                <td style="padding:8px;text-align:center;"><%= profile.sNo %></td>
+                                <td style="padding:8px;"><%= profile.loanApplicant %></td>
+                                <td style="padding:8px;"><%= profile.bank %></td>
+                                <td style="padding:8px;"><%= profile.loanType %></td>
+                                <td style="padding:8px;text-align:right;"><%= profile.loanAmount ? profile.loanAmount.toLocaleString('en-IN') : '' %></td>
+                                <td style="padding:8px;text-align:right;background:#fff8e1;">
+                                    <% if (pos !== null) { %>
+                                        <strong>₹<%= pos.toLocaleString('en-IN') %></strong>
+                                        <% if (profile.loanAmount && pos > 0) { %>
+                                            <div style="font-size:0.7em;color:#666;">
+                                                (<%= Math.round((pos / profile.loanAmount) * 100) %>% remaining)
+                                            </div>
+                                        <% } %>
+                                    <% } else { %>
+                                        <span style="color:#999;font-size:0.8em;">N/A</span>
+                                    <% } %>
+                                </td>
+                                <td style="padding:8px;text-align:right;<%= !emiMatches ? 'background:#ffebee;' : '' %>">
+                                    <div style="display:flex;align-items:center;justify-content:flex-end;gap:5px;">
+                                        <span><%= profile.emi ? profile.emi.toLocaleString('en-IN') : '' %></span>
+                                        <% if (!emiMatches && calculatedEMI) { %>
+                                            <span style="color:#d32f2f;font-weight:bold;" title="EMI mismatch! Expected: ₹<%= calculatedEMI.toLocaleString('en-IN') %>">❌</span>
+                                        <% } else if (emiMatches && calculatedEMI && profile.emi) { %>
+                                            <span style="color:#4caf50;" title="EMI verified">✓</span>
+                                        <% } %>
+                                    </div>
+                                </td>
+                                <td style="padding:8px;text-align:right;<%= !emiMatches ? 'background:#e8f5e9;font-weight:bold;' : '' %>">
+                                    <% if (calculatedEMI) { %>
+                                        <%= calculatedEMI.toLocaleString('en-IN') %>
+                                        <% if (!emiMatches && profile.emi) { %>
+                                            <div style="font-size:0.75em;color:#d32f2f;">
+                                                (Diff: ₹<%= Math.abs(profile.emi - calculatedEMI).toLocaleString('en-IN') %>)
+                                            </div>
+                                        <% } %>
+                                    <% } else { %>
+                                        <span style="color:#999;font-size:0.8em;">N/A</span>
+                                    <% } %>
+                                </td>
+                                <td style="padding:8px;text-align:center;"><%= profile.roi %><%= profile.roi ? '%' : '' %></td>
+                                <td style="padding:8px;text-align:center;"><%= profile.sanctionDate %></td>
+                                <td style="padding:8px;text-align:center;"><%= profile.tenure %></td>
+                                <td style="padding:8px;text-align:center;"><%= profile.emiStartDate %></td>
+                                <td style="padding:8px;text-align:center;"><%= profile.emiEndDate %></td>
+                                <td style="padding:8px;text-align:center;"><%= profile.monthsCompleted %></td>
+                                <td style="padding:8px;text-align:center;">
+                                    <div style="display:flex;align-items:center;gap:5px;">
+                                        <div style="flex:1;background:#e0e0e0;border-radius:4px;height:8px;">
+                                            <div style="width:<%= profile.percentTenureCompleted %>%;background:<%= profile.percentTenureCompleted >= 80 ? '#4caf50' : profile.percentTenureCompleted >= 50 ? '#ff9800' : '#2196f3' %>;height:100%;border-radius:4px;"></div>
+                                        </div>
+                                        <span><%= profile.percentTenureCompleted %>%</span>
+                                    </div>
+                                </td>
+                            </tr>
+                        <% }); %>
+                    </tbody>
+                    <tfoot>
+                        <tr style="background:#e8f5e9; font-weight:bold;">
+                            <td style="padding:10px;text-align:center;" colspan="4"><strong>TOTAL</strong></td>
+                            <td style="padding:10px;text-align:right;"><strong>₹<%= totalLoanAmount.toLocaleString('en-IN') %></strong></td>
+                            <td style="padding:10px;text-align:right;background:#fff8e1;"><strong>₹<%= totalPOS.toLocaleString('en-IN') %></strong></td>
+                            <td style="padding:10px;text-align:right;"><strong>₹<%= totalEmi.toLocaleString('en-IN') %></strong></td>
+                            <td style="padding:10px;text-align:right;"><strong>₹<%= totalCalculatedEmi.toLocaleString('en-IN') %></strong></td>
+                            <td style="padding:10px;" colspan="7"></td>
+                        </tr>
+                    </tfoot>
+                </table>
+                </div>
+                <% } else { %>
+                    <p style="color: #666; font-style: italic; margin-top: 15px;">
+                        No debt profile data available. Please upload debt profile documents in Stage 2.
+                    </p>
+                <% } %>
+            </section>
+
             <form id="profilingForm">
                 
                 <!-- Financial Profiling -->

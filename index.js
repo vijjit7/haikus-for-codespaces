@@ -1852,6 +1852,220 @@ Return the extracted text in a clear, structured format.`
   }
 }
 
+// Extract text from scanned PDF using Vision OCR (renders first page to image)
+async function extractTextFromScannedPDF(pdfPath) {
+  try {
+    console.log('🔍 Attempting Vision OCR for scanned PDF:', path.basename(pdfPath));
+
+    // Load PDF using pdfjs-dist
+    const dataBuffer = fs.readFileSync(pdfPath);
+    const uint8Array = new Uint8Array(dataBuffer);
+    const pdfDoc = await pdfjsLib.getDocument({ data: uint8Array }).promise;
+
+    const numPages = pdfDoc.numPages;
+    console.log(`PDF has ${numPages} pages, rendering first page for OCR...`);
+
+    // Render first page to canvas
+    const page = await pdfDoc.getPage(1);
+    const viewport = page.getViewport({ scale: 2.0 }); // Higher scale for better OCR
+    const canvas = createCanvas(viewport.width, viewport.height);
+    const context = canvas.getContext('2d');
+
+    await page.render({
+      canvasContext: context,
+      viewport: viewport
+    }).promise;
+
+    // Convert canvas to PNG buffer
+    const imageBuffer = canvas.toBuffer('image/png');
+    const base64Image = imageBuffer.toString('base64');
+
+    console.log(`Rendered page to image: ${(imageBuffer.length / 1024).toFixed(2)} KB`);
+
+    // Send to Vision API for OCR
+    let retries = 2;
+    let delay = 10000;
+
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        console.log(`🤖 Vision OCR attempt ${attempt}/${retries} for scanned PDF...`);
+
+        const response = await axios.post(
+          OPENROUTER_API_URL,
+          {
+            model: 'openai/gpt-4o',
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text: `Extract ALL text from this document image. Pay special attention to:
+- Names, dates of birth, PAN numbers, Aadhaar numbers
+- Credit/CIBIL scores and bureau names
+- Any personal identification details
+- All numbers, dates, and reference numbers
+
+Return the extracted text exactly as it appears in the document.`
+                  },
+                  {
+                    type: 'image_url',
+                    image_url: {
+                      url: `data:image/png;base64,${base64Image}`
+                    }
+                  }
+                ]
+              }
+            ],
+            temperature: 0.1,
+            max_tokens: 4000
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+              'Content-Type': 'application/json',
+              'HTTP-Referer': 'http://localhost:3000',
+              'X-Title': 'Customer Profiling App'
+            },
+            timeout: 60000
+          }
+        );
+
+        const extractedText = response.data.choices[0].message.content;
+        console.log(`✓ Scanned PDF OCR successful: ${extractedText.length} characters extracted`);
+
+        return {
+          success: true,
+          text: extractedText,
+          numPages: numPages,
+          method: 'vision-ocr-pdf',
+          charCount: extractedText.length
+        };
+
+      } catch (error) {
+        if (error.response && error.response.status === 429 && attempt < retries) {
+          console.log(`⚠️ Rate limit hit, waiting ${delay}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          delay *= 2;
+        } else if (attempt === retries) {
+          throw error;
+        }
+      }
+    }
+
+    return { success: false, text: '', method: 'vision-ocr-pdf', error: 'Max retries reached' };
+
+  } catch (error) {
+    console.error('✗ Scanned PDF OCR failed:', error.message);
+    return { success: false, text: '', method: 'vision-ocr-pdf', error: error.message };
+  }
+}
+
+// Extract text from ALL pages of a scanned PDF using Vision OCR (batches pages for efficiency)
+async function extractAllPagesWithVisionOCR(pdfPath) {
+  try {
+    console.log('🔍 Starting multi-page Vision OCR:', path.basename(pdfPath));
+
+    const dataBuffer = fs.readFileSync(pdfPath);
+    const uint8Array = new Uint8Array(dataBuffer);
+    const pdfDoc = await pdfjsLib.getDocument({ data: uint8Array }).promise;
+    const numPages = pdfDoc.numPages;
+
+    console.log(`📄 Processing ${numPages} pages in batches...`);
+
+    let allText = '';
+    const BATCH_SIZE = 4;
+    const MAX_PAGES = 30;
+    const pagesToProcess = Math.min(numPages, MAX_PAGES);
+
+    for (let startPage = 1; startPage <= pagesToProcess; startPage += BATCH_SIZE) {
+      const endPage = Math.min(startPage + BATCH_SIZE - 1, pagesToProcess);
+      const imageContents = [];
+
+      for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
+        const page = await pdfDoc.getPage(pageNum);
+        const viewport = page.getViewport({ scale: 1.5 });
+        const canvas = createCanvas(viewport.width, viewport.height);
+        const context = canvas.getContext('2d');
+
+        await page.render({ canvasContext: context, viewport }).promise;
+
+        const imageBuffer = canvas.toBuffer('image/png');
+        const base64Image = imageBuffer.toString('base64');
+
+        imageContents.push({
+          type: 'image_url',
+          image_url: { url: `data:image/png;base64,${base64Image}` }
+        });
+      }
+
+      let retries = 2;
+      let delay = 10000;
+      for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+          console.log(`🤖 OCR pages ${startPage}-${endPage} (attempt ${attempt})...`);
+
+          const response = await axios.post(
+            OPENROUTER_API_URL,
+            {
+              model: 'openai/gpt-4o',
+              messages: [{
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text: `Extract ALL text from these ${endPage - startPage + 1} document page(s). These are financial/ITR documents. Preserve all text including headings like "Computation of Total Income", "Balance Sheet", "Profit and Loss Account", "Indian Income Tax Return Acknowledgement", assessment year, financial year, etc. Extract all numbers, dates, and financial data. Return the text exactly as it appears.`
+                  },
+                  ...imageContents
+                ]
+              }],
+              temperature: 0.1,
+              max_tokens: 4000
+            },
+            {
+              headers: {
+                'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': 'http://localhost:3000',
+                'X-Title': 'Customer Profiling App'
+              },
+              timeout: 90000
+            }
+          );
+
+          const batchText = response.data.choices[0].message.content;
+          allText += '\n' + batchText;
+          console.log(`✓ Pages ${startPage}-${endPage}: ${batchText.length} chars extracted`);
+          break; // Success, move to next batch
+
+        } catch (error) {
+          if (error.response && error.response.status === 429 && attempt < retries) {
+            console.log(`⚠️ Rate limit hit, waiting ${delay}ms before retry...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            delay *= 2;
+          } else if (attempt === retries) {
+            console.error(`✗ OCR failed for pages ${startPage}-${endPage}:`, error.message);
+          }
+        }
+      }
+    }
+
+    console.log(`✓ Multi-page OCR complete: ${allText.length} total chars from ${pagesToProcess} pages`);
+
+    return {
+      success: allText.length > 0,
+      text: allText,
+      numPages: numPages,
+      method: 'vision-ocr-multipage',
+      charCount: allText.length
+    };
+
+  } catch (error) {
+    console.error('✗ Multi-page Vision OCR failed:', error.message);
+    return { success: false, text: '', method: 'vision-ocr-multipage', error: error.message };
+  }
+}
+
 // Extract partnership deed details from text or extracted tables
 function extractPartnershipDeedDetails(fullText, tables = []) {
   const details = {
@@ -2129,7 +2343,7 @@ function extractPrivateLimitedDetails(fullText, tables = []) {
   console.log('Extracting Private Limited details from text length:', fullText.length);
 
   // SPECIAL HANDLING: Line-by-line format (common in List of Directors & Shareholders PDFs)
-  // Format: Each field on separate line - Name, then DIN, then Designation
+  // Format: Each field on separate line - S.No, Name, DIN/Shares, etc.
   const lines = fullText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
   // Check if this is a directors/shareholders list document
@@ -2139,45 +2353,98 @@ function extractPrivateLimitedDetails(fullText, tables = []) {
   if (hasDirectorsList || hasShareholdersList) {
     console.log('Detected structured Directors/Shareholders list format');
 
-    // Find director entries - look for 8-digit DIN and get name from previous line
+    // Helper function to check if a string looks like a person/entity name
+    function looksLikeName(str) {
+      if (!str || str.length < 5 || str.length > 80) return false;
+      // Must contain at least one letter
+      if (!/[a-zA-Z]/.test(str)) return false;
+      // Should not be just numbers with commas/dots
+      if (/^[\d,.\s]+$/.test(str)) return false;
+      // Should not be common headers or labels
+      if (/^(S\.?No\.?|DIN|Designation|Name|Shares|Held|Value|Percentage|%|Rs\.?|\(Rs\.?\)|TOTAL)$/i.test(str)) return false;
+      return true;
+    }
+
+    // Helper function to check if a string is a valid FULL person name (for directors)
+    function isValidDirectorName(str) {
+      if (!str || str.length < 5 || str.length > 80) return false;
+      // Must have at least 2 words (first name + last name)
+      const words = str.trim().split(/\s+/);
+      if (words.length < 2) return false;
+      // Each word should be at least 2 characters and start with a letter
+      for (const word of words) {
+        if (word.length < 2 || !/^[A-Za-z]/.test(word)) return false;
+      }
+      // Should not contain common headers
+      if (/DIN|Designation|Director|Chairman|Managing|S\.?No/i.test(str)) return false;
+      return true;
+    }
+
+    // DIRECTORS EXTRACTION: Find entries using DIN (8 digits) pattern
+    // Table format: S.No | Name | DIN | Designation
+    // First pass: collect all potential directors
+    const potentialDirectors = [];
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
-      // Check if this line is a DIN (8 digits)
+      // Check if this line is exactly an 8-digit DIN (on its own line)
       if (/^\d{8}$/.test(line)) {
         const din = line;
-        // Name should be in previous line
-        const nameLine = lines[i - 1];
-        // Designation might be in next lines
+        let name = null;
         let designation = 'Director';
-        if (i + 1 < lines.length) {
-          const nextLine = lines[i + 1];
-          if (/chairman|managing|director|whole\s*time|executive/i.test(nextLine)) {
-            designation = nextLine;
-            // Check if designation continues on next line
-            if (i + 2 < lines.length && /director/i.test(lines[i + 2]) && !/\d{8}/.test(lines[i + 2])) {
-              designation += ' ' + lines[i + 2];
-            }
+
+        // Look backwards for the name - must be a valid full name
+        for (let j = i - 1; j >= Math.max(0, i - 3); j--) {
+          if (isValidDirectorName(lines[j])) {
+            name = lines[j];
+            break;
           }
         }
 
-        if (nameLine && !/^\d+$/.test(nameLine) && !/S\.?No|DIN|Designation|Name of/i.test(nameLine)) {
-          const cleanName = nameLine.trim();
-          if (cleanName.length > 2 && cleanName.length < 60) {
-            details.directors.push({
-              name: cleanName,
-              din: din,
-              designation: designation.trim()
-            });
-            console.log(`Found director (line format): ${cleanName} (DIN: ${din}, ${designation.trim()})`);
+        // Look forward for designation
+        let designationParts = [];
+        for (let j = i + 1; j < Math.min(lines.length, i + 5); j++) {
+          const nextLine = lines[j];
+          // Stop if we hit another DIN, serial number starting a new row, or shareholder section
+          if (/^\d{8}$/.test(nextLine) || /SHAREHOLDING|Name of the Shareholder/i.test(nextLine)) break;
+          if (/^\d{1,2}$/.test(nextLine) && j > i + 1) break; // New row serial number
+
+          if (/chairman|managing|director|whole\s*time|executive|non-executive|independent|additional|nominee/i.test(nextLine)) {
+            designationParts.push(nextLine);
           }
+        }
+        if (designationParts.length > 0) {
+          designation = designationParts.join(' ');
+        }
+
+        if (name) {
+          potentialDirectors.push({
+            name: name,
+            din: din,
+            designation: designation.trim()
+          });
+          console.log(`Found potential director: ${name} (DIN: ${din}, ${designation.trim()})`);
         }
       }
     }
 
-    // Find shareholder entries - look for share counts (numbers with commas or plain numbers)
-    // Format: Name, then Shares, then Value, then Percentage
+    // Deduplicate by DIN - keep the entry with the longest/best name
+    const dinMap = new Map();
+    for (const director of potentialDirectors) {
+      const existing = dinMap.get(director.din);
+      if (!existing || director.name.length > existing.name.length) {
+        dinMap.set(director.din, director);
+      }
+    }
+    details.directors = Array.from(dinMap.values());
+    console.log(`After deduplication: ${details.directors.length} directors`);
+
+    // SHAREHOLDERS EXTRACTION: Row-based parsing
+    // Table format: S.No | Name | Shares | Value | Percentage
     let inShareholderSection = false;
+    let currentRowStart = -1;
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
@@ -2186,39 +2453,89 @@ function extractPrivateLimitedDetails(fullText, tables = []) {
         continue;
       }
 
+      // Stop at TOTAL row or end of section
+      if (inShareholderSection && /^TOTAL$/i.test(line)) {
+        break;
+      }
+
       if (inShareholderSection) {
-        // Look for share count pattern (e.g., "15,000" or "15000" or just "1")
-        if (/^[\d,]+$/.test(line) && !lines[i-1]?.match(/^\d+$/)) {
-          const shares = line.replace(/,/g, '');
-          // Name should be in previous line (skip if it's a serial number)
-          let nameLineIdx = i - 1;
-          while (nameLineIdx >= 0 && /^\d+$/.test(lines[nameLineIdx])) {
-            nameLineIdx--;
+        // Detect row start: a single or double digit serial number (1, 2, 3, etc.)
+        if (/^[1-9]\d?$/.test(line)) {
+          // Process previous row if we have one started
+          if (currentRowStart >= 0) {
+            // Extract data from lines[currentRowStart+1] to lines[i-1]
+            const rowLines = lines.slice(currentRowStart + 1, i);
+            parseShareholderRow(rowLines, details);
           }
-          const nameLine = lines[nameLineIdx];
+          currentRowStart = i;
+        }
+      }
+    }
 
-          // Percentage might be a few lines ahead
-          let percentage = null;
-          for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
-            if (/^\d+\.?\d*$/.test(lines[j]) && parseFloat(lines[j]) <= 100) {
-              percentage = lines[j];
-              break;
-            }
-          }
+    // Don't forget the last row
+    if (currentRowStart >= 0) {
+      // Find end - either TOTAL or end of relevant section
+      let endIdx = lines.length;
+      for (let i = currentRowStart + 1; i < lines.length; i++) {
+        if (/^TOTAL$/i.test(lines[i])) {
+          endIdx = i;
+          break;
+        }
+      }
+      const rowLines = lines.slice(currentRowStart + 1, endIdx);
+      parseShareholderRow(rowLines, details);
+    }
 
-          if (nameLine && !/S\.?No|Shares|Held|Value|Percentage|Name of/i.test(nameLine)) {
-            const cleanName = nameLine.trim();
-            // Check if this shareholder already exists
-            const exists = details.shareholders.some(s => s.name.toLowerCase() === cleanName.toLowerCase());
-            if (!exists && cleanName.length > 2 && cleanName.length < 60) {
-              details.shareholders.push({
-                name: cleanName,
-                shares: shares,
-                percentage: percentage
-              });
-              console.log(`Found shareholder (line format): ${cleanName} (${shares} shares, ${percentage}%)`);
-            }
+    function parseShareholderRow(rowLines, details) {
+      if (rowLines.length < 2) return;
+
+      let name = null;
+      let shares = null;
+      let percentage = null;
+
+      // First non-numeric line is typically the name
+      for (let i = 0; i < rowLines.length; i++) {
+        const line = rowLines[i];
+        if (looksLikeName(line)) {
+          name = line;
+          break;
+        }
+      }
+
+      // Look for shares (number with commas, typically first number after name)
+      // And percentage (number with decimal, typically 0-100)
+      let foundShares = false;
+      for (let i = 0; i < rowLines.length; i++) {
+        const line = rowLines[i];
+        // Skip if it's the name we found
+        if (line === name) continue;
+
+        // Check if it's a number (with optional commas)
+        if (/^[\d,]+$/.test(line)) {
+          if (!foundShares) {
+            shares = line.replace(/,/g, '');
+            foundShares = true;
           }
+          // Skip value column (second number)
+        }
+        // Check for percentage (decimal number, typically ends in .00 or similar)
+        else if (/^\d+\.\d+$/.test(line)) {
+          const val = parseFloat(line);
+          if (val <= 100) {
+            percentage = line;
+          }
+        }
+      }
+
+      if (name && shares) {
+        const exists = details.shareholders.some(s => s.name.toLowerCase() === name.toLowerCase());
+        if (!exists) {
+          details.shareholders.push({
+            name: name,
+            shares: shares,
+            percentage: percentage
+          });
+          console.log(`Found shareholder: ${name} (${shares} shares, ${percentage}%)`);
         }
       }
     }
@@ -2533,6 +2850,25 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
         } catch (err) {
           console.error('PDF parsing error:', err);
         }
+
+        // Tier 4: Vision OCR fallback for scanned PDFs (personalId, creditReports)
+        if (!fullText || fullText.trim().length === 0) {
+          const ocrCategories = ['personalId', 'creditReports'];
+          if (ocrCategories.includes(fileDetail.category)) {
+            console.log(`⚠ Empty text for ${fileDetail.category} PDF, trying Vision OCR fallback...`);
+            try {
+              const ocrResult = await extractTextFromScannedPDF(file.path);
+              if (ocrResult.success && ocrResult.text) {
+                fullText = ocrResult.text;
+                extractedText = ocrResult.text.substring(0, 500);
+                if (ocrResult.numPages) pageCount = ocrResult.numPages;
+                console.log(`✓ Vision OCR extracted ${ocrResult.charCount} characters from scanned PDF`);
+              }
+            } catch (ocrErr) {
+              console.error('Vision OCR fallback error:', ocrErr.message);
+            }
+          }
+        }
       }
       // Process images (JPG/PNG) with Vision OCR
       else if (file.mimetype && (file.mimetype.startsWith('image/jpeg') || 
@@ -2579,7 +2915,158 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
         
         console.log('Extracted details:', JSON.stringify(extractedDetails));
       }
-      
+
+      // Extract CIBIL/Credit Score from credit reports
+      if (fileDetail.category === 'creditReports' && fullText) {
+        console.log('Processing Credit Report for score extraction:', file.originalname);
+        const lowerName = file.originalname.toLowerCase();
+
+        let cibilScore = null;
+        let creditBureau = null;
+        let personName = null;
+
+        // Detect credit bureau type
+        if (fullText.toLowerCase().includes('cibil') || fullText.toLowerCase().includes('transunion')) {
+          creditBureau = 'CIBIL';
+        } else if (fullText.toLowerCase().includes('experian')) {
+          creditBureau = 'Experian';
+        } else if (fullText.toLowerCase().includes('equifax')) {
+          creditBureau = 'Equifax';
+        } else if (fullText.toLowerCase().includes('crif') || fullText.toLowerCase().includes('high mark')) {
+          creditBureau = 'CRIF High Mark';
+        }
+
+        // Extract CIBIL/Credit Score - common patterns
+        const scorePatterns = [
+          /cibil\s*score\s*(?:is|:)\s*(\d{3})/i,
+          /credit\s*score\s*(?:is|:)\s*(\d{3})/i,
+          /cibil\s*score[:\s]*(\d{3})/i,
+          /credit\s*score[:\s]*(\d{3})/i,
+          /score[:\s]*(\d{3})\s*(?:out of|\/)\s*900/i,
+          /transunion\s*cibil\s*score[:\s]*(\d{3})/i,
+          /your\s*score\s*(?:is|:)\s*(\d{3})/i,
+          /your\s*score[:\s]*(\d{3})/i,
+          /cibil\s*transunion\s*score[:\s]*(\d{3})/i,
+          /(\d{3})\s*(?:cibil|credit)\s*score/i,
+          /score\s*summary[:\s]*(\d{3})/i,
+          /bureau\s*score[:\s]*(\d{3})/i
+        ];
+
+        for (const pattern of scorePatterns) {
+          const match = fullText.match(pattern);
+          if (match && match[1]) {
+            const score = parseInt(match[1]);
+            // Valid CIBIL scores are between 300-900
+            if (score >= 300 && score <= 900) {
+              cibilScore = score;
+              break;
+            }
+          }
+        }
+
+        // Try to extract person/entity name from credit report
+        const namePatterns = [
+          /name[:\s]*([A-Z][A-Za-z\s]+?)(?:\n|$|date|address|pan)/i,
+          /consumer\s*name[:\s]*([A-Z][A-Za-z\s]+?)(?:\n|$)/i,
+          /applicant[:\s]*([A-Z][A-Za-z\s]+?)(?:\n|$)/i
+        ];
+
+        for (const pattern of namePatterns) {
+          const match = fullText.match(pattern);
+          if (match && match[1] && match[1].trim().length > 3) {
+            personName = match[1].trim();
+            break;
+          }
+        }
+
+        if (cibilScore) {
+          console.log(`✓ Extracted Credit Score: ${cibilScore} (${creditBureau || 'Unknown Bureau'})`);
+          extractedDetails = {
+            ...(extractedDetails || {}),
+            cibilScore: cibilScore,
+            creditBureau: creditBureau,
+            personName: personName,
+            documentType: 'Credit Report'
+          };
+        } else {
+          console.log('⚠ Could not extract credit score from report');
+        }
+      }
+
+      // Extract DOB from PAN card or Aadhaar card for personal ID documents
+      if (fileDetail.category === 'personalId' && fullText) {
+        const lowerText = fullText.toLowerCase();
+        const lowerName = file.originalname.toLowerCase();
+
+        const isPAN = lowerName.includes('pan') || lowerText.includes('permanent account number') || lowerText.includes('income tax department');
+        const isAadhaar = lowerName.includes('aadhar') || lowerName.includes('aadhaar') || lowerText.includes('aadhaar') || lowerText.includes('unique identification');
+
+        if (isPAN || isAadhaar) {
+          const docType = isPAN ? 'PAN Card' : 'Aadhaar Card';
+          console.log(`Processing ${docType} for DOB extraction:`, file.originalname);
+
+          let dateOfBirth = null;
+
+          const dobPatterns = [
+            /date\s*of\s*birth[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
+            /dob[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
+            /birth[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
+            /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})\s*date\s*of\s*birth/i,
+            /DOB\s*[:\-]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/,
+            /Year\s*of\s*Birth[:\s]*(\d{4})/i
+          ];
+
+          // Aadhaar-specific patterns (DOB or Year of Birth)
+          if (isAadhaar) {
+            dobPatterns.push(
+              /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/,  // Any date in DD/MM/YYYY format
+              /जन्म\s*तिथि[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i  // Hindi DOB
+            );
+          }
+
+          for (const pattern of dobPatterns) {
+            const match = fullText.match(pattern);
+            if (match && match[1]) {
+              dateOfBirth = match[1];
+              break;
+            }
+          }
+
+          if (dateOfBirth) {
+            console.log(`✓ Extracted DOB from ${docType}:`, dateOfBirth);
+            extractedDetails = {
+              ...(extractedDetails || {}),
+              dateOfBirth: dateOfBirth,
+              documentType: docType
+            };
+          }
+
+          // Extract PAN number if PAN card
+          if (isPAN) {
+            const panMatch = fullText.match(/[A-Z]{5}[0-9]{4}[A-Z]/);
+            if (panMatch) {
+              extractedDetails = {
+                ...(extractedDetails || {}),
+                panNumber: panMatch[0]
+              };
+              console.log('✓ Extracted PAN number:', panMatch[0]);
+            }
+          }
+
+          // Extract Aadhaar number if Aadhaar card
+          if (isAadhaar) {
+            const aadhaarMatch = fullText.match(/\b(\d{4}\s?\d{4}\s?\d{4})\b/);
+            if (aadhaarMatch) {
+              extractedDetails = {
+                ...(extractedDetails || {}),
+                aadhaarNumber: aadhaarMatch[1].replace(/\s/g, '')
+              };
+              console.log('✓ Extracted Aadhaar number:', aadhaarMatch[1]);
+            }
+          }
+        }
+      }
+
       // Auto-classify the document to a specific document type
       let autoClassification = '';
       if (fileDetail.category) {
@@ -2727,6 +3214,16 @@ app.get('/stage2/:proposalId', async (req, res) => {
       extractedText: doc.extractedText, // Ensure extractedText is available for GST dashboard
       financialComponents: doc.financialComponents // Include financial components for ITR parsing
     }));
+    
+    // Remove duplicate files by originalName (keep the first occurrence/most recent)
+    const seenNames = new Set();
+    uploadedFiles = uploadedFiles.filter(file => {
+      if (seenNames.has(file.originalName)) {
+        return false; // Skip duplicate
+      }
+      seenNames.add(file.originalName);
+      return true;
+    });
   } else {
     // Fallback: read from file system
     const proposalDir = path.join(UPLOADS_DIR, req.params.proposalId);
@@ -3251,14 +3748,44 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
         const filePath = path.join(proposalDir, doc.filename);
 
         if (fs.existsSync(filePath) && doc.originalName.toLowerCase().endsWith('.pdf')) {
-          // For Private Limited companies, only process "List of Shareholders" documents
+          // For Private Limited companies, prioritize "List of Directors & Shareholders" document
+          // Fallback to AOA only if the dedicated document is not available
           if (proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') {
             const classification = (doc.classification || '').toLowerCase();
-            const isShareholderDoc = classification.includes('list of shareholders');
+            const originalName = (doc.originalName || '').toLowerCase();
+            const isShareholderDoc = classification.includes('list of shareholders') ||
+                                     originalName.includes('list of director') ||
+                                     originalName.includes('list of shareholder');
+            const isAOA = classification.includes('articles of association') || originalName.includes('aoa');
+
+            // Check if a dedicated "List of Directors & Shareholders" document exists in this proposal
+            const hasDirectorListDoc = proposal.documents.some(d => {
+              const dClass = (d.classification || '').toLowerCase();
+              const dName = (d.originalName || '').toLowerCase();
+              return dClass.includes('list of shareholders') ||
+                     dName.includes('list of director') ||
+                     dName.includes('list of shareholder');
+            });
 
             if (!isShareholderDoc) {
-              console.log(`⏭️ Skipping ${doc.originalName} - not a List of Shareholders document (classification: ${doc.classification || 'none'})`);
-              continue;
+              // If dedicated director list exists, clear directors from AOA (use director list as primary)
+              if (hasDirectorListDoc && isAOA) {
+                console.log(`⏭️ Skipping ${doc.originalName} - "List of Directors & Shareholders" document available as primary source`);
+                if (doc.extractedDetails && doc.extractedDetails.directors && doc.extractedDetails.directors.length > 0) {
+                  console.log(`🧹 Clearing ${doc.extractedDetails.directors.length} previously extracted directors from AOA (using dedicated document instead)`);
+                  doc.extractedDetails.directors = [];
+                  proposal.documents[i] = doc;
+                  updated = true;
+                }
+                continue;
+              }
+              // If no dedicated director list exists, skip non-AOA documents
+              if (!isAOA) {
+                console.log(`⏭️ Skipping ${doc.originalName} - not a List of Shareholders or AOA document`);
+                continue;
+              }
+              // If this is AOA and no dedicated list exists, process it as fallback
+              console.log(`📋 Processing ${doc.originalName} as fallback (no dedicated List of Directors & Shareholders document found)`);
             }
           }
 
@@ -3591,7 +4118,7 @@ app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
           try {
             // Extract full text from PDF (table extraction disabled for speed)
             const pdfResult = await extractPDFWithTableDetection(filePath, false);
-            const fullText = pdfResult.text;
+            let fullText = pdfResult.text;
             const tables = [];
 
             console.log('\n========================================');
@@ -3600,19 +4127,44 @@ app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
             console.log('Text length:', fullText.length);
             console.log('Pages:', pdfResult.numPages);
 
+            // Check if text extraction is inadequate (scanned/image PDF)
+            const charsPerPage = fullText.length / (pdfResult.numPages || 1);
+            if (pdfResult.numPages > 3 && charsPerPage < 200) {
+              console.log(`⚠ Low text density (${Math.round(charsPerPage)} chars/page) for ${pdfResult.numPages} pages - likely scanned PDF`);
+              console.log('🔍 Attempting multi-page Vision OCR...');
+              try {
+                const ocrResult = await extractAllPagesWithVisionOCR(filePath);
+                if (ocrResult.success && ocrResult.text.length > fullText.length) {
+                  fullText = ocrResult.text;
+                  console.log(`✓ Vision OCR improved extraction: ${fullText.length} chars (was ${pdfResult.text.length})`);
+                }
+              } catch (ocrErr) {
+                console.error('Vision OCR fallback error:', ocrErr.message);
+              }
+            }
+
             // Check for each component with strict keyword matching
             const textLower = fullText.toLowerCase();
+
+            // Check if this is Form 26AS (Annual Tax Statement) - NOT an ITR
+            const isForm26AS = textLower.includes('annual tax statement') ||
+                              (textLower.includes('form 26as') || textLower.includes('form-26as')) ||
+                              (textLower.includes('data updated till') && textLower.includes('tax deducted'));
 
             // Check for Balance Sheet - must be actual BS, not just ITR summary
             const hasBalanceSheet = (
               // Full balance sheet indicators (has date like "as at" or "as on")
               textLower.includes('balance sheet as at') ||
               textLower.includes('balance sheet as on') ||
+              // ITR-6 specific: Schedule-AL for Assets & Liabilities
+              textLower.includes('schedule-al') ||
+              textLower.includes('schedule al') ||
               // Has actual BS content (assets/liabilities sections)
               (textLower.includes('balance sheet') &&
                (textLower.includes('fixed assets') || textLower.includes('current assets') ||
                 textLower.includes('total assets') || textLower.includes('capital account') ||
-                textLower.includes('partners capital') || textLower.includes("partner's capital")))
+                textLower.includes('partners capital') || textLower.includes("partner's capital") ||
+                textLower.includes('share capital') || textLower.includes('reserves and surplus')))
             ) && !textLower.includes('balance sheet (regular books of account');
 
             // Check for Profit & Loss - must be actual P&L section header
@@ -3620,19 +4172,41 @@ app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
               textLower.includes('profit and loss account') ||
               textLower.includes('profit & loss account') ||
               textLower.includes('profit and loss a/c') ||
+              textLower.includes('profit & loss a/c') ||
               textLower.includes('trading and profit and loss') ||
               textLower.includes('trading, profit and loss') ||
               textLower.includes('income and expenditure account') ||
+              textLower.includes('statement of profit and loss') ||
+              // ITR specific markers
+              textLower.includes('net profit before tax as per p & l') ||
+              textLower.includes('net profit before tax as per p&l') ||
+              textLower.includes('profit before tax as per p & l') ||
               // Has actual P&L content
-              (textLower.includes('trading account') && textLower.includes('gross profit'));
+              (textLower.includes('trading account') && textLower.includes('gross profit')) ||
+              // ITR-6 P&L schedule
+              (textLower.includes('statement of income') && textLower.includes('business or profession'));
+
+            // Check for Computation of Income
+            const hasComputation = textLower.includes('computation of total income') ||
+                          textLower.includes('computation of income') ||
+                          (textLower.includes('computation') && textLower.includes('total income')) ||
+                          // ITR summary section
+                          (textLower.includes('total income rounded off') && textLower.includes('tax on total income')) ||
+                          // OCR-friendly: computation sheet markers (OCR may miss the heading)
+                          (textLower.includes('depreciation as per i.t.act') && textLower.includes('total income')) ||
+                          (textLower.includes('depreciation as per it act') && textLower.includes('total income')) ||
+                          (textLower.includes('disallowed expenses') && textLower.includes('tax payable')) ||
+                          (textLower.includes('name of the assessee') && textLower.includes('tax payable') && textLower.includes('total income'));
 
             const components = {
-              itrAck: textLower.includes('indian income tax return acknowledgement') ||
+              // ITR Acknowledgement - exclude Form 26AS
+              itrAck: !isForm26AS && (
+                      textLower.includes('indian income tax return acknowledgement') ||
                       textLower.includes('itr acknowledgement') ||
-                      textLower.includes('acknowledgement number'),
-              computation: textLower.includes('computation of total income') ||
-                          textLower.includes('computation of income') ||
-                          (textLower.includes('computation') && textLower.includes('total income')),
+                      textLower.includes('itr-6') || textLower.includes('itr-5') || textLower.includes('itr-3') ||
+                      (textLower.includes('acknowledgement number') && textLower.includes('date of filing'))
+                      ),
+              computation: hasComputation,
               balanceSheet: hasBalanceSheet,
               profitLoss: hasProfitLoss
             };
@@ -3676,6 +4250,221 @@ app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
     });
   } catch (error) {
     console.error('Financial docs reprocess error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Reprocess personal ID and credit report documents using Vision OCR
+app.post('/stage2/:proposalId/reprocess-personal-docs', async (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const proposal = getProposalById(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ success: false, error: 'Proposal not found' });
+    }
+
+    const targetCategories = ['personalId', 'creditReports'];
+    const docsToProcess = (proposal.documents || []).filter(d =>
+      targetCategories.includes(d.category) &&
+      (!d.extractedText || d.extractedText.trim().length === 0 || !d.extractedDetails)
+    );
+
+    console.log(`Reprocessing ${docsToProcess.length} personal/credit docs for proposal ${proposalId}`);
+
+    let processedCount = 0;
+    const results = [];
+
+    for (const doc of docsToProcess) {
+      const filePath = path.join(__dirname, 'uploads', proposalId, doc.filename);
+      if (!fs.existsSync(filePath)) {
+        results.push({ file: doc.originalName, status: 'skipped', reason: 'File not found' });
+        continue;
+      }
+
+      try {
+        let fullText = '';
+
+        // Try standard PDF extraction first
+        try {
+          const pdfResult = await extractPDFWithTableDetection(filePath);
+          fullText = pdfResult.text || '';
+          if (pdfResult.numPages) doc.pages = pdfResult.numPages;
+        } catch (e) {
+          console.log('Standard extraction failed for', doc.originalName);
+        }
+
+        // If empty, try Vision OCR for scanned PDFs
+        if (!fullText || fullText.trim().length === 0) {
+          console.log(`Using Vision OCR for scanned PDF: ${doc.originalName}`);
+          const ocrResult = await extractTextFromScannedPDF(filePath);
+          if (ocrResult.success && ocrResult.text) {
+            fullText = ocrResult.text;
+            if (ocrResult.numPages) doc.pages = ocrResult.numPages;
+          }
+        }
+
+        if (!fullText || fullText.trim().length === 0) {
+          results.push({ file: doc.originalName, status: 'failed', reason: 'No text extracted' });
+          continue;
+        }
+
+        doc.extractedText = fullText.substring(0, 500);
+
+        // Extract DOB from PAN cards or Aadhaar cards
+        if (doc.category === 'personalId') {
+          const lowerText = fullText.toLowerCase();
+          const lowerName = (doc.originalName || '').toLowerCase();
+
+          const isPAN = lowerName.includes('pan') || lowerText.includes('permanent account number') || lowerText.includes('income tax department');
+          const isAadhaar = lowerName.includes('aadhar') || lowerName.includes('aadhaar') || lowerText.includes('aadhaar') || lowerText.includes('unique identification');
+
+          if (isPAN || isAadhaar) {
+            const docType = isPAN ? 'PAN Card' : 'Aadhaar Card';
+            console.log(`Processing ${docType} for DOB extraction: ${doc.originalName}`);
+
+            let dateOfBirth = null;
+            const dobPatterns = [
+              /date\s*of\s*birth[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
+              /dob[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
+              /birth[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
+              /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})\s*date\s*of\s*birth/i,
+              /DOB\s*[:\-]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/
+            ];
+
+            if (isAadhaar) {
+              dobPatterns.push(
+                /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/,  // Any date in DD/MM/YYYY
+                /जन्म\s*तिथि[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i
+              );
+            }
+
+            for (const pattern of dobPatterns) {
+              const match = fullText.match(pattern);
+              if (match && match[1]) {
+                dateOfBirth = match[1];
+                break;
+              }
+            }
+
+            doc.extractedDetails = {
+              ...(doc.extractedDetails || {}),
+              documentType: docType
+            };
+
+            if (dateOfBirth) {
+              doc.extractedDetails.dateOfBirth = dateOfBirth;
+              console.log(`✓ Extracted DOB: ${dateOfBirth} from ${doc.originalName} (${docType})`);
+            }
+
+            if (isPAN) {
+              const panMatch = fullText.match(/[A-Z]{5}[0-9]{4}[A-Z]/);
+              if (panMatch) {
+                doc.extractedDetails.panNumber = panMatch[0];
+                console.log(`✓ Extracted PAN: ${panMatch[0]} from ${doc.originalName}`);
+              }
+            }
+
+            if (isAadhaar) {
+              const aadhaarMatch = fullText.match(/\b(\d{4}\s?\d{4}\s?\d{4})\b/);
+              if (aadhaarMatch) {
+                doc.extractedDetails.aadhaarNumber = aadhaarMatch[1].replace(/\s/g, '');
+                console.log(`✓ Extracted Aadhaar: ${aadhaarMatch[1]} from ${doc.originalName}`);
+              }
+            }
+          }
+        }
+
+        // Extract CIBIL score from credit reports
+        if (doc.category === 'creditReports') {
+          let cibilScore = null;
+          let creditBureau = null;
+          let personName = null;
+
+          if (fullText.toLowerCase().includes('cibil') || fullText.toLowerCase().includes('transunion')) {
+            creditBureau = 'CIBIL';
+          } else if (fullText.toLowerCase().includes('experian')) {
+            creditBureau = 'Experian';
+          } else if (fullText.toLowerCase().includes('equifax')) {
+            creditBureau = 'Equifax';
+          } else if (fullText.toLowerCase().includes('crif') || fullText.toLowerCase().includes('high mark')) {
+            creditBureau = 'CRIF High Mark';
+          }
+
+          const scorePatterns = [
+            /cibil\s*score\s*(?:is|:)\s*(\d{3})/i,
+            /credit\s*score\s*(?:is|:)\s*(\d{3})/i,
+            /cibil\s*score[:\s]*(\d{3})/i,
+            /credit\s*score[:\s]*(\d{3})/i,
+            /score[:\s]*(\d{3})\s*(?:out of|\/)\s*900/i,
+            /transunion\s*cibil\s*score[:\s]*(\d{3})/i,
+            /your\s*score\s*(?:is|:)\s*(\d{3})/i,
+            /your\s*score[:\s]*(\d{3})/i,
+            /cibil\s*transunion\s*score[:\s]*(\d{3})/i,
+            /(\d{3})\s*(?:cibil|credit)\s*score/i,
+            /score\s*summary[:\s]*(\d{3})/i,
+            /bureau\s*score[:\s]*(\d{3})/i,
+            /\bscore\b[:\s]*(\d{3})\b/i
+          ];
+
+          for (const pattern of scorePatterns) {
+            const match = fullText.match(pattern);
+            if (match && match[1]) {
+              const score = parseInt(match[1]);
+              if (score >= 300 && score <= 900) {
+                cibilScore = score;
+                break;
+              }
+            }
+          }
+
+          const namePatterns = [
+            /name[:\s]*([A-Z][A-Za-z\s]+?)(?:\n|$|date|address|pan)/i,
+            /consumer\s*name[:\s]*([A-Z][A-Za-z\s]+?)(?:\n|$)/i,
+            /applicant[:\s]*([A-Z][A-Za-z\s]+?)(?:\n|$)/i
+          ];
+
+          for (const pattern of namePatterns) {
+            const match = fullText.match(pattern);
+            if (match && match[1] && match[1].trim().length > 3) {
+              personName = match[1].trim();
+              break;
+            }
+          }
+
+          doc.extractedDetails = {
+            ...(doc.extractedDetails || {}),
+            documentType: 'Credit Report',
+            creditBureau: creditBureau
+          };
+
+          if (cibilScore) {
+            doc.extractedDetails.cibilScore = cibilScore;
+            console.log(`✓ Extracted CIBIL Score: ${cibilScore} (${creditBureau}) from ${doc.originalName}`);
+          }
+          if (personName) {
+            doc.extractedDetails.personName = personName;
+          }
+        }
+
+        processedCount++;
+        results.push({ file: doc.originalName, status: 'success', details: doc.extractedDetails });
+
+      } catch (docErr) {
+        console.error(`Error processing ${doc.originalName}:`, docErr.message);
+        results.push({ file: doc.originalName, status: 'error', reason: docErr.message });
+      }
+    }
+
+    // Save updated proposal
+    updateProposal(proposalId, { documents: proposal.documents });
+
+    res.json({
+      success: true,
+      message: `Processed ${processedCount} of ${docsToProcess.length} documents`,
+      results
+    });
+  } catch (error) {
+    console.error('Personal docs reprocess error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -4025,6 +4814,170 @@ app.get('/stage3/:proposalId', async (req, res) => {
   }
   
   res.render('stage3-cam', { proposal, debtProfiles });
+});
+
+// Fetch website and generate business summary
+app.post('/stage3/:proposalId/fetch-business-summary', async (req, res) => {
+  try {
+    const proposal = getProposalById(req.params.proposalId);
+    if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+
+    const websiteUrl = proposal.website;
+    if (!websiteUrl) return res.status(400).json({ error: 'No website URL provided for this proposal. Please add it in Stage 1.' });
+
+    console.log(`Fetching business summary from website: ${websiteUrl}`);
+
+    // Helper to extract text from HTML
+    function extractTextFromHTML(html) {
+      return html
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '')
+        .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#\d+;/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    // Helper to extract meta info from HTML
+    function extractMetaInfo(html) {
+      const info = [];
+      const title = (html.match(/<title[^>]*>(.*?)<\/title>/i) || [])[1];
+      if (title) info.push('Title: ' + title.trim());
+
+      const metaTags = html.match(/<meta[^>]+>/gi) || [];
+      metaTags.forEach(tag => {
+        const nameMatch = tag.match(/(?:name|property)=["']([^"']+)["']/i);
+        const contentMatch = tag.match(/content=["']([^"']+)["']/i);
+        if (nameMatch && contentMatch) {
+          const name = nameMatch[1].toLowerCase();
+          if (name.includes('description') || name.includes('og:') || name.includes('twitter:') ||
+              name.includes('keywords') || name.includes('author') || !name.includes('viewport') && !name.includes('charset') && !name.includes('theme') && !name.includes('verification') && !name.includes('robots')) {
+            info.push(nameMatch[1] + ': ' + contentMatch[1].trim());
+          }
+        }
+      });
+
+      // Extract JSON-LD structured data
+      const jsonldMatches = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi) || [];
+      jsonldMatches.forEach(match => {
+        const jsonContent = (match.match(/>([\s\S]*?)<\/script>/i) || [])[1];
+        if (jsonContent) {
+          try {
+            const data = JSON.parse(jsonContent.trim());
+            if (data.description) info.push('Schema Description: ' + data.description);
+            if (data.name) info.push('Schema Name: ' + data.name);
+            if (data.about) info.push('About: ' + (typeof data.about === 'string' ? data.about : JSON.stringify(data.about)));
+          } catch(e) {}
+        }
+      });
+
+      return info.join('\n');
+    }
+
+    const fetchHeaders = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+    };
+
+    // Fetch main page
+    let pageText = '';
+    let metaInfo = '';
+    let allText = '';
+    try {
+      const response = await axios.get(websiteUrl, { timeout: 15000, headers: fetchHeaders, maxRedirects: 5 });
+      const html = response.data;
+      pageText = extractTextFromHTML(html);
+      metaInfo = extractMetaInfo(html);
+      allText = pageText;
+
+      // If main page has insufficient text (JS-rendered SPA), try sub-pages
+      if (pageText.length < 100) {
+        const baseUrl = websiteUrl.replace(/\/+$/, '');
+        const subPages = ['/about', '/about-us', '/aboutus', '/services', '/our-services', '/what-we-do', '/company'];
+        console.log('Main page has insufficient text, trying sub-pages...');
+
+        for (const subPage of subPages) {
+          try {
+            const subResponse = await axios.get(baseUrl + subPage, { timeout: 8000, headers: fetchHeaders, maxRedirects: 5 });
+            const subHtml = subResponse.data;
+            const subText = extractTextFromHTML(subHtml);
+            const subMeta = extractMetaInfo(subHtml);
+            if (subText.length > allText.length) allText = subText;
+            if (subMeta.length > metaInfo.length) metaInfo = subMeta;
+            if (subText.length > 200) {
+              console.log(`Found content on ${subPage}: ${subText.length} chars`);
+              break;
+            }
+          } catch(e) { /* sub-page not available, skip */ }
+        }
+      }
+    } catch (fetchErr) {
+      console.error('Error fetching website:', fetchErr.message);
+      return res.status(400).json({ error: `Could not fetch website: ${fetchErr.message}` });
+    }
+
+    // Combine all available info
+    if (allText.length > 8000) allText = allText.substring(0, 8000);
+    const combinedInfo = (metaInfo + '\n\n' + allText).trim();
+
+    // Use OpenRouter to summarize - even with minimal info (meta tags + company name + industry)
+    const companyName = proposal.applicantName || 'the company';
+    const industry = proposal.industry || '';
+    const businessNature = proposal.businessNature || proposal.natureOfBusiness || '';
+
+    let promptContent;
+    if (combinedInfo.length > 80) {
+      promptContent = `Based on the following website information of "${companyName}" (Website: ${websiteUrl}, Industry: ${industry || 'Not specified'}, Nature of Business: ${businessNature || 'Not specified'}), provide a concise business process summary suitable for a bank's Credit Appraisal Memo (CAM). Include:
+1. What the company does (products/services)
+2. Key business activities and operations
+3. Target market/customers
+4. Any notable achievements, certifications, or strengths mentioned
+
+Keep it professional, factual, and within 150-200 words. Do not include any introductory phrases like "Based on the website..." - start directly with the business description. If website content is limited, use the company name, website URL, and industry context to infer and describe the likely business activities.
+
+Website information:
+${combinedInfo}`;
+    } else {
+      promptContent = `Generate a concise business process summary for "${companyName}" (Website: ${websiteUrl}, Industry: ${industry || 'Not specified'}, Nature of Business: ${businessNature || 'Not specified'}) suitable for a bank's Credit Appraisal Memo (CAM).
+
+Based on the company name, website URL, and industry, describe:
+1. What the company likely does (products/services)
+2. Key business activities and operations
+3. Target market/customers
+
+Keep it professional and within 150-200 words. Start directly with the business description. Note: The website content could not be fully extracted as it uses dynamic rendering.`;
+    }
+
+    const aiResponse = await axios.post(OPENROUTER_API_URL, {
+      model: 'google/gemini-2.0-flash-001',
+      messages: [{ role: 'user', content: promptContent }]
+    }, {
+      headers: {
+        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 30000
+    });
+
+    const summary = aiResponse.data?.choices?.[0]?.message?.content?.trim();
+    if (!summary) {
+      return res.status(500).json({ error: 'AI could not generate a summary from the website content.' });
+    }
+
+    // Save the summary to proposal
+    if (!proposal.camMemo) proposal.camMemo = {};
+    proposal.camMemo.businessProcess = summary;
+    proposal.businessWebsiteSummary = summary;
+    updateProposal(req.params.proposalId, { camMemo: proposal.camMemo, businessWebsiteSummary: summary });
+
+    console.log(`Business summary generated for ${companyName} from ${websiteUrl}`);
+    res.json({ success: true, summary });
+  } catch (err) {
+    console.error('Error generating business summary:', err.message);
+    res.status(500).json({ error: 'Failed to generate business summary: ' + err.message });
+  }
 });
 
 app.post('/stage3/:proposalId/submit', (req, res) => {

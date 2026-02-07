@@ -27,7 +27,7 @@
                             <label for="applicantName">Applicant Name <span class="required">*</span></label>
                             <input type="text" id="applicantName" name="applicantName" required>
                         </div>
-                        
+
                         <div class="form-group">
                             <label for="applicantType">Applicant Type <span class="required">*</span></label>
                             <select id="applicantType" name="applicantType" required>
@@ -41,6 +41,16 @@
                                 <option value="Others">Others</option>
                             </select>
                         </div>
+
+                        <div class="form-group" id="applicantAgeGroup" style="display: none;">
+                            <label for="applicantAge">Age (Years)</label>
+                            <input type="number" id="applicantAge" name="applicantAge" min="18" max="100" placeholder="Age">
+                        </div>
+
+                        <div class="form-group" id="applicantCibilGroup" style="display: none;">
+                            <label for="applicantCibil">CIBIL Score</label>
+                            <input type="number" id="applicantCibil" name="applicantCibil" min="300" max="900" placeholder="300-900">
+                        </div>
                     </div>
 
                     <!-- Co-Applicants Section -->
@@ -52,7 +62,7 @@
                                     <label for="coApplicantName_0">Co-Applicant Name</label>
                                     <input type="text" id="coApplicantName_0" name="coApplicants[0].name">
                                 </div>
-                                
+
                                 <div class="form-group">
                                     <label for="coApplicantType_0">Co-Applicant Type</label>
                                     <select id="coApplicantType_0" name="coApplicants[0].type">
@@ -66,10 +76,20 @@
                                         <option value="Others">Others</option>
                                     </select>
                                 </div>
+
+                                <div class="form-group">
+                                    <label for="coApplicantAge_0">Age (Years)</label>
+                                    <input type="number" id="coApplicantAge_0" name="coApplicants[0].age" min="18" max="100" placeholder="Age">
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="coApplicantCibil_0">CIBIL Score</label>
+                                    <input type="number" id="coApplicantCibil_0" name="coApplicants[0].cibil" min="300" max="900" placeholder="300-900">
+                                </div>
                             </div>
                         </div>
                     </div>
-                    
+
                     <button type="button" class="btn btn-add" onclick="addCoApplicant()">
                         + Add Another Co-Applicant
                     </button>
@@ -81,7 +101,7 @@
                             <label for="loanAmount">Loan Amount (INR) <span class="required">*</span></label>
                             <input type="number" id="loanAmount" name="loanAmount" min="0" step="1000" required>
                         </div>
-                        
+
                         <div class="form-group">
                             <label for="natureOfLoan">Nature of Loan <span class="required">*</span></label>
                             <select id="natureOfLoan" name="natureOfLoan" required>
@@ -89,6 +109,22 @@
                                 <option value="Secured">Secured</option>
                                 <option value="Unsecured">Unsecured</option>
                             </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="loanCategory">Loan Category <span class="required">*</span></label>
+                            <select id="loanCategory" name="loanCategory" required>
+                                <option value="">Select Category</option>
+                                <option value="Fresh Loan">Fresh Loan</option>
+                                <option value="Balance Transfer">Balance Transfer</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" id="btBankGroup" style="display: none;">
+                            <label for="btFromBank">Balance Transfer From (Bank/Financier) <span class="required">*</span></label>
+                            <input type="text" id="btFromBank" name="btFromBank" placeholder="Enter Bank/Financier name">
                         </div>
                     </div>
 
@@ -105,7 +141,7 @@
                                 <option value="Others">Others</option>
                             </select>
                         </div>
-                        
+
                         <div class="form-group" id="collateralGroup">
                             <label for="natureOfCollateral">Nature of Collateral <span class="required">*</span></label>
                             <select id="natureOfCollateral" name="natureOfCollateral" required>
@@ -116,6 +152,37 @@
                                 <option value="Commercial Land">Commercial Land</option>
                                 <option value="Other Non-Standard Collateral">Other Non-Standard Collateral</option>
                             </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="loanTenure">Loan Tenure Sought (Years) <span class="required">*</span></label>
+                            <select id="loanTenure" name="loanTenure" required>
+                                <option value="">Select Tenure</option>
+                                <% for (let i = 1; i <= 30; i++) { %>
+                                    <option value="<%= i %>"><%= i %> Year<%= i > 1 ? 's' : '' %></option>
+                                <% } %>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="endUseOfFunds">End Use of Funds <span class="required">*</span></label>
+                            <select id="endUseOfFunds" name="endUseOfFunds" required>
+                                <option value="">Select End Use</option>
+                                <option value="Working Capital">Working Capital</option>
+                                <option value="Debt Consolidation">Debt Consolidation</option>
+                                <option value="Purchase of Property">Purchase of Property</option>
+                                <option value="Business Expansion">Business Expansion</option>
+                                <option value="Others">Others</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row" id="endUseOthersGroup" style="display: none;">
+                        <div class="form-group" style="flex: 1;">
+                            <label for="endUseOthersDesc">Please specify End Use <span class="required">*</span></label>
+                            <textarea id="endUseOthersDesc" name="endUseOthersDesc" rows="2" placeholder="Describe the end use of funds..."></textarea>
                         </div>
                     </div>
                 </section>
@@ -145,6 +212,11 @@
                         <div class="form-group">
                             <label for="phone">Phone Number <span class="required">*</span></label>
                             <input type="tel" id="phone" name="phone" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="website">Website (if any)</label>
+                            <input type="url" id="website" name="website" placeholder="https://www.example.com">
                         </div>
                     </div>
 
@@ -243,6 +315,65 @@
         // Initialize on page load
         toggleCollateralField();
 
+        // Applicant Type toggle for Age/CIBIL fields (show for Individual only)
+        const applicantTypeSelect = document.getElementById('applicantType');
+        const applicantAgeGroup = document.getElementById('applicantAgeGroup');
+        const applicantCibilGroup = document.getElementById('applicantCibilGroup');
+
+        function toggleApplicantFields() {
+            if (applicantTypeSelect.value === 'Individual') {
+                applicantAgeGroup.style.display = '';
+                applicantCibilGroup.style.display = '';
+            } else {
+                applicantAgeGroup.style.display = 'none';
+                applicantCibilGroup.style.display = 'none';
+            }
+        }
+
+        applicantTypeSelect.addEventListener('change', toggleApplicantFields);
+        // Initialize on page load
+        toggleApplicantFields();
+
+        // Loan Category toggle for Balance Transfer bank field
+        const loanCategorySelect = document.getElementById('loanCategory');
+        const btBankGroup = document.getElementById('btBankGroup');
+        const btFromBankInput = document.getElementById('btFromBank');
+
+        function toggleBTBankField() {
+            if (loanCategorySelect.value === 'Balance Transfer') {
+                btBankGroup.style.display = '';
+                btFromBankInput.setAttribute('required', 'required');
+            } else {
+                btBankGroup.style.display = 'none';
+                btFromBankInput.removeAttribute('required');
+                btFromBankInput.value = '';
+            }
+        }
+
+        loanCategorySelect.addEventListener('change', toggleBTBankField);
+        // Initialize on page load
+        toggleBTBankField();
+
+        // End Use of Funds toggle for Others description
+        const endUseSelect = document.getElementById('endUseOfFunds');
+        const endUseOthersGroup = document.getElementById('endUseOthersGroup');
+        const endUseOthersDesc = document.getElementById('endUseOthersDesc');
+
+        function toggleEndUseOthers() {
+            if (endUseSelect.value === 'Others') {
+                endUseOthersGroup.style.display = '';
+                endUseOthersDesc.setAttribute('required', 'required');
+            } else {
+                endUseOthersGroup.style.display = 'none';
+                endUseOthersDesc.removeAttribute('required');
+                endUseOthersDesc.value = '';
+            }
+        }
+
+        endUseSelect.addEventListener('change', toggleEndUseOthers);
+        // Initialize on page load
+        toggleEndUseOthers();
+
         // Add Co-Applicant functionality
         function addCoApplicant() {
             const container = document.getElementById('coApplicantsContainer');
@@ -255,7 +386,7 @@
                         <label for="coApplicantName_${coApplicantCount}">Co-Applicant Name</label>
                         <input type="text" id="coApplicantName_${coApplicantCount}" name="coApplicants[${coApplicantCount}].name">
                     </div>
-                    
+
                     <div class="form-group">
                         <label for="coApplicantType_${coApplicantCount}">Co-Applicant Type</label>
                         <select id="coApplicantType_${coApplicantCount}" name="coApplicants[${coApplicantCount}].type">
@@ -269,7 +400,17 @@
                             <option value="Others">Others</option>
                         </select>
                     </div>
-                    
+
+                    <div class="form-group">
+                        <label for="coApplicantAge_${coApplicantCount}">Age (Years)</label>
+                        <input type="number" id="coApplicantAge_${coApplicantCount}" name="coApplicants[${coApplicantCount}].age" min="18" max="100" placeholder="Age">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="coApplicantCibil_${coApplicantCount}">CIBIL Score</label>
+                        <input type="number" id="coApplicantCibil_${coApplicantCount}" name="coApplicants[${coApplicantCount}].cibil" min="300" max="900" placeholder="300-900">
+                    </div>
+
                     <div class="form-group" style="display: flex; align-items: flex-end;">
                         <button type="button" class="btn btn-remove" onclick="removeCoApplicant(${coApplicantCount})">
                             × Remove

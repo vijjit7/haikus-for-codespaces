@@ -198,7 +198,11 @@
                 const precedingFY = 'FY 2022-23';
             %>
             <div class="required-documents card">
-                <h2>📋 Required Documents</h2>
+                <h2 style="cursor: pointer; display: flex; align-items: center; justify-content: space-between; margin-bottom: 0;" onclick="toggleRequiredDocs()">
+                    📋 Required Documents
+                    <span id="reqDocsToggle" style="font-size: 1.4em; font-weight: bold; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: #e8f0fe; color: #1a73e8; transition: transform 0.3s;">+</span>
+                </h2>
+                <div id="reqDocsContent" style="display: none; margin-top: 15px;">
                 
                 <!-- Personal ID -->
                 <div class="doc-category">
@@ -376,6 +380,7 @@
                 </div>
 
                 <p class="categorization-note">All uploaded documents needs to be categorised into below tabs</p>
+                </div><!-- end reqDocsContent -->
             </div>
 
             <!-- Document Management Section with Main Tabs -->
@@ -1155,10 +1160,12 @@
                             });
                         });
 
-                        // Calculate all pending documents
+                        // Calculate all pending documents with category tracking
                         let allPending = [];
                         Object.keys(pendingByCategory).forEach(cat => {
-                            allPending = allPending.concat(pendingByCategory[cat]);
+                            pendingByCategory[cat].forEach((doc, idx) => {
+                                allPending.push({ text: doc, category: cat, categoryIndex: idx });
+                            });
                         });
                         %>
                         <button class="tab-btn-pending active" onclick="showPendingTab('all')">ALL (<%= allPending.length %>)</button>
@@ -1184,10 +1191,12 @@
                         <!-- All Pending -->
                         <div class="pending-category-content" data-pending-category="all">
                             <ul class="pending-list">
-                                <% allPending.forEach(doc => { %>
-                                    <li class="pending-item">
-                                        <span class="warning-icon">⚠️</span>
-                                        <%= doc %>
+                                <% allPending.forEach((item, idx) => { %>
+                                    <li class="pending-item" data-pending-text="<%= item.text.replace(/"/g, '&quot;') %>" data-category="<%= item.category %>">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                                            <div><span class="warning-icon">⚠️</span> <%= item.text %></div>
+                                            <button onclick="dismissPendingItem('<%= item.category %>', <%= item.categoryIndex %>, this)" style="background: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85em; white-space: nowrap;" title="Mark as not required">✕ Dismiss</button>
+                                        </div>
                                     </li>
                                 <% }); %>
                             </ul>
@@ -1643,6 +1652,7 @@
                                         normalizedText.includes('profit and loss a/c') ||
                                         normalizedText.includes('trading and profit and loss') ||
                                         normalizedText.includes('trading, profit and loss') ||
+                                        normalizedText.includes('statement of profit and loss') ||
                                         normalizedText.includes('income and expenditure account') ||
                                         (normalizedText.includes('trading account') && normalizedText.includes('gross profit'));
 
@@ -1654,7 +1664,11 @@
                                                 (normalizedText.includes('acknowledgement') && normalizedText.includes('itr')),
                                         computation: normalizedText.includes('computation of total income') ||
                                                     normalizedText.includes('computation of income') ||
-                                                    (normalizedText.includes('computation') && normalizedText.includes('total income')),
+                                                    (normalizedText.includes('computation') && normalizedText.includes('total income')) ||
+                                                    (normalizedText.includes('depreciation as per i.t.act') && normalizedText.includes('total income')) ||
+                                                    (normalizedText.includes('depreciation as per it act') && normalizedText.includes('total income')) ||
+                                                    (normalizedText.includes('disallowed expenses') && normalizedText.includes('tax payable')) ||
+                                                    (normalizedText.includes('name of the assessee') && normalizedText.includes('tax payable') && normalizedText.includes('total income')),
                                         balanceSheet: hasBalanceSheet,
                                         profitLoss: hasProfitLoss
                                     };
@@ -2133,25 +2147,94 @@
                                 if (combinedBankText.length > 500) {
                                     emiVerificationPossible = true;
 
+                                    // Helper to format number in Indian numbering system (e.g., 175759 -> 1,75,759)
+                                    const formatIndian = (num) => {
+                                        const s = String(Math.abs(Math.round(num)));
+                                        if (s.length <= 3) return s;
+                                        let result = s.slice(-3);
+                                        let remaining = s.slice(0, -3);
+                                        while (remaining.length > 0) {
+                                            result = remaining.slice(-2) + ',' + result;
+                                            remaining = remaining.slice(0, -2);
+                                        }
+                                        return num < 0 ? '-' + result : result;
+                                    };
+
+                                    // Generate all possible search variants for an amount
+                                    const getAmountVariants = (amount, tolerance = 1) => {
+                                        const variants = new Set();
+                                        const amountsToCheck = [amount];
+                                        
+                                        // Add tolerance variants (±1, ±2 for rounding differences)
+                                        for (let t = 1; t <= tolerance; t++) {
+                                            amountsToCheck.push(amount + t);
+                                            amountsToCheck.push(amount - t);
+                                        }
+                                        
+                                        amountsToCheck.forEach(amt => {
+                                            const intVal = Math.round(amt);
+                                            // Plain number without commas
+                                            variants.add(String(intVal));
+                                            // With .00 suffix
+                                            variants.add(intVal + '.00');
+                                            // Indian format (1,75,759)
+                                            const indianFmt = formatIndian(intVal);
+                                            variants.add(indianFmt);
+                                            variants.add(indianFmt + '.00');
+                                            // Western format (175,759)
+                                            const westernFmt = intVal.toLocaleString('en-US');
+                                            variants.add(westernFmt);
+                                            variants.add(westernFmt + '.00');
+                                        });
+                                        
+                                        return Array.from(variants);
+                                    };
+
+                                    // Clean bank statement text for better matching
+                                    const cleanBankText = (text) => {
+                                        // Join amounts split across lines (e.g., "1,75,759\n.00" -> "1,75,759.00")
+                                        let cleaned = text.replace(/(\d)\s*[\n\r]\s*(\.\d)/g, '$1$2');
+                                        // Normalize whitespace
+                                        cleaned = cleaned.replace(/[ \t]+/g, ' ');
+                                        return cleaned;
+                                    };
+
                                     // Helper function to check if EMI exists in context (near debit keywords or loan bank name)
                                     const checkEmiInContext = (text, emiAmount, loanBankName) => {
-                                        const emiStr = String(emiAmount);
-                                        const emiFormatted = emiAmount.toLocaleString('en-IN');
-                                        const emiWithDecimals = emiFormatted + '.00'; // Bank statements often have .00 suffix
+                                        // Clean text first
+                                        const cleanedText = cleanBankText(text);
+                                        const textLower = cleanedText.toLowerCase();
+                                        
+                                        // Get all search variants for this EMI amount
+                                        const variants = getAmountVariants(emiAmount, 2);
                                         
                                         // Keywords that indicate EMI/loan debit
-                                        const emiKeywords = ['emi', 'loan', 'equated monthly', 'instalment', 'installment', 'nach', 'ecs', 'auto debit', 'si:', 'standing instruction', 'ach d-', 'ach-d'];
+                                        const emiKeywords = ['emi', 'loan', 'equated monthly', 'instalment', 'installment', 'nach', 'ecs', 'auto debit', 'si:', 'standing instruction', 'ach d-', 'ach-d', 'cms/', 'adibi', 'trf/', 'fin ltd', 'capital', 'finance'];
                                         const debitKeywords = ['dr', 'debit', 'withdrawal', 'transfer to', 'neft', 'rtgs', 'imps', 'upi'];
 
                                         // Normalize loan bank name for matching
                                         const bankNameLower = (loanBankName || '').toLowerCase().trim();
                                         const bankNameParts = bankNameLower.split(/[\s\-]+/).filter(p => p.length > 2);
 
-                                        // Split text into lines/transactions for contextual matching
-                                        const lines = text.split(/[\n\r]+/);
+                                        // First, check if any variant exists in the text at all
+                                        const foundVariant = variants.find(v => textLower.includes(v.toLowerCase()));
+                                        if (!foundVariant) {
+                                            return false; // EMI amount not found in any format
+                                        }
 
-                                        // Bank statements have amount on separate lines after transaction description
-                                        // Look for EMI amount within 5 lines of an EMI keyword
+                                        // Check if EMI keywords or bank name exist in document (context validation)
+                                        const hasAnyEmiKeyword = emiKeywords.some(kw => textLower.includes(kw));
+                                        const hasAnyBankName = bankNameParts.length > 0 && bankNameParts.some(part => textLower.includes(part));
+                                        const hasDebitKeyword = debitKeywords.some(kw => textLower.includes(kw));
+
+                                        // If amount found with EMI context, consider it a match
+                                        if (hasAnyEmiKeyword || hasAnyBankName || hasDebitKeyword) {
+                                            return true;
+                                        }
+
+                                        // Fallback: Split text into lines for contextual matching
+                                        const lines = cleanedText.split(/[\n\r]+/);
+
                                         for (let i = 0; i < lines.length; i++) {
                                             const lineLower = lines[i].toLowerCase();
 
@@ -2160,30 +2243,15 @@
                                             const hasBankName = bankNameParts.length > 0 && bankNameParts.some(part => lineLower.includes(part));
                                             
                                             if (hasEmiKeyword || hasBankName) {
-                                                // Look for the EMI amount within next 5 lines (amount typically 2-3 lines after description)
-                                                for (let j = i; j < Math.min(i + 6, lines.length); j++) {
+                                                // Look for the EMI amount within next 6 lines
+                                                for (let j = i; j < Math.min(i + 7, lines.length); j++) {
                                                     const checkLine = lines[j].toLowerCase();
-                                                    const hasEmiAmount = checkLine.includes(emiStr) || 
-                                                                         checkLine.includes(emiFormatted.toLowerCase()) ||
-                                                                         checkLine.includes(emiWithDecimals.toLowerCase()) ||
-                                                                         checkLine.includes((emiAmount - 1).toString()) ||
-                                                                         checkLine.includes((emiAmount + 1).toString());
+                                                    const hasEmiAmount = variants.some(v => checkLine.includes(v.toLowerCase()));
                                                     
                                                     if (hasEmiAmount) {
                                                         return true;
                                                     }
                                                 }
-                                            }
-                                        }
-                                        
-                                        // Also check if EMI amount appears anywhere with comma formatting (as fallback)
-                                        const textLower = text.toLowerCase();
-                                        if (textLower.includes(emiWithDecimals.toLowerCase()) || textLower.includes(emiFormatted.toLowerCase())) {
-                                            // Amount exists, check if any EMI keyword exists in entire document
-                                            const hasAnyEmiKeyword = emiKeywords.some(kw => textLower.includes(kw));
-                                            const hasAnyBankName = bankNameParts.some(part => textLower.includes(part));
-                                            if (hasAnyEmiKeyword || hasAnyBankName) {
-                                                return true;
                                             }
                                         }
 
@@ -2196,9 +2264,27 @@
                                             const emiAmount = Math.round(profile.emi);
                                             const loanBankName = profile.bank || '';
 
+                                            // Count EMI occurrences to track monthly payments
+                                            const countEmiOccurrences = (text, amount) => {
+                                                const cleanedText = cleanBankText(text);
+                                                const textLower = cleanedText.toLowerCase();
+                                                const variants = getAmountVariants(amount, 1);
+                                                
+                                                let maxCount = 0;
+                                                variants.forEach(v => {
+                                                    const regex = new RegExp(v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+                                                    const matches = textLower.match(regex);
+                                                    if (matches && matches.length > maxCount) {
+                                                        maxCount = matches.length;
+                                                    }
+                                                });
+                                                return maxCount;
+                                            };
+
                                             // Check each bank statement individually
                                             let foundInAccount = null;
                                             let foundInAnyDoc = false;
+                                            let totalEmiCount = 0;
 
                                             for (const doc of bankingDocs) {
                                                 if (doc.extractedText) {
@@ -2209,9 +2295,9 @@
 
                                                     if (emiFound) {
                                                         foundInAnyDoc = true;
+                                                        totalEmiCount += countEmiOccurrences(docText, emiAmount);
                                                         if (doc.extractedDetails && doc.extractedDetails.accountNumber && doc.extractedDetails.accountNumber !== 'N/A') {
                                                             foundInAccount = doc.extractedDetails.accountNumber;
-                                                            break;
                                                         }
                                                     }
                                                 }
@@ -2221,7 +2307,8 @@
                                                 // EMI found in a bank statement with proper context
                                                 emiFoundInAccounts[profile._id] = {
                                                     found: true,
-                                                    accountNumber: foundInAccount || ''
+                                                    accountNumber: foundInAccount || '',
+                                                    monthsFound: totalEmiCount
                                                 };
                                             } else {
                                                 // EMI not found - mark as missing
@@ -3004,9 +3091,10 @@
                                             </td>
                                             <%
                                             // Determine auto-detected values for this profile
-                                            const autoDetected = emiFoundInAccounts[profile._id] || { found: false, accountNumber: '' };
+                                            const autoDetected = emiFoundInAccounts[profile._id] || { found: false, accountNumber: '', monthsFound: 0 };
                                             const isEmiFound = autoDetected.found || profile.emiBankStatementProvided;
                                             const selectedAccount = autoDetected.accountNumber || profile.emiBankAccountNumber || '';
+                                            const monthsFoundText = autoDetected.monthsFound > 0 ? ` (${autoDetected.monthsFound} mo)` : '';
                                             %>
                                             <td style="padding:8px;text-align:center;<%= isEmiFound ? 'background:#e8f5e9;' : (autoDetected.found === false && emiVerificationPossible ? 'background:#ffebee;' : '') %>">
                                                 <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
@@ -3017,8 +3105,8 @@
                                                             <%= autoDetected.found ? 'disabled' : '' %>
                                                             onchange="updateEmiBankStatement('<%= profile._id %>', this.checked, document.getElementById('emiBankAc_<%= profile._id %>').value)"
                                                             style="cursor:<%= autoDetected.found ? 'default' : 'pointer' %>;">
-                                                        <span style="color:<%= isEmiFound ? '#4caf50' : '#666' %>;">
-                                                            <%= autoDetected.found ? '✓ Found' : (isEmiFound ? 'Manual' : 'Not Found') %>
+                                                        <span style="color:<%= isEmiFound ? '#4caf50' : '#666' %>;" title="<%= autoDetected.monthsFound > 0 ? 'Found ' + autoDetected.monthsFound + ' EMI payments in bank statements' : '' %>">
+                                                            <%= autoDetected.found ? '✓ Found' + monthsFoundText : (isEmiFound ? 'Manual' : 'Not Found') %>
                                                         </span>
                                                     </label>
                                                     <select id="emiBankAc_<%= profile._id %>"
@@ -3627,6 +3715,21 @@
                 alert('Upload error: ' + error.message + '. Please try again or check your network connection.');
             }
         });
+
+        // Toggle required documents list
+        function toggleRequiredDocs() {
+            const content = document.getElementById('reqDocsContent');
+            const toggle = document.getElementById('reqDocsToggle');
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                toggle.textContent = '−';
+                toggle.style.transform = 'rotate(0deg)';
+            } else {
+                content.style.display = 'none';
+                toggle.textContent = '+';
+                toggle.style.transform = 'rotate(0deg)';
+            }
+        }
 
         // Tab functionality
         function showTab(category) {
@@ -4315,15 +4418,21 @@
                 const result = await response.json();
 
                 if (result.success) {
-                    // Animate removal
-                    listItem.style.transition = 'all 0.3s ease';
-                    listItem.style.opacity = '0';
-                    listItem.style.transform = 'translateX(20px)';
+                    // Find and remove matching items from ALL tabs (both ALL tab and category-specific tab)
+                    const allMatchingItems = document.querySelectorAll(`li.pending-item[data-pending-text="${CSS.escape(pendingText)}"]`);
+                    allMatchingItems.forEach(item => {
+                        item.style.transition = 'all 0.3s ease';
+                        item.style.opacity = '0';
+                        item.style.transform = 'translateX(20px)';
+                        setTimeout(() => {
+                            item.remove();
+                        }, 300);
+                    });
+                    
+                    // Update the counts after a short delay
                     setTimeout(() => {
-                        listItem.remove();
-                        // Update the count in the tab button
                         updatePendingTabCount(category);
-                    }, 300);
+                    }, 350);
                 } else {
                     alert('Failed to dismiss: ' + result.error);
                 }
