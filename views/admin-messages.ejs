@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Messages - <%= importDoc ? importDoc.filename : 'Import' %></title>
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="/css/proposal.css">
+    <style>
+        .filters-bar {
+            display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px;
+            padding: 16px; background: #f8f9fa; border-radius: 8px;
+        }
+        .filters-bar select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; min-width: 140px; }
+
+        .messages-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .messages-table th, .messages-table td { padding: 8px 6px; text-align: left; border-bottom: 1px solid #eee; }
+        .messages-table th { background: #f8f9fa; font-weight: 600; color: #2c3e50; position: sticky; top: 0; }
+        .messages-table tr:hover { background: #fafafa; }
+        .messages-table tr.is-duplicate { opacity: 0.5; }
+
+        .msg-type-badge { padding: 2px 6px; border-radius: 8px; font-size: 0.75em; font-weight: 500; }
+        .msg-type-text { background: #d4efdf; color: #27ae60; }
+        .msg-type-image { background: #d6eaf8; color: #2980b9; }
+        .msg-type-file { background: #e8daef; color: #8e44ad; }
+        .msg-type-deleted { background: #fadbd8; color: #e74c3c; }
+        .msg-type-group_event { background: #fef9e7; color: #f39c12; }
+
+        .dup-indicator { color: #e74c3c; font-weight: 600; font-size: 0.85em; }
+        .relevance-bar { display: inline-block; height: 8px; background: #3498db; border-radius: 4px; min-width: 2px; }
+
+        .msg-content { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: #555; }
+
+        .pagination { display: flex; gap: 8px; justify-content: center; margin-top: 20px; }
+        .pagination a, .pagination span { padding: 8px 14px; border: 1px solid #ddd; border-radius: 6px; text-decoration: none; color: #2c3e50; }
+        .pagination span.current { background: #3498db; color: white; border-color: #3498db; }
+
+        .stats-bar { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+        .stats-bar .stat { background: white; padding: 12px 16px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); text-align: center; }
+        .stats-bar .stat .val { font-size: 1.4em; font-weight: 700; color: #2c3e50; }
+        .stats-bar .stat .lbl { font-size: 0.8em; color: #7f8c8d; }
+
+        .table-scroll { overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Messages</h1>
+            <p class="subtitle"><%= importDoc ? importDoc.filename : 'Import' %> - <%= totalCount %> messages</p>
+        </header>
+
+        <div class="actions-bar">
+            <a href="/admin/import-chat" class="btn btn-secondary">← Imports</a>
+            <a href="/admin/policies" class="btn btn-secondary">Policies</a>
+            <a href="/admin/banks" class="btn btn-secondary">Banks</a>
+        </div>
+
+        <% if (importDoc) { %>
+        <div class="stats-bar">
+            <div class="stat"><div class="val"><%= importDoc.messages_stored || 0 %></div><div class="lbl">Stored</div></div>
+            <div class="stat"><div class="val"><%= importDoc.messages_deduplicated || 0 %></div><div class="lbl">Deduplicated</div></div>
+            <div class="stat"><div class="val"><%= importDoc.unique_senders || 0 %></div><div class="lbl">Senders</div></div>
+            <div class="stat"><div class="val"><%= importDoc.policies_extracted || 0 %></div><div class="lbl">Policies</div></div>
+        </div>
+        <% } %>
+
+        <!-- Filters -->
+        <div class="filters-bar">
+            <select id="filterType" onchange="applyFilters()">
+                <option value="">All Types</option>
+                <% ['text','image','file','deleted','group_event'].forEach(t => { %>
+                    <option value="<%= t %>" <%= filters.type === t ? 'selected' : '' %>><%= t %></option>
+                <% }); %>
+            </select>
+            <select id="filterSender" onchange="applyFilters()">
+                <option value="">All Senders</option>
+                <% senders.forEach(s => { %>
+                    <option value="<%= s %>" <%= filters.sender === s ? 'selected' : '' %>><%= s %></option>
+                <% }); %>
+            </select>
+            <select id="filterDup" onchange="applyFilters()">
+                <option value="">All Messages</option>
+                <option value="hide" <%= filters.duplicates === 'hide' ? 'selected' : '' %>>Hide Duplicates</option>
+                <option value="only" <%= filters.duplicates === 'only' ? 'selected' : '' %>>Only Duplicates</option>
+            </select>
+        </div>
+
+        <!-- Messages Table -->
+        <div class="table-scroll">
+            <table class="messages-table">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Sender</th>
+                        <th>Type</th>
+                        <th>Content</th>
+                        <th>Dup</th>
+                        <th>Relevance</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <% if (messages.length === 0) { %>
+                        <tr><td colspan="6" style="text-align:center; color:#999; padding:30px;">No messages found.</td></tr>
+                    <% } %>
+                    <% messages.forEach(m => { %>
+                        <tr class="<%= m.is_duplicate ? 'is-duplicate' : '' %>">
+                            <td style="white-space:nowrap; font-size:12px;"><%= m.timestamp ? new Date(m.timestamp).toLocaleString() : m.message_date_str || '-' %></td>
+                            <td style="font-size:12px;"><%= m.sender_name || m.sender_number || '-' %></td>
+                            <td><span class="msg-type-badge msg-type-<%= m.message_type %>"><%= m.message_type %></span></td>
+                            <td class="msg-content" title="<%= (m.message_content || '').replace(/"/g, '&quot;') %>"><%= (m.message_content || '').substring(0, 120) %></td>
+                            <td><% if (m.is_duplicate) { %><span class="dup-indicator">DUP</span><% } %></td>
+                            <td>
+                                <% if (m.policy_relevance_score > 0) { %>
+                                    <span class="relevance-bar" style="width: <%= Math.min(m.policy_relevance_score * 3, 60) %>px;" title="Score: <%= m.policy_relevance_score %>"></span>
+                                    <span style="font-size:11px; color:#7f8c8d;"><%= m.policy_relevance_score %></span>
+                                <% } else { %>-<% } %>
+                            </td>
+                        </tr>
+                    <% }); %>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        <% if (totalPages > 1) { %>
+            <div class="pagination">
+                <% for (let i = 1; i <= Math.min(totalPages, 20); i++) { %>
+                    <% if (i === currentPage) { %>
+                        <span class="current"><%= i %></span>
+                    <% } else { %>
+                        <a href="?page=<%= i %>&type=<%= filters.type %>&sender=<%= filters.sender %>&duplicates=<%= filters.duplicates %>"><%= i %></a>
+                    <% } %>
+                <% } %>
+                <% if (totalPages > 20) { %><span>... (<%= totalPages %> pages)</span><% } %>
+            </div>
+        <% } %>
+    </div>
+
+    <script>
+        function applyFilters() {
+            const type = document.getElementById('filterType').value;
+            const sender = document.getElementById('filterSender').value;
+            const dup = document.getElementById('filterDup').value;
+            const params = new URLSearchParams();
+            if (type) params.set('type', type);
+            if (sender) params.set('sender', sender);
+            if (dup) params.set('duplicates', dup);
+            window.location.href = '/admin/messages/<%= importId %>?' + params.toString();
+        }
+    </script>
+</body>
+</html>

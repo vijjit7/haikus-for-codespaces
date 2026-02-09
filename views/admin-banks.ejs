@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Banks & Institutions - Admin</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="/css/proposal.css">
+    <style>
+        .filters-bar {
+            display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px;
+            padding: 16px; background: #f8f9fa; border-radius: 8px;
+        }
+        .filters-bar select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; min-width: 160px; }
+
+        .banks-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .banks-table th, .banks-table td { padding: 10px 8px; text-align: left; border-bottom: 1px solid #eee; }
+        .banks-table th { background: #f8f9fa; font-weight: 600; color: #2c3e50; position: sticky; top: 0; }
+        .banks-table tr:hover { background: #fafafa; }
+
+        .type-badge { padding: 2px 8px; border-radius: 10px; font-size: 0.8em; font-weight: 500; }
+        .type-Bank { background: #d4efdf; color: #27ae60; }
+        .type-NBFC { background: #fdebd0; color: #e67e22; }
+        .type-HFC { background: #d6eaf8; color: #2980b9; }
+
+        .table-scroll { overflow-x: auto; }
+
+        .detail-section { margin-top: 24px; }
+        .detail-section h3 { margin-bottom: 12px; color: #2c3e50; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Banks & Institutions</h1>
+            <p class="subtitle"><%= banks.length %> institutions registered</p>
+        </header>
+
+        <div class="actions-bar">
+            <a href="/" class="btn btn-secondary">← Dashboard</a>
+            <a href="/admin/import-chat" class="btn btn-secondary">Import Chat</a>
+            <a href="/admin/policies" class="btn btn-primary">View Policies</a>
+            <a href="/admin/surrogates" class="btn btn-secondary">Surrogates</a>
+        </div>
+
+        <% if (typeof detail !== 'undefined' && detail && typeof bank !== 'undefined') { %>
+            <!-- Bank Detail View -->
+            <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); margin-bottom: 24px;">
+                <h2><%= bank.bank_name %> <span class="type-badge type-<%= bank.bank_type %>"><%= bank.bank_type %></span></h2>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-top: 16px;">
+                    <div><strong>Contact:</strong> <%= bank.contact_person || '-' %></div>
+                    <div><strong>Designation:</strong> <%= bank.designation || '-' %></div>
+                    <div><strong>Phone:</strong> <%= bank.contact_number || '-' %></div>
+                    <div><strong>Branch:</strong> <%= bank.branch_location || '-' %></div>
+                    <div><strong>First Seen:</strong> <%= bank.first_seen_date ? new Date(bank.first_seen_date).toLocaleDateString() : '-' %></div>
+                    <div><strong>Last Seen:</strong> <%= bank.last_seen_date ? new Date(bank.last_seen_date).toLocaleDateString() : '-' %></div>
+                </div>
+            </div>
+
+            <% if (typeof policies !== 'undefined' && policies.length > 0) { %>
+            <div class="detail-section">
+                <h3>Policies (<%= policies.length %>)</h3>
+                <div class="table-scroll">
+                    <table class="banks-table">
+                        <thead><tr><th>Loan Type</th><th>Product</th><th>Dept</th><th>Amount (L)</th><th>ROI</th><th>LTV</th></tr></thead>
+                        <tbody>
+                        <% policies.forEach(p => { %>
+                            <tr>
+                                <td><%= p.loan_type || '-' %></td>
+                                <td><%= p.product_type || '-' %></td>
+                                <td><%= p.department || '-' %></td>
+                                <td><%= p.loan_min_lakhs || '?' %>-<%= p.loan_max_lakhs || '?' %></td>
+                                <td><%= p.roi_min_pct || '?' %>-<%= p.roi_max_pct || '?' %>%</td>
+                                <td><%= p.ltv_pct ? p.ltv_pct + '%' : '-' %></td>
+                            </tr>
+                        <% }); %>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <% } %>
+
+            <% if (typeof surrogates !== 'undefined' && surrogates.length > 0) { %>
+            <div class="detail-section">
+                <h3>Surrogate Programs (<%= surrogates.length %>)</h3>
+                <div class="table-scroll">
+                    <table class="banks-table">
+                        <thead><tr><th>Type</th><th>Loan Limit (L)</th><th>ABB Multiplier</th><th>Margin</th><th>DSRA</th></tr></thead>
+                        <tbody>
+                        <% surrogates.forEach(s => { %>
+                            <tr>
+                                <td><%= s.program_type %></td>
+                                <td><%= s.program_loan_limit_lakhs || '-' %></td>
+                                <td><%= s.abb_multiplier ? s.abb_multiplier + 'x' : '-' %></td>
+                                <td><%= s.margin_pct ? s.margin_pct + '%' : '-' %></td>
+                                <td><%= s.dsra_months ? s.dsra_months + ' mo' : '-' %></td>
+                            </tr>
+                        <% }); %>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <% } %>
+
+        <% } else { %>
+            <!-- Bank List View -->
+            <div class="filters-bar">
+                <select id="filterType" onchange="applyFilter()">
+                    <option value="">All Types</option>
+                    <option value="Bank" <%= typeFilter === 'Bank' ? 'selected' : '' %>>Bank</option>
+                    <option value="NBFC" <%= typeFilter === 'NBFC' ? 'selected' : '' %>>NBFC</option>
+                    <option value="HFC" <%= typeFilter === 'HFC' ? 'selected' : '' %>>HFC</option>
+                </select>
+            </div>
+
+            <div class="table-scroll">
+                <table class="banks-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Contact</th>
+                            <th>Branch</th>
+                            <th>First Seen</th>
+                            <th>Last Seen</th>
+                            <th>Policies</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <% if (banks.length === 0) { %>
+                            <tr><td colspan="7" style="text-align:center; color:#999; padding:30px;">No banks found. <a href="/admin/import-chat">Import a chat</a> to auto-detect banks.</td></tr>
+                        <% } %>
+                        <% banks.forEach(b => { %>
+                            <tr>
+                                <td><a href="/admin/banks/<%= b._id %>" style="font-weight: 600; color: #2c3e50;"><%= b.bank_name %></a></td>
+                                <td><span class="type-badge type-<%= b.bank_type %>"><%= b.bank_type %></span></td>
+                                <td><%= b.contact_person || '-' %></td>
+                                <td><%= b.branch_location || '-' %></td>
+                                <td><%= b.first_seen_date ? new Date(b.first_seen_date).toLocaleDateString() : '-' %></td>
+                                <td><%= b.last_seen_date ? new Date(b.last_seen_date).toLocaleDateString() : '-' %></td>
+                                <td><%= b.policy_count || 0 %></td>
+                            </tr>
+                        <% }); %>
+                    </tbody>
+                </table>
+            </div>
+        <% } %>
+    </div>
+
+    <script>
+        function applyFilter() {
+            const type = document.getElementById('filterType').value;
+            const params = new URLSearchParams();
+            if (type) params.set('type', type);
+            window.location.href = '/admin/banks?' + params.toString();
+        }
+    </script>
+</body>
+</html>

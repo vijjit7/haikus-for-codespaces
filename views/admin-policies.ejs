@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bank Policies - Admin</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="/css/proposal.css">
+    <style>
+        body { background: #f0f0f0 !important; }
+        .filters-bar {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+            padding: 16px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        .filters-bar select, .filters-bar input {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        .filters-bar select { min-width: 160px; }
+
+        .policies-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .policies-table th, .policies-table td { padding: 10px 8px; text-align: left; border-bottom: 1px solid #eee; }
+        .policies-table th { background: #f8f9fa; font-weight: 600; color: #2c3e50; position: sticky; top: 0; z-index: 2; }
+        .policies-table tr:hover { background: #fafafa; }
+        .policies-table .amount { white-space: nowrap; }
+
+        .dept-badge {
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.8em;
+            font-weight: 500;
+        }
+        .dept-Prime { background: #d4efdf; color: #27ae60; }
+        .dept-Affordable { background: #fdebd0; color: #e67e22; }
+        .dept-Micro { background: #d6eaf8; color: #2980b9; }
+        .dept-SME { background: #e8daef; color: #8e44ad; }
+        .dept-Standard { background: #dfe6e9; color: #636e72; }
+        .dept-Other { background: #eee; color: #666; }
+
+        .type-badge { padding: 2px 6px; border-radius: 8px; font-size: 0.7em; font-weight: 500; }
+        .type-Bank { background: #d4efdf; color: #27ae60; }
+        .type-NBFC { background: #fdebd0; color: #e67e22; }
+        .type-HFC { background: #d6eaf8; color: #2980b9; }
+
+        .product-badge { padding: 2px 6px; border-radius: 8px; font-size: 0.75em; font-weight: 500; background: #f0f0f0; color: #555; }
+
+        .pagination { display: flex; gap: 8px; justify-content: center; margin-top: 20px; }
+        .pagination a, .pagination span {
+            padding: 8px 14px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            text-decoration: none;
+            color: #2c3e50;
+        }
+        .pagination span.current { background: #3498db; color: white; border-color: #3498db; }
+
+        .btn-delete-sm {
+            padding: 4px 10px;
+            background: #fadbd8;
+            color: #e74c3c;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .btn-delete-sm:hover { background: #e74c3c; color: white; }
+        .btn-edit-sm {
+            padding: 4px 10px;
+            background: #d4efdf;
+            color: #27ae60;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-right: 4px;
+        }
+        .btn-edit-sm:hover { background: #27ae60; color: white; }
+
+        /* Edit Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: flex-start;
+            padding-top: 40px;
+            overflow-y: auto;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal-box {
+            background: white;
+            border-radius: 12px;
+            padding: 24px 28px;
+            width: 720px;
+            max-width: 95vw;
+            max-height: 85vh;
+            overflow-y: auto;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.2);
+            margin-bottom: 40px;
+        }
+        .modal-box h2 { margin: 0 0 16px; font-size: 18px; color: #2c3e50; }
+        .modal-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px 16px;
+        }
+        .modal-grid .full-width { grid-column: 1 / -1; }
+        .modal-grid label {
+            display: block;
+            font-size: 12px;
+            font-weight: 600;
+            color: #555;
+            margin-bottom: 4px;
+        }
+        .modal-grid input, .modal-grid select, .modal-grid textarea {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 13px;
+            box-sizing: border-box;
+        }
+        .modal-grid textarea { resize: vertical; min-height: 60px; }
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 18px;
+        }
+        .modal-actions button {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        .btn-modal-save { background: #3498db; color: white; }
+        .btn-modal-save:hover { background: #2980b9; }
+        .btn-modal-cancel { background: #eee; color: #555; }
+        .btn-modal-cancel:hover { background: #ddd; }
+
+        .table-scroll { overflow: auto; max-height: calc(100vh - 220px); }
+        .profile-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+        .profile-tag { background: #eee; padding: 1px 6px; border-radius: 8px; font-size: 0.8em; }
+
+        .bulk-bar {
+            display: none;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: #fef9e7;
+            border: 1px solid #f9e79f;
+            border-radius: 8px;
+            margin-bottom: 12px;
+        }
+        .bulk-bar.visible { display: flex; }
+        .bulk-bar .selected-count { font-weight: 600; color: #2c3e50; }
+        .btn-bulk-delete {
+            padding: 6px 16px;
+            background: #e74c3c;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        .btn-bulk-delete:hover { background: #c0392b; }
+        .btn-clear-selection {
+            padding: 6px 12px;
+            background: transparent;
+            color: #7f8c8d;
+            border: 1px solid #bdc3c7;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .policies-table th input[type="checkbox"],
+        .policies-table td input[type="checkbox"] { cursor: pointer; width: 16px; height: 16px; }
+        .policies-table tr.selected { background: #fef9e7; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Bank Policies</h1>
+            <p class="subtitle"><%= totalCount %> policies from <%= uniqueBanks %> banks</p>
+        </header>
+
+        <div class="actions-bar">
+            <a href="/" class="btn btn-secondary">← Dashboard</a>
+            <a href="/admin/import-chat" class="btn btn-primary">+ Import Chat</a>
+            <a href="/admin/banks" class="btn btn-secondary">Banks</a>
+            <a href="/admin/surrogates" class="btn btn-secondary">Surrogates</a>
+        </div>
+
+        <!-- Filters -->
+        <div class="filters-bar">
+            <select id="filterBank" onchange="applyFilters()">
+                <option value="">All Banks</option>
+                <% bankNames.forEach(b => { %>
+                    <option value="<%= b %>" <%= filters.bank === b ? 'selected' : '' %>><%= b %></option>
+                <% }); %>
+            </select>
+            <select id="filterDept" onchange="applyFilters()">
+                <option value="">All Departments</option>
+                <% ['Prime','Affordable','Micro','SME','Corporate','Standard','Other'].forEach(d => { %>
+                    <option value="<%= d %>" <%= filters.department === d ? 'selected' : '' %>><%= d %></option>
+                <% }); %>
+            </select>
+            <select id="filterLoanType" onchange="applyFilters()">
+                <option value="">All Loan Types</option>
+                <% loanTypes.forEach(lt => { %>
+                    <option value="<%= lt %>" <%= filters.loanType === lt ? 'selected' : '' %>><%= lt %></option>
+                <% }); %>
+            </select>
+            <select id="filterProductType" onchange="applyFilters()">
+                <option value="">All Product Types</option>
+                <% ['HL','LAP','LRD','BT_TopUp','Commercial_Purchase','Other'].forEach(pt => { %>
+                    <option value="<%= pt %>" <%= filters.productType === pt ? 'selected' : '' %>><%= pt %></option>
+                <% }); %>
+            </select>
+        </div>
+
+        <!-- Bulk Action Bar -->
+        <div class="bulk-bar" id="bulkBar">
+            <span class="selected-count"><span id="selectedCount">0</span> selected</span>
+            <button class="btn-bulk-delete" onclick="bulkDelete()">Delete Selected</button>
+            <button class="btn-clear-selection" onclick="clearSelection()">Clear</button>
+        </div>
+
+        <!-- Table -->
+        <div class="table-scroll">
+            <table class="policies-table">
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" id="selectAll" onchange="toggleSelectAll(this)"></th>
+                        <th>Bank</th>
+                        <th>Type</th>
+                        <th>Dept</th>
+                        <th>Product</th>
+                        <th>Loan Type</th>
+                        <th>Amount (L)</th>
+                        <th>ROI (%)</th>
+                        <th>LTV</th>
+                        <th>Geo</th>
+                        <th>CIBIL</th>
+                        <th>Tenure</th>
+                        <th>Profiles</th>
+                        <th>Programs</th>
+                        <th>Collateral</th>
+                        <th>Remarks</th>
+                        <th>Banker</th>
+                        <th>Contact</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <% if (policies.length === 0) { %>
+                        <tr><td colspan="19" style="text-align:center; color:#999; padding:30px;">No policies found. <a href="/admin/import-chat">Import a chat</a> to get started.</td></tr>
+                    <% } %>
+                    <% policies.forEach(p => { %>
+                        <tr id="row-<%= p._id %>" data-policy='<%- JSON.stringify({
+                            _id: p._id,
+                            bank_name: p.bank_name || "",
+                            department: p.department || "Other",
+                            loan_type: p.loan_type || "",
+                            product_type: p.product_type || "",
+                            loan_min_lakhs: p.loan_min_lakhs != null ? p.loan_min_lakhs : "",
+                            loan_max_lakhs: p.loan_max_lakhs != null ? p.loan_max_lakhs : "",
+                            roi_min_pct: p.roi_min_pct != null ? p.roi_min_pct : "",
+                            roi_max_pct: p.roi_max_pct != null ? p.roi_max_pct : "",
+                            ltv_pct: p.ltv_pct != null ? p.ltv_pct : "",
+                            ltv_min_pct: p.ltv_min_pct != null ? p.ltv_min_pct : "",
+                            geo_limits_km: p.geo_limits_km != null ? p.geo_limits_km : "",
+                            min_cibil: p.min_cibil != null ? p.min_cibil : "",
+                            max_tenure_years: p.max_tenure_years != null ? p.max_tenure_years : "",
+                            processing_fee_pct: p.processing_fee_pct != null ? p.processing_fee_pct : "",
+                            profiles: (p.profiles || []).join(", "),
+                            programs: (p.programs || []).join(", "),
+                            collateral_types: (p.collateral_types || []).join(", "),
+                            loan_nature: p.loan_nature || "",
+                            special_conditions: p.special_conditions || "",
+                            other_remarks: p.other_remarks || "",
+                            banker_name: p.banker_name || "",
+                            banker_contact: p.banker_contact || ""
+                        }).replace(/'/g, "&#39;") %>'>
+                            <td><input type="checkbox" class="policy-cb" value="<%= p._id %>" onchange="updateSelection()"></td>
+                            <td><strong><%= p.bank_name %></strong></td>
+                            <td>
+                                <% if (p.bank_id && p.bank_id.bank_type) { %>
+                                    <span class="type-badge type-<%= p.bank_id.bank_type %>"><%= p.bank_id.bank_type %></span>
+                                <% } else { %>-<% } %>
+                            </td>
+                            <td><span class="dept-badge dept-<%= p.department %>"><%= p.department %></span></td>
+                            <td><% if (p.product_type) { %><span class="product-badge"><%= p.product_type %></span><% } else { %>-<% } %></td>
+                            <td><%= p.loan_type || '-' %></td>
+                            <td class="amount">
+                                <% if (p.loan_min_lakhs || p.loan_max_lakhs) { %>
+                                    <%= p.loan_min_lakhs || '?' %>-<%= p.loan_max_lakhs || '?' %>
+                                <% } else { %>-<% } %>
+                            </td>
+                            <td>
+                                <% if (p.roi_min_pct || p.roi_max_pct) { %>
+                                    <%= p.roi_min_pct || '?' %>-<%= p.roi_max_pct || '?' %>
+                                <% } else { %>-<% } %>
+                            </td>
+                            <td>
+                                <% if (p.ltv_min_pct && p.ltv_pct) { %>
+                                    <%= p.ltv_min_pct %>-<%= p.ltv_pct %>%
+                                <% } else if (p.ltv_pct) { %>
+                                    <%= p.ltv_pct %>%
+                                <% } else { %>-<% } %>
+                            </td>
+                            <td><%= p.geo_limits_km ? p.geo_limits_km + 'km' : '-' %></td>
+                            <td><%= p.min_cibil || '-' %></td>
+                            <td><%= p.max_tenure_years ? p.max_tenure_years + 'y' : '-' %></td>
+                            <td>
+                                <div class="profile-tags">
+                                    <% (p.profiles || []).forEach(pr => { %>
+                                        <span class="profile-tag"><%= pr %></span>
+                                    <% }); %>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="profile-tags">
+                                    <% (p.programs || []).forEach(pg => { %>
+                                        <span class="profile-tag" style="background:#e8daef; color:#8e44ad;"><%= pg %></span>
+                                    <% }); %>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="profile-tags">
+                                    <% (p.collateral_types || []).forEach(ct => { %>
+                                        <span class="profile-tag" style="background:#d5f5e3; color:#1e8449;"><%= ct %></span>
+                                    <% }); %>
+                                    <% if (!p.collateral_types || p.collateral_types.length === 0) { %>-<% } %>
+                                </div>
+                            </td>
+                            <td style="font-size:12px; color:#555; max-width:150px;"><%= p.other_remarks || '-' %></td>
+                            <td style="font-size:13px;"><%= p.banker_name || '-' %></td>
+                            <td style="font-size:13px; white-space:nowrap;"><% if (p.banker_contact) { %><a href="tel:<%= p.banker_contact %>" style="color:#2980b9;"><%= p.banker_contact %></a><% } else { %>-<% } %></td>
+                            <td style="white-space:nowrap;">
+                                <button class="btn-edit-sm" onclick="editPolicy('<%= p._id %>')">Edit</button>
+                                <button class="btn-delete-sm" onclick="deletePolicy('<%= p._id %>')">Delete</button>
+                            </td>
+                        </tr>
+                    <% }); %>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        <% if (totalPages > 1) { %>
+            <div class="pagination">
+                <% for (let i = 1; i <= totalPages; i++) { %>
+                    <% if (i === currentPage) { %>
+                        <span class="current"><%= i %></span>
+                    <% } else { %>
+                        <a href="?page=<%= i %>&bank=<%= filters.bank %>&department=<%= filters.department %>&loanType=<%= filters.loanType %>&productType=<%= filters.productType %>"><%= i %></a>
+                    <% } %>
+                <% } %>
+            </div>
+        <% } %>
+    </div>
+
+    <!-- Edit Policy Modal -->
+    <div class="modal-overlay" id="editModal">
+        <div class="modal-box">
+            <h2>Edit Policy</h2>
+            <input type="hidden" id="editPolicyId">
+            <div class="modal-grid">
+                <div>
+                    <label>Bank Name</label>
+                    <input type="text" id="edit_bank_name">
+                </div>
+                <div>
+                    <label>Department</label>
+                    <select id="edit_department">
+                        <option value="Prime">Prime</option>
+                        <option value="Affordable">Affordable</option>
+                        <option value="Micro">Micro</option>
+                        <option value="SME">SME</option>
+                        <option value="Corporate">Corporate</option>
+                        <option value="Standard">Standard</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Loan Type</label>
+                    <input type="text" id="edit_loan_type">
+                </div>
+                <div>
+                    <label>Product Type</label>
+                    <select id="edit_product_type">
+                        <option value="">-</option>
+                        <option value="HL">HL</option>
+                        <option value="LAP">LAP</option>
+                        <option value="LRD">LRD</option>
+                        <option value="BT_TopUp">BT_TopUp</option>
+                        <option value="Commercial_Purchase">Commercial_Purchase</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Amount Min (L)</label>
+                    <input type="number" id="edit_loan_min_lakhs" step="any">
+                </div>
+                <div>
+                    <label>Amount Max (L)</label>
+                    <input type="number" id="edit_loan_max_lakhs" step="any">
+                </div>
+                <div>
+                    <label>ROI Min (%)</label>
+                    <input type="number" id="edit_roi_min_pct" step="0.01">
+                </div>
+                <div>
+                    <label>ROI Max (%)</label>
+                    <input type="number" id="edit_roi_max_pct" step="0.01">
+                </div>
+                <div>
+                    <label>LTV Max (%)</label>
+                    <input type="number" id="edit_ltv_pct" step="any">
+                </div>
+                <div>
+                    <label>LTV Min (%)</label>
+                    <input type="number" id="edit_ltv_min_pct" step="any">
+                </div>
+                <div>
+                    <label>Geo Limits (km)</label>
+                    <input type="number" id="edit_geo_limits_km" step="any">
+                </div>
+                <div>
+                    <label>Min CIBIL</label>
+                    <input type="number" id="edit_min_cibil" step="1">
+                </div>
+                <div>
+                    <label>Max Tenure (years)</label>
+                    <input type="number" id="edit_max_tenure_years" step="any">
+                </div>
+                <div>
+                    <label>Processing Fee (%)</label>
+                    <input type="number" id="edit_processing_fee_pct" step="0.01">
+                </div>
+                <div>
+                    <label>Loan Nature</label>
+                    <select id="edit_loan_nature">
+                        <option value="">-</option>
+                        <option value="Secured">Secured</option>
+                        <option value="Unsecured">Unsecured</option>
+                        <option value="Both">Both</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Banker Name</label>
+                    <input type="text" id="edit_banker_name">
+                </div>
+                <div>
+                    <label>Banker Contact</label>
+                    <input type="text" id="edit_banker_contact">
+                </div>
+                <div class="full-width">
+                    <label>Profiles (comma-separated)</label>
+                    <input type="text" id="edit_profiles">
+                </div>
+                <div class="full-width">
+                    <label>Programs (comma-separated)</label>
+                    <input type="text" id="edit_programs">
+                </div>
+                <div class="full-width">
+                    <label>Collateral Types (comma-separated)</label>
+                    <input type="text" id="edit_collateral_types">
+                </div>
+                <div class="full-width">
+                    <label>Special Conditions</label>
+                    <textarea id="edit_special_conditions"></textarea>
+                </div>
+                <div class="full-width">
+                    <label>Other Remarks</label>
+                    <textarea id="edit_other_remarks"></textarea>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-modal-cancel" onclick="closeEditModal()">Cancel</button>
+                <button class="btn-modal-save" onclick="savePolicy()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function applyFilters() {
+            const bank = document.getElementById('filterBank').value;
+            const dept = document.getElementById('filterDept').value;
+            const loanType = document.getElementById('filterLoanType').value;
+            const productType = document.getElementById('filterProductType').value;
+            const params = new URLSearchParams();
+            if (bank) params.set('bank', bank);
+            if (dept) params.set('department', dept);
+            if (loanType) params.set('loanType', loanType);
+            if (productType) params.set('productType', productType);
+            window.location.href = '/admin/policies?' + params.toString();
+        }
+
+        async function deletePolicy(id) {
+            if (!confirm('Soft-delete this policy?')) return;
+            try {
+                const resp = await fetch('/admin/policies/' + id + '/delete', { method: 'POST' });
+                const data = await resp.json();
+                if (data.success) window.location.reload();
+                else alert('Error: ' + data.error);
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        function getSelectedIds() {
+            return Array.from(document.querySelectorAll('.policy-cb:checked')).map(cb => cb.value);
+        }
+
+        function updateSelection() {
+            const ids = getSelectedIds();
+            const count = ids.length;
+            document.getElementById('selectedCount').textContent = count;
+            const bulkBar = document.getElementById('bulkBar');
+            if (count > 0) {
+                bulkBar.classList.add('visible');
+            } else {
+                bulkBar.classList.remove('visible');
+            }
+            // Highlight selected rows
+            document.querySelectorAll('.policy-cb').forEach(cb => {
+                const row = document.getElementById('row-' + cb.value);
+                if (row) row.classList.toggle('selected', cb.checked);
+            });
+            // Update select-all state
+            const allCbs = document.querySelectorAll('.policy-cb');
+            const selectAll = document.getElementById('selectAll');
+            selectAll.checked = allCbs.length > 0 && ids.length === allCbs.length;
+            selectAll.indeterminate = ids.length > 0 && ids.length < allCbs.length;
+        }
+
+        function toggleSelectAll(master) {
+            document.querySelectorAll('.policy-cb').forEach(cb => { cb.checked = master.checked; });
+            updateSelection();
+        }
+
+        function clearSelection() {
+            document.querySelectorAll('.policy-cb').forEach(cb => { cb.checked = false; });
+            document.getElementById('selectAll').checked = false;
+            updateSelection();
+        }
+
+        async function bulkDelete() {
+            const ids = getSelectedIds();
+            if (ids.length === 0) return;
+            if (!confirm('Soft-delete ' + ids.length + ' selected policies?')) return;
+            try {
+                const resp = await fetch('/admin/policies/bulk-delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        // Edit modal functions
+        const editFields = [
+            'bank_name', 'department', 'loan_type', 'product_type',
+            'loan_min_lakhs', 'loan_max_lakhs', 'roi_min_pct', 'roi_max_pct',
+            'ltv_pct', 'ltv_min_pct', 'geo_limits_km', 'min_cibil',
+            'max_tenure_years', 'processing_fee_pct', 'loan_nature',
+            'special_conditions', 'other_remarks', 'banker_name', 'banker_contact',
+            'profiles', 'programs', 'collateral_types'
+        ];
+
+        function editPolicy(id) {
+            const row = document.getElementById('row-' + id);
+            const policy = JSON.parse(row.getAttribute('data-policy'));
+            document.getElementById('editPolicyId').value = policy._id;
+            editFields.forEach(f => {
+                const el = document.getElementById('edit_' + f);
+                if (el) el.value = policy[f] != null ? policy[f] : '';
+            });
+            document.getElementById('editModal').classList.add('active');
+        }
+
+        function closeEditModal() {
+            document.getElementById('editModal').classList.remove('active');
+        }
+
+        // Close modal on overlay click
+        document.getElementById('editModal').addEventListener('click', function(e) {
+            if (e.target === this) closeEditModal();
+        });
+
+        async function savePolicy() {
+            const id = document.getElementById('editPolicyId').value;
+            const body = {};
+            editFields.forEach(f => {
+                body[f] = document.getElementById('edit_' + f).value;
+            });
+            try {
+                const resp = await fetch('/admin/policies/' + id + '/update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+    </script>
+</body>
+</html>

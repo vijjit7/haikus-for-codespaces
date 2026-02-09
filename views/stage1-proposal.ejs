@@ -429,9 +429,13 @@
             }
         }
 
+        let isSubmitting = false;
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
-            
+
+            if (isSubmitting) return;
+            isSubmitting = true;
+
             // Collect form data
             const formData = new FormData(form);
             const data = {};
@@ -483,6 +487,7 @@
                 }
             } catch (error) {
                 alert('Error submitting proposal: ' + error.message);
+                isSubmitting = false;
             }
         });
 

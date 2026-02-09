@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Import Bank Policies</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="/css/proposal.css">
+    <style>
+        .import-container { max-width: 900px; margin: 0 auto; }
+        .upload-zone {
+            border: 3px dashed #bdc3c7;
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: #fafafa;
+            margin-bottom: 24px;
+        }
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: #3498db;
+            background: #ebf5fb;
+        }
+        .upload-zone h3 { margin: 0 0 8px; color: #2c3e50; }
+        .upload-zone p { color: #7f8c8d; margin: 0; }
+        .upload-zone input[type="file"] { display: none; }
+        .upload-zone .file-count {
+            margin-top: 10px;
+            font-weight: 600;
+            color: #2980b9;
+            display: none;
+        }
+
+        .progress-container {
+            display: none;
+            margin: 20px 0;
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        .progress-bar-outer {
+            width: 100%;
+            height: 24px;
+            background: #ecf0f1;
+            border-radius: 12px;
+            overflow: hidden;
+            margin: 12px 0;
+        }
+        .progress-bar-inner {
+            height: 100%;
+            background: linear-gradient(90deg, #3498db, #2ecc71);
+            border-radius: 12px;
+            transition: width 0.5s ease;
+            width: 0%;
+        }
+        .progress-status { font-weight: 600; color: #2c3e50; }
+        .progress-log {
+            max-height: 200px;
+            overflow-y: auto;
+            font-size: 13px;
+            color: #555;
+            background: #fff;
+            padding: 10px;
+            border-radius: 6px;
+            margin-top: 10px;
+            border: 1px solid #eee;
+        }
+        .progress-log p { margin: 2px 0; }
+        .progress-log .skipped { color: #e67e22; }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .stat-card {
+            background: white;
+            border-radius: 8px;
+            padding: 16px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        .stat-card .stat-value { font-size: 2em; font-weight: 700; color: #2c3e50; }
+        .stat-card .stat-label { color: #7f8c8d; font-size: 0.9em; }
+
+        .import-history { margin-top: 24px; }
+        .import-history table { width: 100%; border-collapse: collapse; }
+        .import-history th, .import-history td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; }
+        .import-history th { background: #f8f9fa; font-weight: 600; color: #2c3e50; }
+        .import-history tr:hover { background: #fafafa; }
+
+        .status-badge { padding: 3px 10px; border-radius: 12px; font-size: 0.85em; font-weight: 500; }
+        .status-completed { background: #d5f5e3; color: #27ae60; }
+        .status-failed { background: #fadbd8; color: #e74c3c; }
+        .status-processing { background: #fef9e7; color: #f39c12; }
+
+        .type-badge { padding: 2px 8px; border-radius: 8px; font-size: 0.8em; font-weight: 500; }
+        .type-whatsapp_chat { background: #d5f5e3; color: #27ae60; }
+        .type-pasted_text { background: #d6eaf8; color: #2980b9; }
+        .type-pdf_document { background: #fdebd0; color: #e67e22; }
+        .type-image_document { background: #e8daef; color: #8e44ad; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Import Bank Policies</h1>
+            <p class="subtitle">Upload WhatsApp chat exports (.txt), policy screenshots (.jpg/.png), or PDF circulars (.pdf)</p>
+        </header>
+
+        <div class="actions-bar">
+            <a href="/" class="btn btn-secondary">&larr; Back to Dashboard</a>
+            <a href="/admin/policies" class="btn btn-primary">View All Policies</a>
+            <a href="/admin/banks" class="btn btn-secondary">Banks</a>
+            <a href="/admin/surrogates" class="btn btn-secondary">Surrogates</a>
+        </div>
+
+        <div class="import-container">
+            <!-- Stats -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value"><%= stats.totalPolicies %></div>
+                    <div class="stat-label">Total Policies</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value"><%= stats.uniqueBanks %></div>
+                    <div class="stat-label">Unique Banks</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value"><%= stats.totalImports %></div>
+                    <div class="stat-label">Imports</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value"><%= stats.totalMessages %></div>
+                    <div class="stat-label">Messages Stored</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value"><%= stats.totalBanks %></div>
+                    <div class="stat-label">Banks/NBFCs/HFCs</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value"><%= stats.totalSurrogates %></div>
+                    <div class="stat-label">Surrogate Programs</div>
+                </div>
+            </div>
+
+            <!-- Upload Zone -->
+            <div class="upload-zone" id="uploadZone" onclick="document.getElementById('policyFiles').click()">
+                <h3>Drop Policy Files Here</h3>
+                <p>or click to browse (.txt, .pdf, .jpg, .jpeg, .png &mdash; multiple files supported)</p>
+                <input type="file" id="policyFiles" accept=".txt,.pdf,.jpg,.jpeg,.png" multiple>
+                <div class="file-count" id="fileCount"></div>
+            </div>
+
+            <!-- Paste Zone -->
+            <div style="margin-bottom: 24px;">
+                <h3 style="margin: 0 0 8px; color: #2c3e50; font-size: 1em;">Or Paste Policies Directly</h3>
+                <textarea id="pasteText" rows="8" placeholder="Paste WhatsApp messages or policy text here..." style="width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; resize: vertical; font-family: inherit; box-sizing: border-box;"></textarea>
+                <button id="pasteBtn" onclick="submitPastedText()" style="margin-top: 8px; padding: 10px 24px; background: #3498db; color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer;">Process Pasted Text</button>
+            </div>
+
+            <!-- Progress -->
+            <div class="progress-container" id="progressContainer">
+                <div class="progress-status" id="progressStatus">Uploading...</div>
+                <div class="progress-bar-outer">
+                    <div class="progress-bar-inner" id="progressBar"></div>
+                </div>
+                <div class="progress-log" id="progressLog"></div>
+            </div>
+
+            <!-- Import History -->
+            <div class="import-history">
+                <h2>Import History</h2>
+                <% if (imports.length === 0) { %>
+                    <p style="color: #7f8c8d;">No imports yet. Upload files or paste text to get started.</p>
+                <% } else { %>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Type</th>
+                                <th>Date</th>
+                                <th>Messages</th>
+                                <th>Stored</th>
+                                <th>Policies</th>
+                                <th>Banks</th>
+                                <th>Surrogates</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <% imports.forEach(imp => {
+                                const typeLabels = { whatsapp_chat: 'Chat', pasted_text: 'Paste', pdf_document: 'PDF', image_document: 'Image' };
+                                const impType = imp.import_type || 'whatsapp_chat';
+                            %>
+                                <tr>
+                                    <td title="<%= imp.filename %>"><%= imp.filename.length > 30 ? imp.filename.substring(0, 27) + '...' : imp.filename %></td>
+                                    <td><span class="type-badge type-<%= impType %>"><%= typeLabels[impType] || impType %></span></td>
+                                    <td><%= new Date(imp.createdAt).toLocaleString() %></td>
+                                    <td><%= imp.total_messages %></td>
+                                    <td><%= imp.messages_stored || 0 %></td>
+                                    <td><%= imp.policies_extracted %> (<%= imp.policies_extracted - imp.policies_deduplicated %> new)</td>
+                                    <td><%= imp.banks_identified || 0 %></td>
+                                    <td><%= imp.surrogates_extracted || 0 %></td>
+                                    <td>
+                                        <span class="status-badge status-<%= imp.status === 'completed' ? 'completed' : imp.status === 'failed' ? 'failed' : 'processing' %>">
+                                            <%= imp.status %>
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <% if (imp.status === 'completed') { %>
+                                            <a href="/admin/messages/<%= imp._id %>" style="font-size:12px; color:#3498db;">Messages</a> |
+                                        <% } %>
+                                        <a href="#" onclick="deleteImport('<%= imp._id %>', '<%= imp.filename.replace(/'/g, "\\'") %>'); return false;" style="font-size:12px; color:#e74c3c;">Delete</a>
+                                    </td>
+                                </tr>
+                            <% }); %>
+                        </tbody>
+                    </table>
+                <% } %>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const uploadZone = document.getElementById('uploadZone');
+        const policyFiles = document.getElementById('policyFiles');
+        const fileCountEl = document.getElementById('fileCount');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const progressStatus = document.getElementById('progressStatus');
+        const progressLog = document.getElementById('progressLog');
+
+        const ALLOWED_EXTS = ['.txt', '.pdf', '.jpg', '.jpeg', '.png'];
+
+        function getExt(name) {
+            return (name || '').toLowerCase().replace(/.*(\.[^.]+)$/, '$1');
+        }
+
+        function filterAllowed(files) {
+            return Array.from(files).filter(f => ALLOWED_EXTS.includes(getExt(f.name)));
+        }
+
+        // Drag and drop
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('dragover');
+        });
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('dragover');
+        });
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            const allowed = filterAllowed(e.dataTransfer.files);
+            if (allowed.length > 0) {
+                uploadFiles(allowed);
+            } else {
+                alert('No supported files found. Allowed: .txt, .pdf, .jpg, .jpeg, .png');
+            }
+        });
+
+        policyFiles.addEventListener('change', () => {
+            if (policyFiles.files.length > 0) {
+                const allowed = filterAllowed(policyFiles.files);
+                if (allowed.length > 0) {
+                    fileCountEl.textContent = allowed.length + ' file(s) selected';
+                    fileCountEl.style.display = 'block';
+                    uploadFiles(allowed);
+                } else {
+                    alert('No supported files selected.');
+                }
+            }
+        });
+
+        async function uploadFiles(files) {
+            progressContainer.style.display = 'block';
+            progressStatus.textContent = 'Uploading ' + files.length + ' file(s)...';
+            progressBar.style.width = '10%';
+            progressBar.style.background = 'linear-gradient(90deg, #3498db, #2ecc71)';
+            progressLog.innerHTML = '<p>Starting upload of ' + files.length + ' file(s)...</p>';
+
+            const formData = new FormData();
+            for (const file of files) {
+                formData.append('policyFiles', file);
+            }
+
+            try {
+                const response = await fetch('/admin/import-chat', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    progressBar.style.width = '30%';
+                    progressStatus.textContent = 'Processing ' + result.imports.length + ' import(s)...';
+
+                    // Show skipped files
+                    const skipped = result.imports.filter(i => i.error);
+                    if (skipped.length > 0) {
+                        for (const s of skipped) {
+                            progressLog.innerHTML += '<p class="skipped">Skipped: ' + s.filename + ' - ' + s.error + '</p>';
+                        }
+                    }
+
+                    // Poll all active imports
+                    const activeImports = result.imports.filter(i => i.id);
+                    if (activeImports.length > 0) {
+                        pollMultipleImports(activeImports.map(i => i.id));
+                    } else {
+                        progressStatus.textContent = 'All files were skipped (duplicates)';
+                        progressBar.style.width = '100%';
+                        progressBar.style.background = '#e67e22';
+                        setTimeout(() => window.location.reload(), 2000);
+                    }
+                } else {
+                    progressStatus.textContent = 'Error: ' + result.error;
+                    progressBar.style.width = '100%';
+                    progressBar.style.background = '#e74c3c';
+                }
+            } catch (err) {
+                progressStatus.textContent = 'Upload failed: ' + err.message;
+                progressBar.style.background = '#e74c3c';
+            }
+        }
+
+        function pollMultipleImports(importIds) {
+            const statuses = {};
+            const poll = async () => {
+                let allDone = true;
+                let totalPolicies = 0;
+                let totalDups = 0;
+                let anyFailed = false;
+                const logLines = [];
+
+                for (const id of importIds) {
+                    try {
+                        const resp = await fetch('/admin/import-chat/' + id + '/status');
+                        const data = await resp.json();
+                        statuses[id] = data;
+
+                        totalPolicies += data.policies_extracted || 0;
+                        totalDups += data.policies_deduplicated || 0;
+
+                        if (data.status !== 'completed' && data.status !== 'failed') {
+                            allDone = false;
+                        }
+                        if (data.status === 'failed') anyFailed = true;
+
+                        const shortName = (data.filename || '').substring(0, 25);
+                        logLines.push('<strong>' + shortName + '</strong>: ' + data.status);
+                        if (data.processing_log && data.processing_log.length > 0) {
+                            logLines.push('&nbsp;&nbsp;' + data.processing_log[data.processing_log.length - 1]);
+                        }
+                    } catch (err) {
+                        allDone = false;
+                    }
+                }
+
+                // Calculate aggregate progress
+                const statusMap = {
+                    'uploading': 10, 'parsing': 20, 'storing_messages': 35,
+                    'ocr_extracting': 25, 'extracting': 55, 'saving': 80,
+                    'completed': 100, 'failed': 100
+                };
+                let avgProgress = 0;
+                const vals = Object.values(statuses);
+                if (vals.length > 0) {
+                    avgProgress = vals.reduce((sum, d) => sum + (statusMap[d.status] || 50), 0) / vals.length;
+                }
+
+                progressBar.style.width = avgProgress + '%';
+                progressLog.innerHTML = logLines.map(l => '<p>' + l + '</p>').join('');
+                progressLog.scrollTop = progressLog.scrollHeight;
+
+                if (allDone) {
+                    progressStatus.textContent = 'Done! ' + totalPolicies + ' policies extracted (' + totalDups + ' duplicates skipped) from ' + importIds.length + ' file(s)';
+                    if (anyFailed) {
+                        progressBar.style.background = 'linear-gradient(90deg, #e67e22, #e74c3c)';
+                    }
+                    setTimeout(() => window.location.reload(), 2000);
+                } else {
+                    progressStatus.textContent = 'Processing ' + importIds.length + ' file(s)... (' + totalPolicies + ' policies so far)';
+                    setTimeout(poll, 1500);
+                }
+            };
+            poll();
+        }
+
+        async function submitPastedText() {
+            const text = document.getElementById('pasteText').value.trim();
+            if (!text) { alert('Please paste some text first.'); return; }
+            if (text.length < 20) { alert('Text is too short. Paste at least one full policy message.'); return; }
+
+            const btn = document.getElementById('pasteBtn');
+            btn.disabled = true;
+            btn.textContent = 'Processing...';
+
+            progressContainer.style.display = 'block';
+            progressStatus.textContent = 'Processing pasted text...';
+            progressBar.style.width = '10%';
+            progressBar.style.background = 'linear-gradient(90deg, #3498db, #2ecc71)';
+            progressLog.innerHTML = '<p>Submitting pasted text...</p>';
+
+            try {
+                const response = await fetch('/admin/import-chat/paste', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text })
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    progressBar.style.width = '30%';
+                    progressStatus.textContent = 'Processing...';
+                    pollMultipleImports([result.importId]);
+                } else {
+                    progressStatus.textContent = 'Error: ' + result.error;
+                    progressBar.style.width = '100%';
+                    progressBar.style.background = '#e74c3c';
+                    btn.disabled = false;
+                    btn.textContent = 'Process Pasted Text';
+                }
+            } catch (err) {
+                progressStatus.textContent = 'Error: ' + err.message;
+                progressBar.style.background = '#e74c3c';
+                btn.disabled = false;
+                btn.textContent = 'Process Pasted Text';
+            }
+        }
+
+        async function deleteImport(id, filename) {
+            if (!confirm('Delete import "' + filename + '" and all its messages? Associated policies will also be removed.')) return;
+            try {
+                const resp = await fetch('/admin/import-chat/' + id + '/delete', { method: 'POST' });
+                const data = await resp.json();
+                if (data.success) window.location.reload();
+                else alert('Error: ' + data.error);
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+    </script>
+</body>
+</html>

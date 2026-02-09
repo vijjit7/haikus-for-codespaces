@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Surrogate Programs - Admin</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="/css/proposal.css">
+    <style>
+        .filters-bar {
+            display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px;
+            padding: 16px; background: #f8f9fa; border-radius: 8px;
+        }
+        .filters-bar select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; min-width: 180px; }
+
+        .surrogates-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .surrogates-table th, .surrogates-table td { padding: 10px 8px; text-align: left; border-bottom: 1px solid #eee; }
+        .surrogates-table th { background: #f8f9fa; font-weight: 600; color: #2c3e50; position: sticky; top: 0; }
+        .surrogates-table tr:hover { background: #fafafa; }
+
+        .prog-type-badge { padding: 2px 8px; border-radius: 10px; font-size: 0.8em; font-weight: 500; }
+        .prog-Banking_Surrogate { background: #d4efdf; color: #27ae60; }
+        .prog-GST { background: #fdebd0; color: #e67e22; }
+        .prog-Gross_Turnover { background: #d6eaf8; color: #2980b9; }
+        .prog-LIP { background: #e8daef; color: #8e44ad; }
+        .prog-Low_LTV { background: #fadbd8; color: #e74c3c; }
+
+        .type-badge { padding: 2px 6px; border-radius: 8px; font-size: 0.75em; font-weight: 500; }
+        .type-Bank { background: #d4efdf; color: #27ae60; }
+        .type-NBFC { background: #fdebd0; color: #e67e22; }
+        .type-HFC { background: #d6eaf8; color: #2980b9; }
+
+        .table-scroll { overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Surrogate Programs</h1>
+            <p class="subtitle"><%= surrogates.length %> programs found</p>
+        </header>
+
+        <div class="actions-bar">
+            <a href="/" class="btn btn-secondary">← Dashboard</a>
+            <a href="/admin/policies" class="btn btn-secondary">Policies</a>
+            <a href="/admin/banks" class="btn btn-secondary">Banks</a>
+            <a href="/admin/import-chat" class="btn btn-primary">Import Chat</a>
+        </div>
+
+        <!-- Filters -->
+        <div class="filters-bar">
+            <select id="filterType" onchange="applyFilter()">
+                <option value="">All Program Types</option>
+                <% ['Banking_Surrogate','GST','Gross_Turnover','LIP','Low_LTV'].forEach(t => { %>
+                    <option value="<%= t %>" <%= typeFilter === t ? 'selected' : '' %>><%= t.replace(/_/g, ' ') %></option>
+                <% }); %>
+            </select>
+        </div>
+
+        <!-- Table -->
+        <div class="table-scroll">
+            <table class="surrogates-table">
+                <thead>
+                    <tr>
+                        <th>Bank</th>
+                        <th>Product</th>
+                        <th>Program Type</th>
+                        <th>Loan Limit (L)</th>
+                        <th>ABB Multiplier</th>
+                        <th>Margin %</th>
+                        <th>DSRA (Months)</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <% if (surrogates.length === 0) { %>
+                        <tr><td colspan="8" style="text-align:center; color:#999; padding:30px;">No surrogate programs found. Import bank chats to extract surrogates.</td></tr>
+                    <% } %>
+                    <% surrogates.forEach(s => { %>
+                        <tr>
+                            <td>
+                                <strong><%= s.bank_name || (s.bank_id ? s.bank_id.bank_name : '-') %></strong>
+                                <% if (s.bank_id && s.bank_id.bank_type) { %>
+                                    <span class="type-badge type-<%= s.bank_id.bank_type %>"><%= s.bank_id.bank_type %></span>
+                                <% } %>
+                            </td>
+                            <td><%= s.product_id ? (s.product_id.loan_type || s.product_id.product_type || '-') : (s.loan_type || '-') %></td>
+                            <td><span class="prog-type-badge prog-<%= s.program_type %>"><%= s.program_type.replace(/_/g, ' ') %></span></td>
+                            <td><%= s.program_loan_limit_lakhs || '-' %></td>
+                            <td><%= s.abb_multiplier ? s.abb_multiplier + 'x' : '-' %></td>
+                            <td><%= s.margin_pct ? s.margin_pct + '%' : '-' %></td>
+                            <td><%= s.dsra_months || '-' %></td>
+                            <td style="font-size:12px;"><%= new Date(s.createdAt).toLocaleDateString() %></td>
+                        </tr>
+                    <% }); %>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        function applyFilter() {
+            const type = document.getElementById('filterType').value;
+            const params = new URLSearchParams();
+            if (type) params.set('type', type);
+            window.location.href = '/admin/surrogates?' + params.toString();
+        }
+    </script>
+</body>
+</html>

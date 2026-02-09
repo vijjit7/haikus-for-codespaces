@@ -640,7 +640,15 @@
                                             // Helper to parse Indian currency format
                                             function parseCurrencyVal(str) {
                                                 if (!str) return null;
-                                                const cleaned = String(str).replace(/[₹,\s]/g, '').replace(/\(([^)]+)\)/, '-$1');
+                                                let s = String(str).trim();
+                                                // Handle negative in parentheses: (1,234) → -1,234
+                                                s = s.replace(/\(([^)]+)\)/, '-$1');
+                                                // Fix OCR comma-as-decimal: "12,62,95,048,00" → "12,62,95,048.00"
+                                                // If string ends with ,XX (2 digits) and has no period, treat last comma as decimal
+                                                if (!s.includes('.') && /,\d{2}$/.test(s)) {
+                                                    s = s.replace(/,(\d{2})$/, '.$1');
+                                                }
+                                                const cleaned = s.replace(/[₹,\s]/g, '');
                                                 const num = parseFloat(cleaned);
                                                 return isNaN(num) ? null : num;
                                             }
@@ -735,56 +743,163 @@
                                                     fyData[fyNorm] = { turnover: null, grossProfit: null, depreciation: null, interestOnLoans: null, netProfit: null };
                                                 }
 
-                                                const hasPL = /STATEMENT\s+OF\s+PROFIT|PROFIT\s*&?\s*LOSS\s+FOR/i.test(text);
+                                                const hasPL = /STATEMENT\s+OF\s+PROFIT|PROFIT\s*&?\s*LOSS\s+(?:FOR|ACCOUNT)/i.test(text) ||
+                                                              /Trading\s+and\s+Profit\s*&?\s*Loss/i.test(text);
 
                                                 // === P&L Statement extraction (best source) ===
                                                 if (hasPL) {
-                                                    const rev = extractFinValue(text, [
-                                                        'Revenue\\s+from\\s+Operations',
-                                                        'Total\\s+Income(?!\\s+Tax)',
-                                                        'Gross\\s+Turnover',
-                                                        'BY\\s+SALES'
-                                                    ], 10000);
-                                                    if (rev && rev > 0) fyData[fyNorm].turnover = rev;
+                                                    const isTradPL = /Trading\s+and\s+Profit\s*&?\s*Loss/i.test(text);
 
-                                                    const gp = extractFinValue(text, ['Gross\\s+Profit'], 1000);
-                                                    if (gp !== null) fyData[fyNorm].grossProfit = gp;
+                                                    if (isTradPL) {
+                                                        // === Traditional T-account P&L (partnerships/proprietorships) ===
+                                                        // OCR often renders labels and amounts in separate blocks.
+                                                        // Strategy: try inline extraction, then separate-block from right column.
 
-                                                    const dep = extractFinValue(text, [
-                                                        'Depreciation\\s+and\\s+amortization',
-                                                        'Depreciation\\s+(?:debited|expense)'
-                                                    ], 1000);
-                                                    if (dep && dep > 0) fyData[fyNorm].depreciation = dep;
-
-                                                    // Interest on Loans or Finance Cost
-                                                    let fc = extractFinValue(text, ['Interest\\s+on\\s+Loans'], 1000);
-                                                    if (!fc) fc = extractFinValue(text, ['Total\\s+Finance\\s+Cost', 'Finance\\s+Cost(?!\\s*\\d)'], 1000);
-                                                    if (fc && fc > 0) fyData[fyNorm].interestOnLoans = fc;
-
-                                                    const np = extractFinValue(text, [
-                                                        'Profit\\s+before\\s+tax',
-                                                        'Profit\\s+before\\s+(?:exceptional|extra)',
-                                                        'Net\\s+Profit\\s+before\\s+[Tt]ax'
-                                                    ], 100);
-                                                    if (np !== null) fyData[fyNorm].netProfit = np;
-
-                                                    // Extract previous year data from second column
-                                                    const prevYearMatch = text.match(/31-03-(\d{4})\s+31-03-(\d{4})/);
-                                                    if (prevYearMatch) {
-                                                        const prevYear = parseInt(prevYearMatch[2]);
-                                                        const prevFYNorm = `${prevYear - 1}-${String(prevYear).slice(-2)}`;
-                                                        if (!fyData[prevFYNorm]) {
-                                                            fyData[prevFYNorm] = { turnover: null, grossProfit: null, depreciation: null, interestOnLoans: null, netProfit: null };
+                                                        // --- Turnover ---
+                                                        // Inline: "SALE <amount>" on same line
+                                                        const saleInline = text.match(/\bSALE\s+([\d,]+[.,]\d{2})/);
+                                                        if (saleInline) {
+                                                            const sv = parseCurrencyVal(saleInline[1]);
+                                                            if (sv > 100000) fyData[fyNorm].turnover = sv;
+                                                        }
+                                                        // Separate-block: "By Sales Accounts" → find "Rs\n" → 1st amount = Sales
+                                                        if (!fyData[fyNorm].turnover) {
+                                                            const byIdx = text.search(/By\s+Sales\s+Accounts/i);
+                                                            if (byIdx >= 0) {
+                                                                const afterBy = text.substring(byIdx, byIdx + 500);
+                                                                const rsMatch = afterBy.match(/\bRs\s*\n/);
+                                                                if (rsMatch) {
+                                                                    const amtBlock = afterBy.substring(rsMatch.index + rsMatch[0].length);
+                                                                    const nums = amtBlock.match(/-?\(?[\d][0-9,.]*\)?/g);
+                                                                    if (nums) {
+                                                                        const values = nums.map(n => parseCurrencyVal(n)).filter(v => v !== null && v > 0);
+                                                                        if (values[0] > 100000) fyData[fyNorm].turnover = values[0];
+                                                                    }
+                                                                }
+                                                            }
                                                         }
 
-                                                        const pr = extractPrevYearVal(text, ['Revenue\\s+from\\s+Operations'], 10000);
-                                                        if (pr && !fyData[prevFYNorm].turnover) fyData[prevFYNorm].turnover = pr;
+                                                        // --- Gross Profit ---
+                                                        // Inline: "Gross profit b/d <amount>"
+                                                        const gpInline = text.match(/Gross\s+profit\s+b\/d\s+([\d,]+[.,]\d{2})/i);
+                                                        if (gpInline) {
+                                                            const gv = parseCurrencyVal(gpInline[1]);
+                                                            if (gv > 1000) fyData[fyNorm].grossProfit = gv;
+                                                        }
+                                                        // Separate-block: 4th amount after "Rs\n" = Gross Profit b/d
+                                                        // (1st=Sales, 2nd=Closing Stock, 3rd=Trading Total, 4th=GP b/d)
+                                                        if (!fyData[fyNorm].grossProfit) {
+                                                            const byIdx = text.search(/By\s+Sales\s+Accounts/i);
+                                                            if (byIdx >= 0) {
+                                                                const afterBy = text.substring(byIdx, byIdx + 500);
+                                                                const rsMatch = afterBy.match(/\bRs\s*\n/);
+                                                                if (rsMatch) {
+                                                                    const amtBlock = afterBy.substring(rsMatch.index + rsMatch[0].length);
+                                                                    const nums = amtBlock.match(/-?\(?[\d][0-9,.]*\)?/g);
+                                                                    if (nums) {
+                                                                        const values = nums.map(n => parseCurrencyVal(n)).filter(v => v !== null && v > 0);
+                                                                        if (values.length >= 4 && values[3] > 1000) {
+                                                                            fyData[fyNorm].grossProfit = values[3];
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
 
-                                                        const pd = extractPrevYearVal(text, ['Depreciation\\s+and\\s+amortization', 'Depreciation\\s+(?:debited|expense)'], 1000);
-                                                        if (pd && pd > 0 && !fyData[prevFYNorm].depreciation) fyData[prevFYNorm].depreciation = pd;
+                                                        // --- Net Profit (inline on same line) ---
+                                                        const npCarried = text.match(/Net\s+profit\s+carried\s+to\s+B\/?S[^\n]*?([\d,]+[.,]\d{2})/i);
+                                                        if (npCarried) {
+                                                            const npv = parseCurrencyVal(npCarried[1]);
+                                                            if (npv !== null && Math.abs(npv) >= 100) fyData[fyNorm].netProfit = npv;
+                                                        }
 
-                                                        const pnp = extractPrevYearVal(text, ['Profit\\s+before\\s+tax'], 100);
-                                                        if (pnp !== null && !fyData[prevFYNorm].netProfit) fyData[prevFYNorm].netProfit = pnp;
+                                                        // --- Depreciation: extract from P&L debit-side amounts ---
+                                                        // Traditional P&L debit amounts: first a run of large trading values
+                                                        // (Opening Stock, Purchases, GP c/d, Total — all > 10L), then P&L
+                                                        // expenses starting with Depreciation (first small value after the run).
+                                                        if (!fyData[fyNorm].depreciation) {
+                                                            const plIdx = text.search(/Trading\s+and\s+Profit\s*&?\s*Loss/i);
+                                                            const byIdx = text.search(/By\s+Sales\s+Accounts/i);
+                                                            if (plIdx >= 0 && byIdx > plIdx) {
+                                                                const debitBlock = text.substring(plIdx, byIdx);
+                                                                const allNums = debitBlock.match(/-?\(?[\d][0-9,.]*\)?/g);
+                                                                if (allNums) {
+                                                                    const values = allNums.map(n => parseCurrencyVal(n)).filter(v => v !== null);
+                                                                    // Find first run of 2+ consecutive values > 1M (trading amounts),
+                                                                    // then the first value 100-1M after that run = depreciation
+                                                                    let inRun = false, runLen = 0, depValue = null;
+                                                                    for (let j = 0; j < values.length; j++) {
+                                                                        if (values[j] > 1000000) {
+                                                                            runLen++;
+                                                                            if (runLen >= 2) inRun = true;
+                                                                        } else {
+                                                                            if (inRun && values[j] >= 100 && values[j] < 1000000) {
+                                                                                depValue = values[j];
+                                                                                break;
+                                                                            }
+                                                                            runLen = 0;
+                                                                        }
+                                                                    }
+                                                                    if (depValue) fyData[fyNorm].depreciation = depValue;
+                                                                }
+                                                            }
+                                                        }
+
+                                                        // Interest, other fields: rely on ITR fallbacks below.
+
+                                                    } else {
+                                                        // === Modern P&L (Schedule III — companies) ===
+                                                        const rev = extractFinValue(text, [
+                                                            'Revenue\\s+from\\s+Operations',
+                                                            'Gross\\s+Turnover',
+                                                            'BY\\s+SALES'
+                                                        ], 100000);
+                                                        if (rev && rev > 0) fyData[fyNorm].turnover = rev;
+
+                                                        const gp = extractFinValue(text, [
+                                                            'Gross\\s+profit\\s+b\\/d',
+                                                            'Gross\\s+Profit(?!\\s*/)'
+                                                        ], 1000);
+                                                        if (gp !== null) fyData[fyNorm].grossProfit = gp;
+
+                                                        const dep = extractFinValue(text, [
+                                                            'Depreciation\\s+and\\s+amortization',
+                                                            'Depreciation\\s+(?:debited|expense)',
+                                                            'Depreciation\\s+debited\\s+to\\s+P'
+                                                        ], 1000);
+                                                        if (dep && dep > 0) fyData[fyNorm].depreciation = dep;
+
+                                                        let fc = extractFinValue(text, ['Interest\\s+on\\s+Loans'], 1000);
+                                                        if (!fc) fc = extractFinValue(text, ['Total\\s+Finance\\s+Cost', 'Finance\\s+Cost(?!\\s*\\d)'], 1000);
+                                                        if (!fc) fc = extractFinValue(text, ['Interest\\s+to\\s+Partners'], 1000);
+                                                        if (fc && fc > 0) fyData[fyNorm].interestOnLoans = fc;
+
+                                                        const np = extractFinValue(text, [
+                                                            'Profit\\s+before\\s+tax',
+                                                            'Profit\\s+before\\s+(?:exceptional|extra)',
+                                                            'Net\\s+Profit\\s+before\\s+[Tt]ax',
+                                                            'Net\\s+Profit\\s+Before\\s+Tax\\s+as\\s+per\\s+P'
+                                                        ], 100);
+                                                        if (np !== null) fyData[fyNorm].netProfit = np;
+
+                                                        // Extract previous year data from second column
+                                                        const prevYearMatch = text.match(/31-03-(\d{4})\s+31-03-(\d{4})/);
+                                                        if (prevYearMatch) {
+                                                            const prevYear = parseInt(prevYearMatch[2]);
+                                                            const prevFYNorm = `${prevYear - 1}-${String(prevYear).slice(-2)}`;
+                                                            if (!fyData[prevFYNorm]) {
+                                                                fyData[prevFYNorm] = { turnover: null, grossProfit: null, depreciation: null, interestOnLoans: null, netProfit: null };
+                                                            }
+
+                                                            const pr = extractPrevYearVal(text, ['Revenue\\s+from\\s+Operations'], 10000);
+                                                            if (pr && !fyData[prevFYNorm].turnover) fyData[prevFYNorm].turnover = pr;
+
+                                                            const pd = extractPrevYearVal(text, ['Depreciation\\s+and\\s+amortization', 'Depreciation\\s+(?:debited|expense)'], 1000);
+                                                            if (pd && pd > 0 && !fyData[prevFYNorm].depreciation) fyData[prevFYNorm].depreciation = pd;
+
+                                                            const pnp = extractPrevYearVal(text, ['Profit\\s+before\\s+tax'], 100);
+                                                            if (pnp !== null && !fyData[prevFYNorm].netProfit) fyData[prevFYNorm].netProfit = pnp;
+                                                        }
                                                     }
                                                 }
 
@@ -796,12 +911,43 @@
                                                         const bp = parseCurrencyVal(bpMatch[1]);
                                                         if (bp !== null && Math.abs(bp) >= 100 && !fyData[fyNorm].netProfit) fyData[fyNorm].netProfit = bp;
                                                     }
-                                                    // Net Profit Before Tax as per P&L a/c (clean text only)
-                                                    const npPL = text.match(/Net\s+Profit\s+Before\s+Tax\s+as\s+per\s+P\s*&?\s*L\s*[aA]?\/?\.?[cC]?\s*\n\s*([\d,.]+)/i);
+                                                    // Net Profit Before Tax as per P&L a/c (value on same or next line)
+                                                    const npPL = text.match(/Net\s+Profit\s+Before\s+Tax\s+as\s+per\s+P\s*&?\s*L\s*[aA]?\/?\.?[cC]?\s*\n?\s*([\d,.]+)/i);
                                                     if (npPL) {
                                                         const npVal = parseCurrencyVal(npPL[1]);
                                                         if (npVal !== null && Math.abs(npVal) >= 100) fyData[fyNorm].netProfit = npVal;
                                                     }
+                                                }
+
+                                                // === Turnover fallback from By Sales / SALE line ===
+                                                if (!fyData[fyNorm].turnover) {
+                                                    // Match "SALE" followed by a large amount (>1L) — must be in P&L context
+                                                    const saleMatch = text.match(/By\s+Sales\s+Accounts\s+SALE\s+([\d,]+\.\d{2})/i);
+                                                    if (saleMatch) {
+                                                        const sv = parseCurrencyVal(saleMatch[1]);
+                                                        if (sv && sv > 100000) fyData[fyNorm].turnover = sv;
+                                                    }
+                                                }
+
+                                                // === Net Profit fallback from ITR computation "profit carried to B/S" nearby amounts ===
+                                                if (!fyData[fyNorm].netProfit) {
+                                                    // Look for "profit carried" near amounts in capital account
+                                                    const npRatio = text.match(/Net\s+Profit\/?\s*Turnover\s*\(ratio\)[^:]*:\s*([\d.]+)/i);
+                                                    if (npRatio && fyData[fyNorm].turnover) {
+                                                        const ratio = parseFloat(npRatio[1]);
+                                                        if (ratio > 0 && ratio < 100) {
+                                                            fyData[fyNorm].netProfit = Math.round(fyData[fyNorm].turnover * ratio / 100);
+                                                        }
+                                                    }
+                                                }
+
+                                                // === Depreciation fallback from ITR computation ===
+                                                if (!fyData[fyNorm].depreciation) {
+                                                    const depIT = extractFinValue(text, [
+                                                        'Depreciation\\s+as\\s+per\\s+IT\\s+Act',
+                                                        'Depreciation\\s+debited\\s+to\\s+P'
+                                                    ], 100);
+                                                    if (depIT && depIT > 0) fyData[fyNorm].depreciation = depIT;
                                                 }
 
                                                 // financialData fallback
@@ -1421,8 +1567,10 @@
                                             const emiVariants = camGetAmountVariants(Math.round(emiAmount), 2);
                                             const bankNameParts = (bankName || '').toLowerCase().split(/[\s\-]+/).filter(p => p.length > 2);
                                             const emiKeywords = ['ach d-', 'ach-d', 'nach', 'ecs', 'emi', 'loan', 'auto debit', 'cms/', 'adibi', 'trf/', 'fin ltd', 'capital', 'finance', 'birla', 'clix', 'icici', 'unity'];
-                                            const dateRegex = /(\d{1,2})\/(\d{1,2})\/(\d{4})/g;
-                                            
+                                            const dateRegexNum = /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/g;
+                                            const dateRegexNamed = /(\d{1,2})[\/\-](\w{3})[\/\-](\d{4})/gi;
+                                            const camMonthMap = {jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11};
+
                                             docs.forEach(doc => {
                                                 if (!doc.extractedText) return;
                                                 const text = camCleanBankText(doc.extractedText).toLowerCase();
@@ -1430,16 +1578,28 @@
                                                     let idx = text.indexOf(variant.toLowerCase());
                                                     while (idx !== -1) {
                                                         const contextBefore = text.substring(Math.max(0, idx - 200), idx);
-                                                        const hasKeyword = emiKeywords.some(kw => contextBefore.includes(kw)) || 
+                                                        const hasKeyword = emiKeywords.some(kw => contextBefore.includes(kw)) ||
                                                                            bankNameParts.some(part => contextBefore.includes(part));
                                                         if (hasKeyword) {
                                                             const allDates = [];
                                                             let m;
-                                                            const regex = new RegExp(dateRegex.source, 'g');
-                                                            while ((m = regex.exec(contextBefore)) !== null) allDates.push(m);
+                                                            // Numeric dates: dd/mm/yyyy or dd-mm-yyyy
+                                                            const regNum = new RegExp(dateRegexNum.source, 'g');
+                                                            while ((m = regNum.exec(contextBefore)) !== null) {
+                                                                allDates.push({day: parseInt(m[1]), month: parseInt(m[2]) - 1, year: parseInt(m[3]), pos: m.index});
+                                                            }
+                                                            // Named month dates: dd-Mon-yyyy or dd/Mon/yyyy
+                                                            const regNamed = new RegExp(dateRegexNamed.source, 'gi');
+                                                            while ((m = regNamed.exec(contextBefore)) !== null) {
+                                                                const mi = camMonthMap[m[2].toLowerCase()];
+                                                                if (mi !== undefined && !allDates.some(d => Math.abs(d.pos - m.index) < 5)) {
+                                                                    allDates.push({day: parseInt(m[1]), month: mi, year: parseInt(m[3]), pos: m.index});
+                                                                }
+                                                            }
+                                                            allDates.sort((a, b) => a.pos - b.pos);
                                                             if (allDates.length > 0) {
                                                                 const last = allDates[allDates.length - 1];
-                                                                const day = parseInt(last[1]), month = parseInt(last[2]) - 1, year = parseInt(last[3]);
+                                                                const day = last.day, month = last.month, year = last.year;
                                                                 if (day >= 1 && day <= 31 && month >= 0 && month <= 11 && year >= 2024 && year <= 2026) {
                                                                     if (!emiDates.some(d => d.day === day && d.month === month && d.year === year)) {
                                                                         emiDates.push({day, month, year});
@@ -2141,9 +2301,9 @@
                         text = text.replace(/([\d,]+\.)\s*\n\s*(\d{2})\b/g, '$1$2');
                         text = text.replace(/([\d,]+)\s*\n\s*(,\d{3})/g, '$1$2');
                         
-                        // Normalize dates: join split dates (dates broken by newlines like "01/Dec/20\n25")
-                        text = text.replace(/(\d{2})\/(\w{3})\/(\d{2})\s*\n\s*(\d{2})\b/gi, '$1/$2/$3$4');
-                        text = text.replace(/(\d{2})\s*\n\s*\/(\w{3})\/(\d{4})/gi, '$1/$2/$3');
+                        // Normalize dates: join split dates (dates broken by newlines like "01/Dec/20\n25" or "01-Nov-20\n25")
+                        text = text.replace(/(\d{2})[\/\-](\w{3})[\/\-](\d{2})\s*\n\s*(\d{2})\b/gi, '$1-$2-$3$4');
+                        text = text.replace(/(\d{2})\s*\n\s*[\/\-](\w{3})[\/\-](\d{4})/gi, '$1-$2-$3');
                         
                         // Parse transactions - look for date, particulars, debit, credit, balance patterns
                         const transactions = [];
@@ -2202,8 +2362,8 @@
                         // Format 3: dd-mm-yyyy (e.g., 20-11-2025)
                         const txnDates = [];
                         
-                        // Pattern for dd/Mon/yyyy format
-                        const txnDateRegex1 = /(\d{2})\/(\w{3})\/(\d{4})/gi;
+                        // Pattern for dd/Mon/yyyy or dd-Mon-yyyy format
+                        const txnDateRegex1 = /(\d{2})[\/\-](\w{3})[\/\-](\d{4})/gi;
                         let dateMatch;
                         while ((dateMatch = txnDateRegex1.exec(text)) !== null) {
                             const monthNamesMap = {jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', 
@@ -2261,8 +2421,8 @@
                             }
                         }
 
-                        // Pattern for dd/Mon/yy format (2-digit year, e.g. 02/Jan/25)
-                        const txnDateRegex4 = /(\d{2})\/(\w{3})\/(\d{2})(?!\d)/gi;
+                        // Pattern for dd/Mon/yy or dd-Mon-yy format (2-digit year, e.g. 02/Jan/25 or 02-Jan-25)
+                        const txnDateRegex4 = /(\d{2})[\/\-](\w{3})[\/\-](\d{2})(?!\d)/gi;
                         while ((dateMatch = txnDateRegex4.exec(text)) !== null) {
                             const alreadyExists = txnDates.some(d => Math.abs(d.index - dateMatch.index) < 15);
                             if (!alreadyExists) {
@@ -2321,8 +2481,8 @@
                         
                         // Helper: check if line has a transaction date pattern
                         const lineHasDate = (line) => {
-                            return /\d{2}[\/\-]\d{2}[\/\-]\d{4}/.test(line) || /\d{2}\/\w{3}\/\d{4}/i.test(line) ||
-                                   /\d{2}[\/\-]\d{2}[\/\-]\d{2}(?!\d)/.test(line) || /\d{2}\/\w{3}\/\d{2}(?!\d)/i.test(line);
+                            return /\d{2}[\/\-]\d{2}[\/\-]\d{4}/.test(line) || /\d{2}[\/\-]\w{3}[\/\-]\d{4}/i.test(line) ||
+                                   /\d{2}[\/\-]\d{2}[\/\-]\d{2}(?!\d)/.test(line) || /\d{2}[\/\-]\w{3}[\/\-]\d{2}(?!\d)/i.test(line);
                         };
                         
                         // Helper: check if line has amount patterns
@@ -2443,10 +2603,10 @@
                             }
 
                             // Find a date in this line - try 4-digit year first, then 2-digit year
-                            const dateMatch1 = dateSearchLine.match(/(\d{2})\/(\w{3})\/(\d{4})/i);
+                            const dateMatch1 = dateSearchLine.match(/(\d{2})[\/\-](\w{3})[\/\-](\d{4})/i);
                             const dateMatch2 = dateSearchLine.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{4})/);
                             const dateMatch3 = dateSearchLine.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{2})(?!\d)/);
-                            const dateMatch4 = dateSearchLine.match(/(\d{2})\/(\w{3})\/(\d{2})(?!\d)/i);
+                            const dateMatch4 = dateSearchLine.match(/(\d{2})[\/\-](\w{3})[\/\-](\d{2})(?!\d)/i);
 
                             let txnDate = null;
 
@@ -2806,7 +2966,7 @@
                         });
                         
                         // Debug: Log classification summary to browser console
-                        console.log(`[Banking Debug] Account: ${doc.originalName}`);
+                        console.log(`[Banking Debug] Account: ${account.accountName}`);
                         console.log(`  Merged lines: ${mergedLineCount}, Lines with dates: ${linesWithDates}`);
                         console.log(`  Credits: ${creditLines}, Debits: ${debitLines}, DR/CR indicators: ${linesWithDRCR}`);
                         console.log(`  Total credits: ₹${Object.values(monthCreditsTotal).reduce((s,v)=>s+v,0).toLocaleString('en-IN')}`);
@@ -4042,13 +4202,15 @@
                         // EMI keywords (expanded list)
                         const emiKeywords = ['ach d-', 'ach-d', 'nach', 'ecs', 'emi', 'loan', 'auto debit', 'instalment', 'installment', 'equated monthly', 'cms/', 'adibi', 'trf/', 'fin ltd', 'capital', 'finance', 'birla', 'clix', 'icici', 'unity'];
                         
-                        // Date pattern
-                        const dateRegex = /(\d{1,2})\/(\d{1,2})\/(\d{4})/g;
-                        
+                        // Date patterns: dd/mm/yyyy and dd-Mon-yyyy
+                        const dateRegexNumeric = /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/g;
+                        const monthNamesMapEmi = {jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11};
+                        const dateRegexNamed = /(\d{1,2})[\/\-](\w{3})[\/\-](\d{4})/gi;
+
                         bankingDocs.forEach(doc => {
                             if (!doc.extractedText) return;
                             const text = cleanBankText(doc.extractedText).toLowerCase();
-                            
+
                             // Find all positions where EMI amount appears
                             const emiPositions = [];
                             emiVariants.forEach(variant => {
@@ -4059,38 +4221,61 @@
                                     idx = text.indexOf(varLower, idx + 1);
                                 }
                             });
-                            
+
                             if (emiPositions.length === 0) return;
-                            
+
                             // For each EMI position, find the CLOSEST date before it (within 200 chars)
                             emiPositions.forEach(({pos: emiPos}) => {
                                 // Look for context just before the amount (where transaction date usually is)
                                 const contextStart = Math.max(0, emiPos - 200);
                                 const contextBefore = text.substring(contextStart, emiPos);
-                                
+
                                 // Check if context has EMI keyword or bank name
                                 const hasEmiKeyword = emiKeywords.some(kw => contextBefore.includes(kw));
                                 const hasBankName = bankNameParts.length > 0 && bankNameParts.some(part => contextBefore.includes(part));
-                                
+
                                 if (hasEmiKeyword || hasBankName) {
-                                    // Find ALL dates in this context
+                                    // Find ALL dates in this context (both numeric and named month formats)
                                     const allDates = [];
                                     let dateMatch;
-                                    const regex = new RegExp(dateRegex.source, 'g');
-                                    while ((dateMatch = regex.exec(contextBefore)) !== null) {
+                                    // Numeric: dd/mm/yyyy or dd-mm-yyyy
+                                    const regexNum = new RegExp(dateRegexNumeric.source, 'g');
+                                    while ((dateMatch = regexNum.exec(contextBefore)) !== null) {
                                         allDates.push({
-                                            match: dateMatch,
-                                            pos: dateMatch.index
+                                            day: parseInt(dateMatch[1]),
+                                            month: parseInt(dateMatch[2]) - 1,
+                                            year: parseInt(dateMatch[3]),
+                                            pos: dateMatch.index,
+                                            dateStr: dateMatch[0]
                                         });
                                     }
-                                    
+                                    // Named month: dd-Mon-yyyy or dd/Mon/yyyy
+                                    const regexNamed = new RegExp(dateRegexNamed.source, 'gi');
+                                    while ((dateMatch = regexNamed.exec(contextBefore)) !== null) {
+                                        const monthIdx = monthNamesMapEmi[dateMatch[2].toLowerCase()];
+                                        if (monthIdx !== undefined) {
+                                            // Avoid duplicates from numeric regex
+                                            const alreadyFound = allDates.some(d => Math.abs(d.pos - dateMatch.index) < 5);
+                                            if (!alreadyFound) {
+                                                allDates.push({
+                                                    day: parseInt(dateMatch[1]),
+                                                    month: monthIdx,
+                                                    year: parseInt(dateMatch[3]),
+                                                    pos: dateMatch.index,
+                                                    dateStr: dateMatch[0]
+                                                });
+                                            }
+                                        }
+                                    }
+                                    allDates.sort((a, b) => a.pos - b.pos);
+
                                     // Take only the LAST date (closest to EMI amount)
                                     if (allDates.length > 0) {
-                                        const closestDate = allDates[allDates.length - 1].match;
-                                        let day = parseInt(closestDate[1]);
-                                        let month = parseInt(closestDate[2]) - 1; // 0-indexed
-                                        let year = parseInt(closestDate[3]);
-                                        
+                                        const closestDate = allDates[allDates.length - 1];
+                                        let day = closestDate.day;
+                                        let month = closestDate.month;
+                                        let year = closestDate.year;
+
                                         // Validate date range (2024-2026)
                                         if (day >= 1 && day <= 31 && month >= 0 && month <= 11 && year >= 2024 && year <= 2026) {
                                             const exists = emiDates.some(ed => ed.day === day && ed.month === month && ed.year === year);
@@ -4099,7 +4284,7 @@
                                                     day: day,
                                                     month: month,
                                                     year: year,
-                                                    dateStr: closestDate[0]
+                                                    dateStr: closestDate.dateStr
                                                 });
                                             }
                                         }

@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stage 4: Banker Matching - <%= proposal.applicantName %></title>
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="/css/proposal.css">
+    <style>
+        .progress-tracker {
+            display: flex;
+            justify-content: center;
+            gap: 0;
+            margin-bottom: 30px;
+        }
+        .progress-step {
+            display: flex;
+            align-items: center;
+            gap: 0;
+        }
+        .step-circle {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 14px;
+            border: 3px solid #bdc3c7;
+            background: white;
+            color: #7f8c8d;
+        }
+        .step-circle.completed { background: #27ae60; border-color: #27ae60; color: white; }
+        .step-circle.active { background: #3498db; border-color: #3498db; color: white; box-shadow: 0 0 0 4px rgba(52,152,219,0.2); }
+        .step-label { font-size: 12px; color: #7f8c8d; margin-top: 4px; text-align: center; }
+        .step-label.active { color: #3498db; font-weight: 600; }
+        .step-connector { width: 60px; height: 3px; background: #bdc3c7; margin: 0 4px; margin-bottom: 18px; }
+        .step-connector.completed { background: #27ae60; }
+
+        .proposal-summary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+        }
+        .summary-item label { font-size: 0.8em; opacity: 0.8; display: block; }
+        .summary-item .value { font-size: 1.2em; font-weight: 700; }
+
+        .matches-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        .matches-header h2 { margin: 0; }
+
+        .match-cards { display: flex; flex-direction: column; gap: 16px; }
+        .match-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            border-left: 5px solid #bdc3c7;
+            transition: transform 0.2s;
+        }
+        .match-card:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(0,0,0,0.12); }
+        .match-card.score-high { border-left-color: #27ae60; }
+        .match-card.score-medium { border-left-color: #f39c12; }
+        .match-card.score-low { border-left-color: #e74c3c; }
+
+        .match-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+        .match-bank { font-size: 1.2em; font-weight: 700; color: #2c3e50; }
+        .match-dept { font-size: 0.85em; color: #7f8c8d; }
+        .match-score-circle {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            font-size: 16px;
+            color: white;
+            flex-shrink: 0;
+        }
+        .score-bg-high { background: linear-gradient(135deg, #27ae60, #2ecc71); }
+        .score-bg-medium { background: linear-gradient(135deg, #f39c12, #f1c40f); }
+        .score-bg-low { background: linear-gradient(135deg, #e74c3c, #ec7063); }
+
+        .match-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 8px;
+            margin-bottom: 12px;
+            font-size: 0.9em;
+        }
+        .match-details .detail-label { color: #7f8c8d; font-size: 0.85em; }
+        .match-details .detail-value { font-weight: 600; color: #2c3e50; }
+
+        .match-reasons { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+        .reason-tag {
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: 500;
+        }
+        .reason-match { background: #d5f5e3; color: #27ae60; }
+        .reason-disqualify { background: #fadbd8; color: #e74c3c; }
+
+        .match-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+        .btn-match {
+            padding: 6px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-shortlist { background: #3498db; color: white; }
+        .btn-shortlist:hover { background: #2980b9; }
+        .btn-applied { background: #9b59b6; color: white; }
+        .btn-applied:hover { background: #8e44ad; }
+        .btn-approved { background: #27ae60; color: white; }
+        .btn-approved:hover { background: #229954; }
+        .btn-rejected { background: #e74c3c; color: white; }
+        .btn-rejected:hover { background: #c0392b; }
+        .btn-match.active-status { opacity: 1; box-shadow: 0 0 0 3px rgba(0,0,0,0.15); }
+
+        .no-matches {
+            text-align: center;
+            padding: 40px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            color: #7f8c8d;
+        }
+        .no-matches h3 { color: #2c3e50; }
+
+        .product-badge { padding: 2px 8px; border-radius: 10px; font-size: 0.75em; font-weight: 600; background: #f0f0f0; color: #555; margin-left: 6px; }
+        .type-badge-sm { padding: 1px 6px; border-radius: 6px; font-size: 0.7em; font-weight: 500; margin-left: 4px; }
+        .type-Bank { background: #d4efdf; color: #27ae60; }
+        .type-NBFC { background: #fdebd0; color: #e67e22; }
+        .type-HFC { background: #d6eaf8; color: #2980b9; }
+
+        .surrogate-section { margin-top: 10px; padding: 10px; background: #f8f9fa; border-radius: 8px; border: 1px solid #eee; }
+        .surrogate-section h4 { margin: 0 0 8px; font-size: 0.85em; color: #8e44ad; }
+        .surrogate-item { display: inline-flex; align-items: center; gap: 8px; padding: 4px 10px; background: #e8daef; border-radius: 6px; font-size: 0.8em; margin: 2px 4px 2px 0; }
+        .surrogate-item .prog-type { font-weight: 600; color: #8e44ad; }
+
+        .bank-contact { margin-top: 8px; padding: 8px 12px; background: #ebf5fb; border-radius: 6px; font-size: 0.85em; color: #2c3e50; }
+        .bank-contact strong { color: #2980b9; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Stage 4: Banker Matching</h1>
+            <p class="subtitle">Proposal #<%= proposal.id %> - <%= proposal.applicantName %></p>
+        </header>
+
+        <div class="actions-bar">
+            <a href="/proposals" class="btn btn-secondary">← All Proposals</a>
+            <a href="/stage3/<%= proposal.id %>" class="btn btn-secondary">← Stage 3: CAM</a>
+        </div>
+
+        <!-- Progress Tracker -->
+        <div class="progress-tracker">
+            <div class="progress-step">
+                <div>
+                    <div class="step-circle completed">1</div>
+                    <div class="step-label">Proposal</div>
+                </div>
+            </div>
+            <div class="step-connector completed"></div>
+            <div class="progress-step">
+                <div>
+                    <div class="step-circle completed">2</div>
+                    <div class="step-label">Documents</div>
+                </div>
+            </div>
+            <div class="step-connector completed"></div>
+            <div class="progress-step">
+                <div>
+                    <div class="step-circle completed">3</div>
+                    <div class="step-label">CAM</div>
+                </div>
+            </div>
+            <div class="step-connector completed"></div>
+            <div class="progress-step">
+                <div>
+                    <div class="step-circle active">4</div>
+                    <div class="step-label active">Banker Match</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Proposal Summary -->
+        <div class="proposal-summary">
+            <div class="summary-item">
+                <label>Applicant</label>
+                <div class="value"><%= proposal.applicantName %></div>
+            </div>
+            <div class="summary-item">
+                <label>Loan Amount</label>
+                <div class="value"><%= proposal.loanAmount ? '₹' + parseInt(proposal.loanAmount).toLocaleString('en-IN') : 'N/A' %></div>
+            </div>
+            <div class="summary-item">
+                <label>Loan Type</label>
+                <div class="value"><%= proposal.typeOfLoan || 'N/A' %></div>
+            </div>
+            <div class="summary-item">
+                <label>Nature</label>
+                <div class="value"><%= proposal.natureOfLoan || 'N/A' %></div>
+            </div>
+            <div class="summary-item">
+                <label>CIBIL Score</label>
+                <div class="value"><%= cibilScore || 'N/A' %></div>
+            </div>
+            <div class="summary-item">
+                <label>Industry</label>
+                <div class="value"><%= proposal.industry || 'N/A' %></div>
+            </div>
+        </div>
+
+        <!-- Matches -->
+        <div class="matches-header">
+            <h2>Matching Bank Products (<%= matches.length %>)</h2>
+            <button class="btn btn-primary" onclick="refreshMatches()">Refresh Matches</button>
+        </div>
+
+        <div class="match-cards">
+            <% if (matches.length === 0) { %>
+                <div class="no-matches">
+                    <h3>No matching policies found</h3>
+                    <p>Import bank policy chats from the <a href="/admin/import-chat">Admin Import</a> page first, then refresh matches.</p>
+                </div>
+            <% } %>
+            <% matches.forEach((m, idx) => { %>
+                <% const scoreClass = m.match_score >= 70 ? 'high' : m.match_score >= 40 ? 'medium' : 'low'; %>
+                <div class="match-card score-<%= scoreClass %>" id="match-<%= idx %>">
+                    <div class="match-top">
+                        <div>
+                            <div class="match-bank">
+                                <%= m.bank_name %>
+                                <% if (m.bank_info && m.bank_info.bank_type) { %>
+                                    <span class="type-badge-sm type-<%= m.bank_info.bank_type %>"><%= m.bank_info.bank_type %></span>
+                                <% } %>
+                                <% if (m.product_type) { %>
+                                    <span class="product-badge"><%= m.product_type %></span>
+                                <% } %>
+                            </div>
+                            <div class="match-dept"><%= m.department || '' %> | <%= m.loan_type || '' %></div>
+                        </div>
+                        <div class="match-score-circle score-bg-<%= scoreClass %>"><%= m.match_score %></div>
+                    </div>
+
+                    <div class="match-details">
+                        <div>
+                            <div class="detail-label">Amount Range</div>
+                            <div class="detail-value">
+                                <% if (m.loan_min_lakhs || m.loan_max_lakhs) { %>
+                                    ₹<%= m.loan_min_lakhs || '?' %>L - ₹<%= m.loan_max_lakhs || '?' %>L
+                                <% } else { %>N/A<% } %>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="detail-label">ROI</div>
+                            <div class="detail-value">
+                                <% if (m.roi_min_pct || m.roi_max_pct) { %>
+                                    <%= m.roi_min_pct || '?' %>% - <%= m.roi_max_pct || '?' %>%
+                                <% } else { %>N/A<% } %>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="detail-label">Min CIBIL</div>
+                            <div class="detail-value"><%= m.min_cibil || 'N/A' %></div>
+                        </div>
+                        <div>
+                            <div class="detail-label">LTV</div>
+                            <div class="detail-value">
+                                <% if (m.ltv_min_pct && m.ltv_pct) { %>
+                                    <%= m.ltv_min_pct %>-<%= m.ltv_pct %>%
+                                <% } else if (m.ltv_pct) { %>
+                                    <%= m.ltv_pct %>%
+                                <% } else { %>N/A<% } %>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="detail-label">Max Tenure</div>
+                            <div class="detail-value"><%= m.max_tenure_years ? m.max_tenure_years + ' yrs' : 'N/A' %></div>
+                        </div>
+                        <% if (m.geo_limits_km) { %>
+                        <div>
+                            <div class="detail-label">Geo Limit</div>
+                            <div class="detail-value"><%= m.geo_limits_km %> km</div>
+                        </div>
+                        <% } %>
+                    </div>
+
+                    <% if (m.programs && m.programs.length > 0) { %>
+                    <div style="margin-bottom: 8px;">
+                        <span style="font-size:0.8em; font-weight:600; color:#8e44ad;">Programs:</span>
+                        <% m.programs.forEach(pg => { %>
+                            <span style="display:inline-block; padding:2px 8px; margin:2px; background:#e8daef; color:#8e44ad; border-radius:8px; font-size:0.8em;"><%= pg %></span>
+                        <% }); %>
+                    </div>
+                    <% } %>
+
+                    <% if (m.other_remarks) { %>
+                    <div style="margin-bottom: 8px; font-size:0.85em; color:#555; padding:6px 10px; background:#f8f9fa; border-radius:6px;">
+                        <strong style="color:#2c3e50;">Remarks:</strong> <%= m.other_remarks %>
+                    </div>
+                    <% } %>
+
+                    <% if (m.banker_name || m.banker_contact) { %>
+                    <div style="margin-bottom: 8px; font-size:0.85em; padding:6px 10px; background:#eaf2f8; border-radius:6px;">
+                        <% if (m.banker_name) { %><strong style="color:#2c3e50;">Banker:</strong> <%= m.banker_name %><% } %>
+                        <% if (m.banker_contact) { %> &nbsp; <strong style="color:#2c3e50;">Contact:</strong> <a href="tel:<%= m.banker_contact %>" style="color:#2980b9;"><%= m.banker_contact %></a><% } %>
+                    </div>
+                    <% } %>
+
+                    <div class="match-reasons">
+                        <% (m.match_reasons || []).forEach(r => { %>
+                            <span class="reason-tag reason-match"><%= r %></span>
+                        <% }); %>
+                        <% (m.disqualify_reasons || []).forEach(r => { %>
+                            <span class="reason-tag reason-disqualify"><%= r %></span>
+                        <% }); %>
+                    </div>
+
+                    <% if (m.surrogate_programs && m.surrogate_programs.length > 0) { %>
+                    <div class="surrogate-section">
+                        <h4>Surrogate Programs</h4>
+                        <% m.surrogate_programs.forEach(s => { %>
+                            <div class="surrogate-item">
+                                <span class="prog-type"><%= s.program_type.replace(/_/g, ' ') %></span>
+                                <% if (s.program_loan_limit_lakhs) { %>| Limit: <%= s.program_loan_limit_lakhs %>L<% } %>
+                                <% if (s.abb_multiplier) { %>| ABB: <%= s.abb_multiplier %>x<% } %>
+                                <% if (s.margin_pct) { %>| Margin: <%= s.margin_pct %>%<% } %>
+                                <% if (s.dsra_months) { %>| DSRA: <%= s.dsra_months %>mo<% } %>
+                            </div>
+                        <% }); %>
+                    </div>
+                    <% } %>
+
+                    <% if (m.status === 'shortlisted' && m.bank_info) { %>
+                    <div class="bank-contact">
+                        <strong>Contact:</strong>
+                        <%= m.bank_info.contact_person || '-' %>
+                        <% if (m.bank_info.designation) { %> (<%= m.bank_info.designation %>)<% } %>
+                        <% if (m.bank_info.contact_number) { %> | Ph: <%= m.bank_info.contact_number %><% } %>
+                        <% if (m.bank_info.branch_location) { %> | Branch: <%= m.bank_info.branch_location %><% } %>
+                    </div>
+                    <% } %>
+
+                    <div class="match-actions">
+                        <button class="btn-match btn-shortlist <%= m.status === 'shortlisted' ? 'active-status' : '' %>" onclick="updateMatchStatus(<%= idx %>, 'shortlisted')">Shortlist</button>
+                        <button class="btn-match btn-applied <%= m.status === 'applied' ? 'active-status' : '' %>" onclick="updateMatchStatus(<%= idx %>, 'applied')">Mark Applied</button>
+                        <button class="btn-match btn-approved <%= m.status === 'approved' ? 'active-status' : '' %>" onclick="updateMatchStatus(<%= idx %>, 'approved')">Approved</button>
+                        <button class="btn-match btn-rejected <%= m.status === 'rejected' ? 'active-status' : '' %>" onclick="updateMatchStatus(<%= idx %>, 'rejected')">Rejected</button>
+                    </div>
+                </div>
+            <% }); %>
+        </div>
+    </div>
+
+    <script>
+        const proposalId = '<%= proposal.id %>';
+
+        async function refreshMatches() {
+            try {
+                const btn = event.target;
+                btn.disabled = true;
+                btn.textContent = 'Matching...';
+                const resp = await fetch('/stage4/' + proposalId + '/refresh-matches', { method: 'POST' });
+                const data = await resp.json();
+                if (data.success) {
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + data.error);
+                    btn.disabled = false;
+                    btn.textContent = 'Refresh Matches';
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function updateMatchStatus(idx, status) {
+            try {
+                const resp = await fetch('/stage4/' + proposalId + '/match/' + idx + '/status', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+    </script>
+</body>
+</html>
