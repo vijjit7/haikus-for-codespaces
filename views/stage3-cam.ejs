@@ -2482,7 +2482,8 @@
                         // Helper: check if line has a transaction date pattern
                         const lineHasDate = (line) => {
                             return /\d{2}[\/\-]\d{2}[\/\-]\d{4}/.test(line) || /\d{2}[\/\-]\w{3}[\/\-]\d{4}/i.test(line) ||
-                                   /\d{2}[\/\-]\d{2}[\/\-]\d{2}(?!\d)/.test(line) || /\d{2}[\/\-]\w{3}[\/\-]\d{2}(?!\d)/i.test(line);
+                                   /\d{2}[\/\-]\d{2}[\/\-]\d{2}(?!\d)/.test(line) || /\d{2}[\/\-]\w{3}[\/\-]\d{2}(?!\d)/i.test(line) ||
+                                   /\d{2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}/i.test(line);
                         };
                         
                         // Helper: check if line has amount patterns
@@ -2492,7 +2493,7 @@
                         
                         // Helper: check if line is a header/footer/summary to skip
                         const isHeaderFooter = (line) => {
-                            return /^\s*(Date|Particulars|Debit|Credit|Balance|Opening\s*Bal|Closing\s*Bal|Total|Page\s*Total|Page\s*\d|Statement|From\s+\d|Period|Account|Withdrawl|Withdrawal|Deposit[s:]|Legends|IFSC|Branch|Cust\s*ID|Cheque\s*number|Transaction\s*(type|remarks|Period)|Amount\s*from|Advanced\s*Search|Sl\s*No|Tran\s*Id|Value\s*Date|Posted\s*Date|Ref\s*No)/i.test(line);
+                            return /^\s*(Date|Particulars|Debit|Credit|Balance|Opening\s*Bal|Closing\s*Bal|Total|Page\s*Total|Page\s*\d|Statement|From\s+\d|Period|Account|Withdrawl|Withdrawal|Deposit[s:]|Legends|IFSC|Branch|Cust\s*ID|Cheque\s*number|Chq\s*No|Transaction\s*(type|remarks|Period)|Amount\s*from|Advanced\s*Search|Sl\s*No|Tran\s*Id|Value\s*Date|Posted\s*Date|Ref\s*No|Nomination\s*Registered|Product\s*Description|Email\s*Id|Mobile\s*No|PAN:|Holding\s*Status|Customer\s*(ID|Details)|Relationship\s*Summary|Account\s*(No|Type|Summary|Number)|Currency|Lien\s*Amount|Name$)/i.test(line);
                         };
                         
                         // Track whether we're in a summary section (Page Total, etc.)
@@ -2520,7 +2521,8 @@
                             if (inSummarySection) {
                                 const hasDate = lineHasDate(trimmedLine);
                                 const startsNew = /^\s*(\d{1,4}\s+)?\d{2}[\/\-](\d{2}|\w{3})[\/\-]\d{2,4}/.test(trimmedLine) ||
-                                                  /^[A-Z]\d{1,6}[\/\s]/.test(trimmedLine);
+                                                  /^[A-Z]\d{1,6}[\/\s]/.test(trimmedLine) ||
+                                                  /^\s*\d{2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}/i.test(trimmedLine);
                                 if (startsNew) {
                                     inSummarySection = false;
                                     // Fall through to start new transaction below
@@ -2536,7 +2538,8 @@
                             // This prevents ref number lines like "0000002883295641 02/01/25" or "N002253488208726 02/01/25" from splitting transactions
                             // Allows optional 1-4 digit serial number before the date (SBI format)
                             const startsNewTxn = /^\s*(\d{1,4}\s+)?\d{2}[\/\-](\d{2}|\w{3})[\/\-]\d{2,4}/.test(trimmedLine) ||
-                                                 /^[A-Z]\d{1,6}[\/\s]/.test(trimmedLine); // ICICI S123/M456 format (letter + short number)
+                                                 /^[A-Z]\d{1,6}[\/\s]/.test(trimmedLine) || // ICICI S123/M456 format (letter + short number)
+                                                 /^\s*\d{2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}/i.test(trimmedLine); // IndusInd: "03 Jan 2026"
 
                             if (startsNewTxn) {
                                 // Save previous transaction if it has both date and amounts
@@ -2556,7 +2559,7 @@
                                     // A complete transaction has at least 2 amounts (transaction + balance)
                                     // Finalize if: next line starts a new txn, OR we already have 2+ amounts
                                     const nextLine = rawLines[idx + 1]?.trim() || '';
-                                    const nextStartsTxn = /^\s*(\d{1,4}\s+)?\d{2}[\/\-](\d{2}|\w{3})[\/\-]\d{2,4}/.test(nextLine) || /^[A-Z]\d{1,6}[\/\s]/.test(nextLine);
+                                    const nextStartsTxn = /^\s*(\d{1,4}\s+)?\d{2}[\/\-](\d{2}|\w{3})[\/\-]\d{2,4}/.test(nextLine) || /^[A-Z]\d{1,6}[\/\s]/.test(nextLine) || /^\s*\d{2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}/i.test(nextLine);
                                     if (nextStartsTxn || amtCount >= 2) {
                                         lines.push(currentTxnLine);
                                         currentTxnLine = '';
@@ -2607,10 +2610,24 @@
                             const dateMatch2 = dateSearchLine.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{4})/);
                             const dateMatch3 = dateSearchLine.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{2})(?!\d)/);
                             const dateMatch4 = dateSearchLine.match(/(\d{2})[\/\-](\w{3})[\/\-](\d{2})(?!\d)/i);
+                            const dateMatch5 = dateSearchLine.match(/(\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})/i); // IndusInd: "03 Jan 2026"
 
                             let txnDate = null;
 
-                            if (dateMatch1) {
+                            if (dateMatch5) {
+                                // DD Mon YYYY with spaces (IndusInd format) - check first to avoid partial matches
+                                const monthNamesMap = {jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+                                                   jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'};
+                                const monthNum = monthNamesMap[dateMatch5[2].toLowerCase()] || '01';
+                                txnDate = {
+                                    dateStr: dateMatch5[0],
+                                    day: dateMatch5[1],
+                                    month: dateMatch5[2],
+                                    monthNum: monthNum,
+                                    year: dateMatch5[3],
+                                    monthKey: monthNum + '-' + dateMatch5[3]
+                                };
+                            } else if (dateMatch1) {
                                 const monthNamesMap = {jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
                                                    jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'};
                                 const monthNum = monthNamesMap[dateMatch1[2].toLowerCase()] || '01';

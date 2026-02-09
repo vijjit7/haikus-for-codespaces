@@ -6555,16 +6555,25 @@ function extractBankStatementDetailsFallback(text, filename = '') {
     }
   }
   
-  // If not found with DD-MM-YYYY, try "D Mon YYYY" format (e.g., "1 Feb 2025 to 28 Feb 2025")
+  // If not found with DD-MM-YYYY, try "D Mon YYYY" format (e.g., "06 Oct 2025 - 06 Jan 2026")
   if (result.periodFrom === 'N/A' || result.periodTo === 'N/A') {
-    // Pattern: "Account Statement from 1 Feb 2025 to 28 Feb 2025" or similar
-    const monthDatePattern = /(?:Account\s*)?Statement\s*(?:from|From)[:\s]*(\d{1,2}\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{4})\s*(?:to|To|-)\s*(\d{1,2}\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{4})/i;
-    const monthMatch = text.match(monthDatePattern);
-    if (monthMatch) {
-      result.periodFrom = convertMonthNameDate(monthMatch[1]);
-      result.periodTo = convertMonthNameDate(monthMatch[2]);
-      result.period = `${result.periodFrom} - ${result.periodTo}`;
-      console.log(`✓ Extracted period from D Mon YYYY pattern: ${result.period}`);
+    const monthDatePatterns = [
+      // "Period: 06 Oct 2025 - 06 Jan 2026" or "Statement Period: 06 Oct 2025 - 06 Jan 2026"
+      /(?:Statement\s*)?Period[:\s]*(\d{1,2}\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{4})\s*(?:to|To|[-–])\s*(\d{1,2}\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{4})/i,
+      // "Account Statement from 1 Feb 2025 to 28 Feb 2025"
+      /(?:Account\s*)?Statement\s*(?:from|From)[:\s]*(\d{1,2}\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{4})\s*(?:to|To|[-–])\s*(\d{1,2}\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{4})/i,
+      // "From 1 Feb 2025 To 28 Feb 2025"
+      /From[:\s]*(\d{1,2}\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{4})\s*(?:to|To|[-–])\s*(\d{1,2}\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{4})/i
+    ];
+    for (const monthDatePattern of monthDatePatterns) {
+      const monthMatch = text.match(monthDatePattern);
+      if (monthMatch) {
+        result.periodFrom = convertMonthNameDate(monthMatch[1]);
+        result.periodTo = convertMonthNameDate(monthMatch[2]);
+        result.period = `${result.periodFrom} - ${result.periodTo}`;
+        console.log(`✓ Extracted period from D Mon YYYY pattern: ${result.period}`);
+        break;
+      }
     }
   }
   
