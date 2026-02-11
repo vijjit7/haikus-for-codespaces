@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/css/main.css">
     <link rel="stylesheet" href="/css/proposal.css">
     <style>
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         /* Stage 3 Layout Styles */
         .stage3-container {
             display: flex;
@@ -762,9 +763,9 @@
                                                             const sv = parseCurrencyVal(saleInline[1]);
                                                             if (sv > 100000) fyData[fyNorm].turnover = sv;
                                                         }
-                                                        // Separate-block: "By Sales Accounts" → find "Rs\n" → 1st amount = Sales
+                                                        // Separate-block: "By Sales Accounts" or "By Sales" → find "Rs\n" → 1st amount = Sales
                                                         if (!fyData[fyNorm].turnover) {
-                                                            const byIdx = text.search(/By\s+Sales\s+Accounts/i);
+                                                            const byIdx = text.search(/By\s+Sales(?:\s+Accounts)?/i);
                                                             if (byIdx >= 0) {
                                                                 const afterBy = text.substring(byIdx, byIdx + 500);
                                                                 const rsMatch = afterBy.match(/\bRs\s*\n/);
@@ -778,33 +779,24 @@
                                                                 }
                                                             }
                                                         }
+                                                        // Turnover via extractFinValue: "By Sales", "Iron Scrap Sales", "Sales Accounts"
+                                                        if (!fyData[fyNorm].turnover) {
+                                                            const tvExt = extractFinValue(text, [
+                                                                'By\\s+Sales[\\s\\S]{0,30}?(?:Sales|Scrap\\s+Sales)',
+                                                                'Iron\\s+Scrap\\s+Sales',
+                                                                'Sales\\s+Accounts'
+                                                            ], 100000);
+                                                            if (tvExt && tvExt > 100000) fyData[fyNorm].turnover = tvExt;
+                                                        }
 
                                                         // --- Gross Profit ---
-                                                        // Inline: "Gross profit b/d <amount>"
-                                                        const gpInline = text.match(/Gross\s+profit\s+b\/d\s+([\d,]+[.,]\d{2})/i);
-                                                        if (gpInline) {
-                                                            const gv = parseCurrencyVal(gpInline[1]);
-                                                            if (gv > 1000) fyData[fyNorm].grossProfit = gv;
-                                                        }
-                                                        // Separate-block: 4th amount after "Rs\n" = Gross Profit b/d
-                                                        // (1st=Sales, 2nd=Closing Stock, 3rd=Trading Total, 4th=GP b/d)
-                                                        if (!fyData[fyNorm].grossProfit) {
-                                                            const byIdx = text.search(/By\s+Sales\s+Accounts/i);
-                                                            if (byIdx >= 0) {
-                                                                const afterBy = text.substring(byIdx, byIdx + 500);
-                                                                const rsMatch = afterBy.match(/\bRs\s*\n/);
-                                                                if (rsMatch) {
-                                                                    const amtBlock = afterBy.substring(rsMatch.index + rsMatch[0].length);
-                                                                    const nums = amtBlock.match(/-?\(?[\d][0-9,.]*\)?/g);
-                                                                    if (nums) {
-                                                                        const values = nums.map(n => parseCurrencyVal(n)).filter(v => v !== null && v > 0);
-                                                                        if (values.length >= 4 && values[3] > 1000) {
-                                                                            fyData[fyNorm].grossProfit = values[3];
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
+                                                        // Use "By Gross Profit" (P&L credit side) — avoids grabbing wrong
+                                                        // amounts from Trading section where OCR separates labels from numbers
+                                                        const gpExt = extractFinValue(text, [
+                                                            'By\\s+Gross\\s+Profit',
+                                                            'Gross\\s+Profit\\s+C\\/d'
+                                                        ], 1000);
+                                                        if (gpExt && gpExt > 1000) fyData[fyNorm].grossProfit = gpExt;
 
                                                         // --- Net Profit (inline on same line) ---
                                                         const npCarried = text.match(/Net\s+profit\s+carried\s+to\s+B\/?S[^\n]*?([\d,]+[.,]\d{2})/i);
@@ -812,52 +804,60 @@
                                                             const npv = parseCurrencyVal(npCarried[1]);
                                                             if (npv !== null && Math.abs(npv) >= 100) fyData[fyNorm].netProfit = npv;
                                                         }
+                                                        // NP for traditional P&L relies on ITR computation fallback below
+                                                        // (extractFinValue on T-account text grabs wrong amounts due to OCR layout)
 
-                                                        // --- Depreciation: extract from P&L debit-side amounts ---
-                                                        // Traditional P&L debit amounts: first a run of large trading values
-                                                        // (Opening Stock, Purchases, GP c/d, Total — all > 10L), then P&L
-                                                        // expenses starting with Depreciation (first small value after the run).
+                                                        // --- Depreciation via extractFinValue ---
                                                         if (!fyData[fyNorm].depreciation) {
-                                                            const plIdx = text.search(/Trading\s+and\s+Profit\s*&?\s*Loss/i);
-                                                            const byIdx = text.search(/By\s+Sales\s+Accounts/i);
-                                                            if (plIdx >= 0 && byIdx > plIdx) {
-                                                                const debitBlock = text.substring(plIdx, byIdx);
-                                                                const allNums = debitBlock.match(/-?\(?[\d][0-9,.]*\)?/g);
-                                                                if (allNums) {
-                                                                    const values = allNums.map(n => parseCurrencyVal(n)).filter(v => v !== null);
-                                                                    // Find first run of 2+ consecutive values > 1M (trading amounts),
-                                                                    // then the first value 100-1M after that run = depreciation
-                                                                    let inRun = false, runLen = 0, depValue = null;
-                                                                    for (let j = 0; j < values.length; j++) {
-                                                                        if (values[j] > 1000000) {
-                                                                            runLen++;
-                                                                            if (runLen >= 2) inRun = true;
-                                                                        } else {
-                                                                            if (inRun && values[j] >= 100 && values[j] < 1000000) {
-                                                                                depValue = values[j];
-                                                                                break;
-                                                                            }
-                                                                            runLen = 0;
-                                                                        }
-                                                                    }
-                                                                    if (depValue) fyData[fyNorm].depreciation = depValue;
-                                                                }
-                                                            }
+                                                            const depTrad = extractFinValue(text, [
+                                                                'Depreciation\\s+and\\s+amortization',
+                                                                'Depreciation(?=\\s+[\\d,])'
+                                                            ], 1000);
+                                                            if (depTrad && depTrad > 0) fyData[fyNorm].depreciation = depTrad;
                                                         }
 
-                                                        // Interest, other fields: rely on ITR fallbacks below.
+                                                        // --- Interest on Loans from P&L ---
+                                                        if (!fyData[fyNorm].interestOnLoans) {
+                                                            // Sum up finance-related items from P&L
+                                                            let totalInterest = 0;
+                                                            const intPatterns = [
+                                                                /(?:Bank\s+interest|Interest\s+on\s+(?:car\s+)?loan|Interest\s+on\s+borrowing|Finance\s+charges?)[\s:]*\n?\s*([\d,]+(?:\.\d+)?)/gi
+                                                            ];
+                                                            intPatterns.forEach(pat => {
+                                                                let m;
+                                                                while ((m = pat.exec(text)) !== null) {
+                                                                    const v = parseCurrencyVal(m[1]);
+                                                                    if (v && v > 0) totalInterest += v;
+                                                                }
+                                                            });
+                                                            if (totalInterest > 100) fyData[fyNorm].interestOnLoans = totalInterest;
+                                                        }
+                                                        if (!fyData[fyNorm].interestOnLoans) {
+                                                            const fc = extractFinValue(text, [
+                                                                'Total\\s+Finance\\s+Cost',
+                                                                'Finance\\s+Cost(?!\\s*\\d)',
+                                                                'Interest\\s+on\\s+Loans',
+                                                                'Interest\\s+to\\s+Partners'
+                                                            ], 100);
+                                                            if (fc && fc > 0) fyData[fyNorm].interestOnLoans = fc;
+                                                        }
 
                                                     } else {
                                                         // === Modern P&L (Schedule III — companies) ===
                                                         const rev = extractFinValue(text, [
                                                             'Revenue\\s+from\\s+Operations',
                                                             'Gross\\s+Turnover',
-                                                            'BY\\s+SALES'
+                                                            'BY\\s+SALES',
+                                                            'Sales\\s+Accounts',
+                                                            'Iron\\s+Scrap\\s+Sales',
+                                                            'Net\\s+Sales'
                                                         ], 100000);
                                                         if (rev && rev > 0) fyData[fyNorm].turnover = rev;
 
                                                         const gp = extractFinValue(text, [
-                                                            'Gross\\s+profit\\s+b\\/d',
+                                                            'By\\s+Gross\\s+Profit',
+                                                            'Gross\\s+Profit\\s+C\\/d',
+                                                            'Gross\\s+profit\\s+[CB]\\/d',
                                                             'Gross\\s+Profit(?!\\s*/)'
                                                         ], 1000);
                                                         if (gp !== null) fyData[fyNorm].grossProfit = gp;
@@ -865,7 +865,8 @@
                                                         const dep = extractFinValue(text, [
                                                             'Depreciation\\s+and\\s+amortization',
                                                             'Depreciation\\s+(?:debited|expense)',
-                                                            'Depreciation\\s+debited\\s+to\\s+P'
+                                                            'Depreciation\\s+debited\\s+to\\s+P',
+                                                            'Depreciation(?=\\s+[\\d,])'
                                                         ], 1000);
                                                         if (dep && dep > 0) fyData[fyNorm].depreciation = dep;
 
@@ -876,9 +877,11 @@
 
                                                         const np = extractFinValue(text, [
                                                             'Profit\\s+before\\s+tax',
+                                                            'PROFIT\\s+BEFORE\\s+TAX\\s+AS\\s+PER',
                                                             'Profit\\s+before\\s+(?:exceptional|extra)',
                                                             'Net\\s+Profit\\s+before\\s+[Tt]ax',
-                                                            'Net\\s+Profit\\s+Before\\s+Tax\\s+as\\s+per\\s+P'
+                                                            'Net\\s+Profit\\s+Before\\s+Tax\\s+as\\s+per\\s+P',
+                                                            'Net\\s+Profit(?!\\s+Before)(?!\\s*/)'
                                                         ], 100);
                                                         if (np !== null) fyData[fyNorm].netProfit = np;
 
@@ -919,10 +922,9 @@
                                                     }
                                                 }
 
-                                                // === Turnover fallback from By Sales / SALE line ===
+                                                // === Turnover fallback from By Sales / SALE line / Sales Accounts ===
                                                 if (!fyData[fyNorm].turnover) {
-                                                    // Match "SALE" followed by a large amount (>1L) — must be in P&L context
-                                                    const saleMatch = text.match(/By\s+Sales\s+Accounts\s+SALE\s+([\d,]+\.\d{2})/i);
+                                                    const saleMatch = text.match(/(?:By\s+Sales(?:\s+Accounts)?|Sales\s+Accounts|SALES)\s+(?:SALE\s+)?([\d,]+(?:\.\d{2})?)/i);
                                                     if (saleMatch) {
                                                         const sv = parseCurrencyVal(saleMatch[1]);
                                                         if (sv && sv > 100000) fyData[fyNorm].turnover = sv;
@@ -943,11 +945,34 @@
 
                                                 // === Depreciation fallback from ITR computation ===
                                                 if (!fyData[fyNorm].depreciation) {
+                                                    // Try "debited to P" FIRST (gives actual dep amount),
+                                                    // "as per IT Act" SECOND (often followed by schedule number, not amount)
                                                     const depIT = extractFinValue(text, [
-                                                        'Depreciation\\s+as\\s+per\\s+IT\\s+Act',
-                                                        'Depreciation\\s+debited\\s+to\\s+P'
-                                                    ], 100);
+                                                        'Depreciation\\s+debited\\s+to\\s+P',
+                                                        'DEPRECIATION\\s+DISALLOWED',
+                                                        'Depreciation(?=\\s+[\\d,])'
+                                                    ], 1000);
                                                     if (depIT && depIT > 0) fyData[fyNorm].depreciation = depIT;
+                                                }
+
+                                                // Turnover fallback from ITR GST disclosure
+                                                if (!fyData[fyNorm].turnover) {
+                                                    const gstTurnover = text.match(/Amount\s+of\s+turnover\/?\s*Gross\s+receipt\s+as\s+per\s+the\s+GST\s+return[^\n]*?\s+([\d,]+)/i);
+                                                    if (gstTurnover) {
+                                                        const gtv = parseCurrencyVal(gstTurnover[1]);
+                                                        if (gtv && gtv > 100000) fyData[fyNorm].turnover = gtv;
+                                                    }
+                                                }
+
+                                                // Interest on Loans fallback from ITR computation
+                                                if (!fyData[fyNorm].interestOnLoans) {
+                                                    const fcFb = extractFinValue(text, [
+                                                        'Interest\\s+on\\s+Loans',
+                                                        'Total\\s+Finance\\s+Cost',
+                                                        'Finance\\s+[Cc]harges?',
+                                                        'Bank\\s+interest'
+                                                    ], 100);
+                                                    if (fcFb && fcFb > 0) fyData[fyNorm].interestOnLoans = fcFb;
                                                 }
 
                                                 // financialData fallback
@@ -1093,9 +1118,13 @@
                                                 </tr>
                                             </tbody>
                                         </table>
-                                        <% } else { %>
-                                            <p style="color: #95a5a6; font-size: 0.85em;">No financial data extracted from ITR documents yet.</p>
                                         <% } %>
+                                        <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
+                                            <button onclick="reExtractFinancials()" id="reExtractFinBtn" style="background: #e67e22; color: white; border: none; padding: 6px 14px; border-radius: 5px; cursor: pointer; font-size: 0.8em; font-weight: 500; display: flex; align-items: center; gap: 5px;">
+                                                <span id="reExtractFinIcon">&#x21bb;</span> Re-extract Financials
+                                            </button>
+                                            <span id="reExtractFinStatus" style="font-size: 0.78em; color: #7f8c8d;"></span>
+                                        </div>
                                         <div class="memo-content"><%= proposal.camMemo?.financialDetails || '' %></div>
                                     </td>
                                 </tr>
@@ -4646,6 +4675,41 @@
                 alert('Error re-extracting documents: ' + err.message);
                 btn.disabled = false;
                 btn.textContent = 'Re-extract Documents';
+            }
+        }
+
+        // Re-extract financial documents (ITR/P&L/BS) and reload CAM
+        async function reExtractFinancials() {
+            const btn = document.getElementById('reExtractFinBtn');
+            const status = document.getElementById('reExtractFinStatus');
+            const icon = document.getElementById('reExtractFinIcon');
+            btn.disabled = true;
+            icon.style.display = 'inline-block';
+            icon.style.animation = 'spin 1s linear infinite';
+            status.textContent = 'Re-extracting financial documents...';
+
+            try {
+                const response = await fetch(`/stage3/${proposalId}/reextract-financials`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    status.style.color = '#27ae60';
+                    status.textContent = 'Extracted ' + data.processedCount + ' docs. Reloading...';
+                    setTimeout(() => window.location.reload(), 800);
+                } else {
+                    status.style.color = '#e74c3c';
+                    status.textContent = 'Error: ' + (data.error || 'Unknown error');
+                    btn.disabled = false;
+                    icon.style.animation = '';
+                }
+            } catch (err) {
+                status.style.color = '#e74c3c';
+                status.textContent = 'Error: ' + err.message;
+                btn.disabled = false;
+                icon.style.animation = '';
             }
         }
 

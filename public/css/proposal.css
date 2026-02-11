@@ -1324,6 +1324,25 @@ header h1 {
     transform: scale(1.1);
 }
 
+.btn-download {
+    background: #3498db;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1.1em;
+    transition: all 0.3s;
+    margin-left: 5px;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.btn-download:hover {
+    background: #2980b9;
+    transform: scale(1.1);
+}
+
 .btn-delete {
     background: #e74c3c;
     color: white;

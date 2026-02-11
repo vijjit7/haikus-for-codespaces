@@ -6698,6 +6698,86 @@ app.get('/stage3/:proposalId', async (req, res) => {
   res.render('stage3-cam', { proposal, debtProfiles });
 });
 
+// Stage 3: Re-extract financial documents (ITR / P&L / Balance Sheet)
+app.post('/stage3/:proposalId/reextract-financials', async (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const proposal = getProposalById(proposalId);
+    if (!proposal) return res.status(404).json({ success: false, error: 'Proposal not found' });
+    if (!proposal.documents || proposal.documents.length === 0) {
+      return res.status(400).json({ success: false, error: 'No documents found' });
+    }
+
+    let processedCount = 0;
+    const proposalDir = path.join(UPLOADS_DIR, proposalId);
+
+    for (let i = 0; i < proposal.documents.length; i++) {
+      const doc = proposal.documents[i];
+      if (doc.category !== 'financials') continue;
+
+      const filePath = path.join(proposalDir, doc.filename);
+      if (!fs.existsSync(filePath) || !doc.originalName.toLowerCase().endsWith('.pdf')) continue;
+
+      try {
+        console.log('\n========================================');
+        console.log('RE-EXTRACTING FINANCIAL DOC:', doc.originalName);
+        console.log('========================================');
+
+        const pdfResult = await extractPDFWithTableDetection(filePath, false);
+        let fullText = pdfResult.text;
+
+        // Vision OCR for scanned/image PDFs
+        const charsPerPage = fullText.length / (pdfResult.numPages || 1);
+        const isShortText = fullText.trim().length > 0 && fullText.trim().length < 2000 && pdfResult.numPages > 1;
+        if ((pdfResult.numPages > 3 && charsPerPage < 200) || isShortText) {
+          console.log('Attempting multi-page Vision OCR...');
+          try {
+            const ocrResult = await extractAllPagesWithVisionOCR(filePath);
+            if (ocrResult.success && ocrResult.text.length > fullText.length) {
+              if (isShortText && fullText.trim().length > 0) {
+                fullText = fullText + '\n\n' + ocrResult.text;
+              } else {
+                fullText = ocrResult.text;
+              }
+              console.log('Vision OCR improved extraction:', fullText.length, 'chars');
+            }
+          } catch (ocrErr) {
+            console.error('Vision OCR error:', ocrErr.message);
+          }
+        }
+
+        proposal.documents[i].extractedText = fullText;
+        proposal.documents[i].pages = pdfResult.numPages;
+
+        // Extract financial data from tables
+        const textLower = fullText.toLowerCase();
+        const hasBS = textLower.includes('balance sheet');
+        const hasPL = textLower.includes('profit') && textLower.includes('loss');
+        const hasComp = textLower.includes('computation') && textLower.includes('total income');
+        const hasITR = textLower.includes('income tax return') || textLower.includes('acknowledgement number');
+        proposal.documents[i].financialComponents = {
+          itrAck: hasITR, computation: hasComp, balanceSheet: hasBS, profitLoss: hasPL
+        };
+
+        console.log('Text length:', fullText.length, 'Pages:', pdfResult.numPages);
+        console.log('Components: ITR=' + hasITR, 'Comp=' + hasComp, 'BS=' + hasBS, 'PL=' + hasPL);
+        processedCount++;
+      } catch (err) {
+        console.error('Error re-extracting:', doc.originalName, err.message);
+      }
+    }
+
+    if (processedCount > 0) {
+      updateProposal(proposalId, { documents: proposal.documents });
+    }
+
+    res.json({ success: true, processedCount });
+  } catch (err) {
+    console.error('Re-extract financials error:', err);
+    res.json({ success: false, error: err.message });
+  }
+});
+
 // Fetch website and generate business summary
 app.post('/stage3/:proposalId/fetch-business-summary', async (req, res) => {
   try {

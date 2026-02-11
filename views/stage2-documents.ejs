@@ -488,7 +488,13 @@
                                                     <option value="debtProfile" <%= file.category === 'debtProfile' ? 'selected' : '' %>>Debt Profile</option>
                                                     <option value="collateral" <%= file.category === 'collateral' ? 'selected' : '' %>>Collateral</option>
                                                 </select>
-                                                <button class="btn-delete" 
+                                                <a class="btn-download"
+                                                    href="/uploads/<%= proposalId %>/<%= file.filename %>"
+                                                    download="<%= file.originalName %>"
+                                                    title="Download document">
+                                                    ⬇️
+                                                </a>
+                                                <button class="btn-delete"
                                                     onclick="deleteDocument('<%= file.id %>', '<%= file.originalName %>')"
                                                     title="Delete document">
                                                     🗑️
@@ -3551,26 +3557,36 @@
         const bulkFilePreview = document.getElementById('bulkFilePreview');
         const bulkUploadForm = document.getElementById('bulkUploadForm');
         const uploadProgress = document.getElementById('uploadProgress');
-        
+
+        // Already uploaded file names (for duplicate detection)
+        const existingFileNames = new Set([
+            <% (uploadedFiles || []).forEach(f => { %>
+                '<%= f.originalName.replace(/'/g, "\\'") %>',
+            <% }); %>
+        ]);
+
         // Track selected files separately (since FileList is read-only)
         let selectedFiles = [];
 
         // Function to render file preview with remove buttons
         function renderFilePreview() {
             bulkFilePreview.innerHTML = '';
-            
+
             selectedFiles.forEach((file, index) => {
+                const isDuplicate = existingFileNames.has(file.name);
                 const fileItem = document.createElement('div');
                 fileItem.className = 'file-preview-item';
+                if (isDuplicate) fileItem.style.background = '#fff3e0';
                 fileItem.innerHTML = `
                     <span class="file-icon">${file.type.includes('pdf') ? '📄' : file.type.includes('image') ? '🖼️' : file.name.endsWith('.zip') ? '📦' : '📝'}</span>
-                    <span class="file-name">${file.name}</span>
+                    <span class="file-name" ${isDuplicate ? 'style="color:#e65100;"' : ''}>${file.name}</span>
+                    ${isDuplicate ? '<span style="color:#e65100;font-size:0.78em;font-weight:600;background:#ffe0b2;padding:2px 6px;border-radius:3px;">Already exists</span>' : ''}
                     <span class="file-size">${(file.size / 1024).toFixed(2)} KB</span>
                     <button type="button" class="file-remove-btn" onclick="removeFile(${index})" title="Remove file">✕</button>
                 `;
                 bulkFilePreview.appendChild(fileItem);
             });
-            
+
             // Update file count display
             updateFileCount();
         }
@@ -3613,13 +3629,17 @@
         // File input preview
         bulkFileInput.addEventListener('change', function(e) {
             const files = Array.from(e.target.files);
-            // Add new files to existing selection (avoid duplicates)
+            const duplicates = [];
             files.forEach(file => {
-                const exists = selectedFiles.some(f => f.name === file.name && f.size === file.size);
-                if (!exists) {
+                const existsInSelection = selectedFiles.some(f => f.name === file.name && f.size === file.size);
+                if (!existsInSelection) {
+                    if (existingFileNames.has(file.name)) duplicates.push(file.name);
                     selectedFiles.push(file);
                 }
             });
+            if (duplicates.length > 0) {
+                alert('These files already exist:\n\n' + duplicates.join('\n') + '\n\nThey are highlighted. Remove them or upload to replace.');
+            }
             renderFilePreview();
         });
 
@@ -3650,13 +3670,17 @@
         fileInputWrapper.addEventListener('drop', function(e) {
             const dt = e.dataTransfer;
             const files = Array.from(dt.files);
-            // Add dropped files to selection (avoid duplicates)
+            const duplicates = [];
             files.forEach(file => {
-                const exists = selectedFiles.some(f => f.name === file.name && f.size === file.size);
-                if (!exists) {
+                const existsInSelection = selectedFiles.some(f => f.name === file.name && f.size === file.size);
+                if (!existsInSelection) {
+                    if (existingFileNames.has(file.name)) duplicates.push(file.name);
                     selectedFiles.push(file);
                 }
             });
+            if (duplicates.length > 0) {
+                alert('These files already exist:\n\n' + duplicates.join('\n') + '\n\nThey are highlighted. Remove them or upload to replace.');
+            }
             renderFilePreview();
         });
 
@@ -3670,9 +3694,24 @@
                 alert('Please select at least one file');
                 return;
             }
-            
-            for (let file of selectedFiles) {
-                formData.append('documents', file);
+
+            const dupes = selectedFiles.filter(f => existingFileNames.has(f.name));
+            if (dupes.length > 0) {
+                const proceed = confirm('These files already exist:\n\n' + dupes.map(f => f.name).join('\n') + '\n\nRemove them from the selection first, or click OK to skip duplicates and upload only new files.');
+                if (!proceed) return;
+                // Filter out duplicates
+                const newFiles = selectedFiles.filter(f => !existingFileNames.has(f.name));
+                if (newFiles.length === 0) {
+                    alert('All selected files already exist. Nothing to upload.');
+                    return;
+                }
+                for (let file of newFiles) {
+                    formData.append('documents', file);
+                }
+            } else {
+                for (let file of selectedFiles) {
+                    formData.append('documents', file);
+                }
             }
             formData.append('proposalId', proposalId);
             
