@@ -170,33 +170,33 @@
 
         <!-- Progress Tracker -->
         <div class="progress-tracker">
-            <div class="progress-step">
+            <a href="/proposals/<%= proposal.id %>/edit" class="progress-step" style="text-decoration:none;">
                 <div>
                     <div class="step-circle completed">1</div>
                     <div class="step-label">Proposal</div>
                 </div>
-            </div>
+            </a>
             <div class="step-connector completed"></div>
-            <div class="progress-step">
+            <a href="/stage2/<%= proposal.id %>" class="progress-step" style="text-decoration:none;">
                 <div>
                     <div class="step-circle completed">2</div>
                     <div class="step-label">Documents</div>
                 </div>
-            </div>
+            </a>
             <div class="step-connector completed"></div>
-            <div class="progress-step">
+            <a href="/stage3/<%= proposal.id %>" class="progress-step" style="text-decoration:none;">
                 <div>
                     <div class="step-circle completed">3</div>
                     <div class="step-label">CAM</div>
                 </div>
-            </div>
+            </a>
             <div class="step-connector completed"></div>
-            <div class="progress-step">
+            <a href="/stage4/<%= proposal.id %>" class="progress-step" style="text-decoration:none;">
                 <div>
                     <div class="step-circle active">4</div>
                     <div class="step-label active">Banker Match</div>
                 </div>
-            </div>
+            </a>
         </div>
 
         <!-- Proposal Summary -->
@@ -298,6 +298,18 @@
                         <div>
                             <div class="detail-label">Geo Limit</div>
                             <div class="detail-value"><%= m.geo_limits_km %> km</div>
+                        </div>
+                        <% } %>
+                        <% if (m.own_house_required) { %>
+                        <div>
+                            <div class="detail-label">Own House</div>
+                            <div class="detail-value"><%= m.own_house_required %></div>
+                        </div>
+                        <% } %>
+                        <% if (m.max_usl) { %>
+                        <div>
+                            <div class="detail-label">Max USL</div>
+                            <div class="detail-value"><%= m.max_usl %></div>
                         </div>
                         <% } %>
                     </div>

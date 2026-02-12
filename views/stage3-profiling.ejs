@@ -11,26 +11,26 @@
     <div class="container">
         <header>
             <h1>Stage 3: Comprehensive Customer Profiling</h1>
-            <p class="subtitle">Proposal ID: #<%= proposal.id %> | Applicant: <%= proposal.applicantName || proposal.customerName %></p>
+            <p class="subtitle">Applicant: <%= proposal.applicantName || proposal.customerName %></p>
         </header>
 
         <div class="progress-tracker">
-            <div class="progress-step completed">
+            <a href="/proposals/<%= proposal.id %>/edit" class="progress-step completed" style="text-decoration:none;">
                 <div class="step-number">1</div>
                 <div class="step-label">Proposal</div>
-            </div>
-            <div class="progress-step completed">
+            </a>
+            <a href="/stage2/<%= proposal.id %>" class="progress-step completed" style="text-decoration:none;">
                 <div class="step-number">2</div>
                 <div class="step-label">Documents</div>
-            </div>
-            <div class="progress-step active">
+            </a>
+            <a href="/stage3/<%= proposal.id %>" class="progress-step active" style="text-decoration:none;">
                 <div class="step-number">3</div>
                 <div class="step-label">Profiling</div>
-            </div>
-            <div class="progress-step">
+            </a>
+            <a href="/stage4/<%= proposal.id %>" class="progress-step completed" style="text-decoration:none;">
                 <div class="step-number">4</div>
                 <div class="step-label">Banker Match</div>
-            </div>
+            </a>
         </div>
 
         <div class="profiling-container">

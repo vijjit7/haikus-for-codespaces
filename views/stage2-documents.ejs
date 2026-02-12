@@ -6,6 +6,12 @@
     <title>Stage 2: Document Upload - Proposal #<%= proposal.id %></title>
     <link rel="stylesheet" href="/css/main.css">
     <link rel="stylesheet" href="/css/proposal.css">
+    <style>
+        .container {
+            max-width: 98%;
+            padding: 10px 15px;
+        }
+    </style>
 </head>
 <body>
     <%
@@ -15,26 +21,26 @@
     <div class="container">
         <header>
             <h1>Stage 2: Document Upload & Proposal Perfection</h1>
-            <p class="subtitle">Proposal ID: #<%= proposal.id %> | Applicant: <%= proposal.applicantName || proposal.customerName %></p>
+            <p class="subtitle">Applicant: <%= proposal.applicantName || proposal.customerName %></p>
         </header>
 
         <div class="progress-tracker">
-            <div class="progress-step completed">
+            <a href="/proposals/<%= proposal.id %>/edit" class="progress-step completed" style="text-decoration:none;">
                 <div class="step-number">1</div>
                 <div class="step-label">Proposal</div>
-            </div>
-            <div class="progress-step active">
+            </a>
+            <a href="/stage2/<%= proposal.id %>" class="progress-step active" style="text-decoration:none;">
                 <div class="step-number">2</div>
                 <div class="step-label">Documents</div>
-            </div>
-            <div class="progress-step">
+            </a>
+            <a href="/stage3/<%= proposal.id %>" class="progress-step completed" style="text-decoration:none;">
                 <div class="step-number">3</div>
-                <div class="step-label">Profiling</div>
-            </div>
-            <div class="progress-step">
+                <div class="step-label">CAM</div>
+            </a>
+            <a href="/stage4/<%= proposal.id %>" class="progress-step completed" style="text-decoration:none;">
                 <div class="step-number">4</div>
                 <div class="step-label">Banker Match</div>
-            </div>
+            </a>
         </div>
 
         <div class="stage2-container">

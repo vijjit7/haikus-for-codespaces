@@ -23,6 +23,8 @@ const BankPolicySchema = new mongoose.Schema({
   max_tenure_years: Number,
   collateral_types: [String],
   loan_nature: { type: String, enum: ['Secured', 'Unsecured', 'Both', ''], default: '' },
+  own_house_required: { type: String, enum: ['Yes', 'No', 'Not specified', ''], default: '' },
+  max_usl: Number,
   processing_fee_pct: Number,
   special_conditions: String,
   programs: [String],       // e.g. ['NIP', 'LIP', 'Banking Surrogate', 'ITR Program']

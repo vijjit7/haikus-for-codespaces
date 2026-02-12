@@ -533,6 +533,8 @@ const PDF_SERVICE_TIMEOUT = 30000; // 30 seconds
 // OpenRouter API Configuration for Document AI
 const OPENROUTER_API_KEY = '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';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const GEMINI_API_KEY = 'AIzaSyARiov95XN7RdyNWoOebWCVeWN6uGB3e6g';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent';
 
 // Middleware
 app.use(express.static('public'));
@@ -780,10 +782,14 @@ const KNOWN_BANKS_MAP = {
   'Canara': 'Bank', 'Union Bank': 'Bank', 'Indian Bank': 'Bank', 'Bank of India': 'Bank', 'BOI': 'Bank',
   'Central Bank': 'Bank', 'UCO Bank': 'Bank', 'Indian Overseas': 'Bank', 'IOB': 'Bank',
   'IDBI': 'Bank', 'Yes Bank': 'Bank', 'IndusInd': 'Bank',
+  'Standard Chartered': 'Bank', 'Standard Charterd': 'Bank', 'SCB': 'Bank', 'StanChart': 'Bank',
+  'Citibank': 'Bank', 'Citi Bank': 'Bank', 'DBS Bank': 'Bank', 'DBS': 'Bank', 'HSBC': 'Bank',
+  'Deutsche Bank': 'Bank', 'Barclays': 'Bank',
   // Private / Small Finance Banks
   'Federal Bank': 'Bank', 'South Indian Bank': 'Bank', 'Karur Vysya': 'Bank', 'KVB': 'Bank',
   'City Union Bank': 'Bank', 'CUB': 'Bank', 'Bandhan Bank': 'Bank', 'RBL Bank': 'Bank',
-  'IDFC First': 'Bank', 'AU Small Finance': 'Bank', 'Ujjivan': 'Bank',
+  'IDFC First': 'Bank', 'AU Small Finance': 'Bank', 'Ujjivan': 'Bank', 'Jana Small Finance': 'Bank', 'Jana SFB': 'Bank',
+  'Jio Credit': 'NBFC', 'Jio Finance': 'NBFC',
   // NBFCs
   'Bajaj Finance': 'NBFC', 'Bajaj Finserv': 'NBFC', 'Tata Capital': 'NBFC', 'L&T Finance': 'NBFC',
   'Mahindra Finance': 'NBFC', 'Piramal': 'NBFC', 'Muthoot Fincorp': 'NBFC', 'Muthoot': 'NBFC', 'Manappuram': 'NBFC',
@@ -795,7 +801,17 @@ const KNOWN_BANKS_MAP = {
   'Godrej Housing': 'HFC', 'Reliance Home': 'HFC', 'GIC Housing': 'HFC',
   'Can Fin Homes': 'HFC', 'Repco Home': 'HFC', 'Aavas': 'HFC',
   'Home First': 'HFC', 'Aptus': 'HFC', 'Star HFC': 'HFC', 'Sammaan Capital': 'HFC',
-  'Shubham Housing Finance': 'HFC', 'Shubham Housing': 'HFC', 'Shubham': 'HFC'
+  'Shubham Housing Finance': 'HFC', 'Shubham Housing': 'HFC', 'Shubham': 'HFC',
+  // Additional NBFCs
+  'Credit Saison': 'NBFC', 'Fedbank Financial': 'NBFC', 'Fedfina': 'NBFC',
+  'Hinduja Housing': 'HFC', 'Hinduja Leyland': 'NBFC',
+  'Incred Financial': 'NBFC', 'InCred': 'NBFC',
+  'Kogta Financial': 'NBFC', 'Mirae Asset': 'NBFC',
+  'DMI Finance': 'NBFC', 'DMI Housing': 'HFC',
+  'Northern Arc': 'NBFC', 'Profectus Capital': 'NBFC',
+  'Anand Rathi': 'NBFC', 'Ugro Capital': 'NBFC',
+  'Vastu Housing': 'HFC', 'Vistaar Finance': 'NBFC',
+  'Clix Capital': 'NBFC', 'Clix Housing': 'HFC'
 };
 // Backward-compatible array (sorted longest-first so "Axis Bank" matches before "Axis")
 const KNOWN_BANKS = Object.keys(KNOWN_BANKS_MAP).sort((a, b) => b.length - a.length);
@@ -850,9 +866,34 @@ function computeTextSimilarity(a, b) {
   return union > 0 ? intersection / union : 0;
 }
 
+// Normalize common bank name misspellings/abbreviations
+const BANK_NAME_NORMALIZE = {
+  'standard charterd': 'Standard Chartered Bank',
+  'standard charted': 'Standard Chartered Bank',
+  'scb': 'Standard Chartered Bank',
+  'stanchart': 'Standard Chartered Bank',
+  'bob': 'Bank of Baroda',
+  'boi': 'Bank of India',
+  'iob': 'Indian Overseas Bank',
+  'kvb': 'Karur Vysya Bank',
+  'cub': 'City Union Bank',
+  'abfl': 'Aditya Birla Finance',
+  'chola': 'Cholamandalam',
+  'credit saison': 'Credit Saison India',
+  'fedfina': 'Fedbank Financial',
+  'incred': 'InCred Financial',
+  'jana sfb': 'Jana Small Finance Bank',
+  'jana small finance': 'Jana Small Finance Bank',
+  'jio credit': 'Jio Credit',
+  'jio finance': 'Jio Finance',
+};
+
 // Find or create Bank entity
 async function findOrCreateBank(bankName, sender, date) {
   if (!bankName) return null;
+  // Normalize misspellings
+  const normalizedName = BANK_NAME_NORMALIZE[bankName.toLowerCase().trim()] || bankName;
+  bankName = normalizedName;
   const bankKey = bankName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '');
   const bankType = determineBankType(bankName);
 
@@ -1019,7 +1060,7 @@ function regexExtractPolicies(text) {
   // Bank name detection
   for (const bank of KNOWN_BANKS) {
     if (lower.includes(bank.toLowerCase())) {
-      result.bank_name = bank;
+      result.bank_name = BANK_NAME_NORMALIZE[bank.toLowerCase().trim()] || bank;
       break;
     }
   }
@@ -1052,15 +1093,21 @@ function regexExtractPolicies(text) {
   if (detectedLoanTypes.length > 0) result.loan_type = detectedLoanTypes[0];
 
   // Amount extraction (Indian notation: 10L=10 lakhs, 5Cr=500 lakhs)
-  // Look for funding/loan amount range first (e.g. "Funding 5L to 1.5Cr")
-  const fundingMatch = text.match(/(?:fund(?:ing)?|loan\s*(?:amount)?|amount)\s*(?::)?\s*(\d+(?:\.\d+)?)\s*(?:l|lakh|lakhs|lacs?)\s*(?:to|-)\s*(\d+(?:\.\d+)?)\s*(?:l|lakh|lakhs|lacs?|cr|crore|crores)?(?:\b|[.,;\s]|$)/i);
+  // Handles ₹ symbol, en-dash (–), em-dash (—), and standard hyphen
+  // Look for funding/loan amount range first (e.g. "Funding 5L to 1.5Cr", "Loan Amount: ₹10 Lakhs – ₹75 Lakhs")
+  const fundingMatch = text.match(/(?:fund(?:ing)?|loan\s*(?:amount)?|amount)\s*(?:[:=-]|\bfrom\b)?\s*(?:₹|rs\.?\s*|inr\s*)?(\d+(?:\.\d+)?)\s*(?:l|lakh|lakhs|lacs?)\s*(?:to|-|–|—)\s*(?:₹|rs\.?\s*|inr\s*)?(\d+(?:\.\d+)?)\s*(?:l|lakh|lakhs|lacs?|cr|crore|crores)?(?:\b|[.,;\s]|$)/i);
   const amountPatterns = [
-    /(\d+(?:\.\d+)?)\s*(?:l|lakh|lakhs|lacs?)\s*(?:to|-)\s*(\d+(?:\.\d+)?)\s*(?:l|lakh|lakhs|lacs?|cr|crore|crores)/i,
-    /(\d+(?:\.\d+)?)\s*(?:cr|crore|crores)\s*(?:to|-)\s*(\d+(?:\.\d+)?)\s*(?:cr|crore|crores)/i,
-    /(?:upto|up\s*to|max(?:imum)?|limit)\s*(?:rs\.?\s*)?(\d+(?:\.\d+)?)\s*(?:l|lakh|lakhs|lacs?)/i,
-    /(?:upto|up\s*to|max(?:imum)?|limit)\s*(?:rs\.?\s*)?(\d+(?:\.\d+)?)\s*(?:cr|crore|crores)/i,
-    /(?:min(?:imum)?)\s*(?:rs\.?\s*)?(\d+(?:\.\d+)?)\s*(?:l|lakh|lakhs|lacs?)/i
+    /(?:₹|rs\.?\s*|inr\s*)?(\d+(?:\.\d+)?)\s*(?:l|lakh|lakhs|lacs?)\s*(?:to|-|–|—)\s*(?:₹|rs\.?\s*|inr\s*)?(\d+(?:\.\d+)?)\s*(?:l|lakh|lakhs|lacs?|cr|crore|crores)/i,
+    /(?:₹|rs\.?\s*|inr\s*)?(\d+(?:\.\d+)?)\s*(?:cr|crore|crores)\s*(?:to|-|–|—)\s*(?:₹|rs\.?\s*|inr\s*)?(\d+(?:\.\d+)?)\s*(?:cr|crore|crores)/i,
+    /(?:upto|up\s*to|max(?:imum)?|limit)\s*[-:.]?\s*(?:₹|rs\.?\s*)?(\d+(?:\.\d+)?)\s*(?:l|lakh|lakhs|lacs?)/i,
+    /(?:upto|up\s*to|max(?:imum)?|limit)\s*[-:.]?\s*(?:₹|rs\.?\s*)?(\d+(?:\.\d+)?)\s*(?:cr|crore|crores)/i,
+    /(?:min(?:imum)?)\s*[-:.]?\s*(?:₹|rs\.?\s*)?(\d+(?:\.\d+)?)\s*(?:l|lakh|lakhs|lacs?)/i
   ];
+  // Separate min/max patterns for multi-line format: "Minimum - 50 Lakhs" / "Maximum - 25cr"
+  const separateMinLakh = text.match(/(?:min(?:imum)?)\s*[-:.]?\s*(?:rs\.?\s*)?(\d+(?:\.\d+)?)\s*(?:l|lakh|lakhs|lacs?)/i);
+  const separateMinCr = text.match(/(?:min(?:imum)?)\s*[-:.]?\s*(?:rs\.?\s*)?(\d+(?:\.\d+)?)\s*(?:cr|crore|crores)/i);
+  const separateMaxLakh = text.match(/(?:max(?:imum)?)\s*[-:.]?\s*(?:rs\.?\s*)?(\d+(?:\.\d+)?)\s*(?:l|lakh|lakhs|lacs?)/i);
+  const separateMaxCr = text.match(/(?:max(?:imum)?)\s*[-:.]?\s*(?:rs\.?\s*)?(\d+(?:\.\d+)?)\s*(?:cr|crore|crores)/i);
 
   const rangeMatch = fundingMatch || text.match(amountPatterns[0]);
   if (rangeMatch) {
@@ -1073,17 +1120,28 @@ function regexExtractPolicies(text) {
     result.loan_min_lakhs = parseFloat(rangeCrMatch[1]) * 100;
     result.loan_max_lakhs = parseFloat(rangeCrMatch[2]) * 100;
   }
-  const maxLakhMatch = text.match(amountPatterns[2]);
-  if (maxLakhMatch && !result.loan_max_lakhs) {
-    result.loan_max_lakhs = parseFloat(maxLakhMatch[1]);
+  // Try separate min/max lines (handles "Minimum - 50 Lakhs\nMaximum - 25cr")
+  if (!result.loan_max_lakhs) {
+    if (separateMaxCr) {
+      result.loan_max_lakhs = parseFloat(separateMaxCr[1]) * 100;
+    } else if (separateMaxLakh) {
+      result.loan_max_lakhs = parseFloat(separateMaxLakh[1]);
+    } else {
+      const maxLakhMatch = text.match(amountPatterns[2]);
+      if (maxLakhMatch) result.loan_max_lakhs = parseFloat(maxLakhMatch[1]);
+      const maxCrMatch = text.match(amountPatterns[3]);
+      if (maxCrMatch && !result.loan_max_lakhs) result.loan_max_lakhs = parseFloat(maxCrMatch[1]) * 100;
+    }
   }
-  const maxCrMatch = text.match(amountPatterns[3]);
-  if (maxCrMatch && !result.loan_max_lakhs) {
-    result.loan_max_lakhs = parseFloat(maxCrMatch[1]) * 100;
-  }
-  const minLakhMatch = text.match(amountPatterns[4]);
-  if (minLakhMatch && !result.loan_min_lakhs) {
-    result.loan_min_lakhs = parseFloat(minLakhMatch[1]);
+  if (!result.loan_min_lakhs) {
+    if (separateMinCr) {
+      result.loan_min_lakhs = parseFloat(separateMinCr[1]) * 100;
+    } else if (separateMinLakh) {
+      result.loan_min_lakhs = parseFloat(separateMinLakh[1]);
+    } else {
+      const minLakhMatch = text.match(amountPatterns[4]);
+      if (minLakhMatch) result.loan_min_lakhs = parseFloat(minLakhMatch[1]);
+    }
   }
 
   // ROI extraction - product-specific: "ROI HL 10.75% to 13.5%", "ROI LAP 12.50% to 16%"
@@ -1115,10 +1173,11 @@ function regexExtractPolicies(text) {
   }
 
   // General ROI extraction (fallback if no product-specific found)
+  // Handles: "ROI 10%", "Interest Rate: 11.90%", "Interest Rate: Starting from 11.90%", "Rate of Interest: 10% to 12%"
   const roiPatterns = [
-    /(?:roi|rate|interest)\s*(?:of\s*interest\s*)?[-:.]?\s*(?:from)?\s*(\d+(?:\.\d+)?)\s*%?\s*(?:to|-)\s*(\d+(?:\.\d+)?)\s*%/i,
-    /(\d+(?:\.\d+)?)\s*%\s*(?:to|-)\s*(\d+(?:\.\d+)?)\s*%/i,
-    /(?:roi|rate|interest)\s*(?:of\s*interest\s*)?[-:.]?\s*(\d+(?:\.\d+)?)\s*%/i
+    /(?:roi|rate(?:\s*of\s*interest)?|interest\s*rate)\s*[-:.]*\s*(?:starting\s*)?(?:from)?\s*(\d+(?:\.\d+)?)\s*%?\s*(?:to|-|–|—)\s*(\d+(?:\.\d+)?)\s*%/i,
+    /(\d+(?:\.\d+)?)\s*%\s*(?:to|-|–|—)\s*(\d+(?:\.\d+)?)\s*%/i,
+    /(?:roi|rate(?:\s*of\s*interest)?|interest\s*rate)\s*[-:.]*\s*(?:starting\s*)?(?:from)?\s*(\d+(?:\.\d+)?)\s*%/i
   ];
   if (Object.keys(productRoiMap).length === 0) {
     const roiRange = text.match(roiPatterns[0]) || text.match(roiPatterns[1]);
@@ -1133,7 +1192,7 @@ function regexExtractPolicies(text) {
       }
     }
     // Scan all ROI mentions to derive better min-max range
-    const allRoiMatches = [...text.matchAll(/(?:roi|rate|interest)\s*(?:of\s*interest\s*)?[-:.]?\s*(\d+(?:\.\d+)?)\s*%/gi)];
+    const allRoiMatches = [...text.matchAll(/(?:roi|rate(?:\s*of\s*interest)?|interest\s*rate)\s*[-:.]*\s*(?:starting\s*)?(?:from)?\s*(\d+(?:\.\d+)?)\s*%/gi)];
     if (allRoiMatches.length > 1) {
       const roiValues = allRoiMatches.map(m => parseFloat(m[1])).filter(v => v > 0 && v < 50);
       if (roiValues.length > 1) {
@@ -1159,7 +1218,7 @@ function regexExtractPolicies(text) {
 
   // General LTV extraction (fallback)
   if (Object.keys(productLtvMap).length === 0) {
-    const ltvMinMaxMatch = text.match(/(?:ltv|loan\s*to\s*value)\s*[-:.]?\s*(?:min(?:imum)?\s*)?(\d+(?:\.\d+)?)\s*%?\s*[,\s]*(?:max(?:imum)?\s*)(\d+(?:\.\d+)?)\s*%/i);
+    const ltvMinMaxMatch = text.match(/(?:ltv|loan\s*to\s*value)\s*[-:.]?\s*(?:min(?:imum)?\s*)?(\d+(?:\.\d+)?)\s*%?\s*(?:to|-|–|—|[,\s])\s*(?:max(?:imum)?\s*)?(\d+(?:\.\d+)?)\s*%/i);
     if (ltvMinMaxMatch) {
       result.ltv_min_pct = parseFloat(ltvMinMaxMatch[1]);
       result.ltv_pct = parseFloat(ltvMinMaxMatch[2]);
@@ -1185,16 +1244,20 @@ function regexExtractPolicies(text) {
   const cibilMatch = text.match(/(?:cibil|credit\s*score|min(?:imum)?\s*(?:cibil|score))\s*[-:.]?\s*(?:above|min(?:imum)?|>|>=)?\s*(\d{3})/i);
   if (cibilMatch) result.min_cibil = parseInt(cibilMatch[1]);
 
-  // Tenure extraction (handle multiline: "Tenure\nLap - 15 Years")
-  const tenureMatch = text.match(/(?:tenure|max(?:imum)?\s*tenure)\s*(?::)?\s*(?:upto|up\s*to)?\s*(\d+)\s*(?:years?|yrs?)/i);
+  // Tenure extraction (handle multiline: "Tenure\nLap - 15 Years", "Tenure: Up to 240 Months")
+  const tenureMatch = text.match(/(?:tenure|max(?:imum)?\s*tenure)\s*(?::)?\s*(?:upto|up\s*to)?\s*(\d+)\s*(?:years?|yrs?|months?)/i);
   if (tenureMatch) {
-    result.max_tenure_years = parseInt(tenureMatch[1]);
+    const isMonths = /months?/i.test(tenureMatch[0]);
+    result.max_tenure_years = isMonths ? Math.round(parseInt(tenureMatch[1]) / 12) : parseInt(tenureMatch[1]);
   } else {
     const tenureIdx = text.search(/tenure/i);
     if (tenureIdx >= 0) {
       const nearbyText = text.substring(tenureIdx, tenureIdx + 100);
-      const nearbyMatch = nearbyText.match(/(\d+)\s*(?:years?|yrs?)/i);
-      if (nearbyMatch) result.max_tenure_years = parseInt(nearbyMatch[1]);
+      const nearbyMatch = nearbyText.match(/(\d+)\s*(?:years?|yrs?|months?)/i);
+      if (nearbyMatch) {
+        const isMonths = /months?/i.test(nearbyMatch[0]);
+        result.max_tenure_years = isMonths ? Math.round(parseInt(nearbyMatch[1]) / 12) : parseInt(nearbyMatch[1]);
+      }
     }
   }
 
@@ -1237,6 +1300,20 @@ function regexExtractPolicies(text) {
   else if (/\bsecured\b/i.test(text)) result.loan_nature = 'Secured';
   else if (/\bunsecured\b/i.test(text)) result.loan_nature = 'Unsecured';
 
+  // Own house required (BL/unsecured specific)
+  if (/(?:own\s*(?:house|property|home)\s*(?:is\s*)?(?:not|no)\s*(?:required|mandatory|needed|compulsory))|(?:(?:no|not|without)\s*own\s*(?:house|property|home))|(?:rented\s*(?:house\s*)?(?:also\s*)?(?:ok|accepted|consider))/i.test(text)) {
+    result.own_house_required = 'No';
+  } else if (/(?:own\s*(?:house|property|home)\s*(?:is\s*)?(?:required|mandatory|needed|compulsory|must))|(?:must\s*(?:have|own)\s*(?:own\s*)?(?:house|property|home))/i.test(text)) {
+    result.own_house_required = 'Yes';
+  }
+
+  // Max USL (unsecured loans) allowed - count of existing USLs
+  const uslMatch = text.match(/(?:max(?:imum)?\s*(?:usl|unsecured\s*loan(?:s)?)\s*(?:allowed|limit|count)?\s*[-:.]*\s*(\d{1,2}))|(?:(?:usl|unsecured\s*loan(?:s)?)\s*(?:max(?:imum)?|limit|not\s*(?:more|exceed(?:ing)?)\s*(?:than)?|<=?|upto|up\s*to)\s*[-:.]*\s*(\d{1,2}))|(?:(\d{1,2})\s*(?:usl|unsecured\s*loan(?:s)?)\s*(?:max(?:imum)?|allowed|only))|(?:(?:usl|unsecured\s*loan(?:s)?)\s*[-:.]*\s*(\d{1,2})\s*(?:allow|permitted|accepted|ok|only))/i);
+  if (uslMatch) {
+    const uslVal = parseInt(uslMatch[1] || uslMatch[2] || uslMatch[3] || uslMatch[4]);
+    if (uslVal > 0 && uslVal <= 20) result.max_usl = uslVal;
+  }
+
   // Processing fee
   const feeMatch = text.match(/(?:processing\s*fee|pf)\s*(?::)?\s*(\d+(?:\.\d+)?)\s*%/i);
   if (feeMatch) result.processing_fee_pct = parseFloat(feeMatch[1]);
@@ -1249,27 +1326,34 @@ function regexExtractPolicies(text) {
   if (/\brental\b/i.test(text)) collaterals.push('Rental');
   if (/\bvacant\b/i.test(text)) collaterals.push('Vacant');
   if (/\bplot\b|\bland\b/i.test(text)) collaterals.push('Plot/Land');
+  if (/\bwarehouse\b|\bwarehouses?\b/i.test(text)) collaterals.push('Warehouse');
+  if (/\bself\s*occupied\b/i.test(text)) collaterals.push('Self Occupied');
+  if (/\blet\s*out\b/i.test(text)) collaterals.push('Let Out');
+  if (/\blrd\b/i.test(text)) collaterals.push('LRD');
 
   // Extract specific collateral items from lists (e.g. "Municipal Open Plots", "Gramakantam", "Nursing Homes")
   // Look for collateral/property/funded section header, then capture listed items
-  const collateralSectionMatch = text.match(/(?:collateral|propert(?:y|ies)|funded|we\s*fund(?:ed)?(?:\s+\w+)?[,.]?|accept(?:ed)?(?:\s*propert(?:y|ies))?)\s*(?:[:*\-=》]|\s*\n)([\s\S]*?)(?:\n\s*\n|\n\s*(?:roi|ltv|cibil|tenure|amount|loan|note|regard|contact|program|surrogate|special|process|profile|eligib)|\*\s*(?:roi|ltv|cibil|tenure|login|regard|banker))/i);
+  // Handles "Property types", "Properties funded", "Collateral:" etc.
+  // Section ends at "Regards", "Note:", or other non-property keywords (not at blank lines between emoji bullet groups)
+  const collateralSectionMatch = text.match(/(?:collateral|propert(?:y|ies)(?:\s*types?)?|funded|we\s*fund(?:ed)?(?:\s+\w+)?[,.]?|accept(?:ed)?(?:\s*propert(?:y|ies))?)\s*(?:[:*\-=》\u{1F535}\u{1F538}\u{2611}\u{2705}\u{1F4CD}]|\s*\n)([\s\S]*?)(?:\n\s*(?:roi|ltv|cibil|tenure|amount|loan\s*amount|note\b|regard|contact|program|surrogate|special|process|profile|eligib)|\*\s*(?:roi|ltv|cibil|tenure|login|regard|banker)|$)/iu);
   if (collateralSectionMatch) {
     const sectionText = collateralSectionMatch[1];
     const items = sectionText.split(/\n/).map(line =>
-      line.replace(/^\s*(?:[*•\-\d.)👉💥]|=?》)+\s*/, '').trim()
+      line.replace(/^\s*(?:[*•\-\d.)👉💥\u{1F535}\u{1F538}\u{2611}\u{FE0F}?\u{2705}\u{1F4CD}\u{25AA}\u{25AB}\u{26AA}\u{26AB}☑️✅📍🔵🔸]|=?》)+\s*/u, '').trim()
     ).filter(item => item.length >= 3 && item.length < 120);
     for (const item of items) {
       if (/(?:roi|ltv|cibil|tenure|loan\s*amount|lakh|crore|%|\d+L|\d+Cr|regard|contact|banker|home\s*loans?\s*[\/&]|mortgage\s*loans?\b|banking\s*program|banking\s*surrogate)/i.test(item)) continue;
-      const cleaned = item.replace(/[*_~]/g, '').trim();
+      const cleaned = item.replace(/[*_~\u{1F535}\u{1F538}\u{2611}\u{FE0F}?\u{2705}\u{1F4CD}☑️✅📍🔵🔸]/gu, '').trim();
       if (cleaned && !collaterals.some(c => c.toLowerCase() === cleaned.toLowerCase())) {
         collaterals.push(cleaned);
       }
     }
   }
   // Also capture standalone specific property mentions from bullet points anywhere in text
-  const propertyItems = [...text.matchAll(/(?:^|\n)\s*(?:[*•\-]|=?》)\s*((?:no\s+)?(?:plan|permission|semi\s*pukka|gramakantam|grampanchayat|municipality|municipal|nursing\s*home|guest\s*house|hotel|hostel|pg\b|open\s*plot|unauthorized|multi\s*tenant|acc\s+propert|passage\s*road|kutcha|single\s*document|commercial\s*purchase)[^\n]{0,80})/gim)];
+  // Handles emoji bullets (🔵🔸☑️) and standard bullet chars
+  const propertyItems = [...text.matchAll(/(?:^|\n)\s*(?:[*•\-🔵🔸☑️✅📍\u{1F535}\u{1F538}\u{2611}\u{2705}\u{1F4CD}]|=?》)\s*((?:no\s+)?(?:plan|permission|semi\s*pukka|gramakantam|grampanchayat|municipality|municipal|nursing\s*home|guest\s*house|hotel|hostel|pg\b|open\s*plot|unauthorized|multi(?:ple)?\s*tenant|acc\s+propert|passage\s*road|kutcha|single\s*document|commercial\s*purchase|hospital|bar\s*(?:&|and)\s*restaurant|function\s*hall|lodge|shopping\s*mall|cinema\s*hall|self\s*occupied|let\s*out|lrd|warehouse)[^\n]{0,80})/gimu)];
   for (const m of propertyItems) {
-    const cleaned = m[1].replace(/[*_~]/g, '').trim();
+    const cleaned = m[1].replace(/[*_~🔵🔸☑️✅📍]/gu, '').trim();
     if (cleaned && !collaterals.some(c => c.toLowerCase() === cleaned.toLowerCase())) {
       collaterals.push(cleaned);
     }
@@ -1294,9 +1378,18 @@ function regexExtractPolicies(text) {
     if (ltvMinMatch) result.ltv_min_pct = parseFloat(ltvMinMatch[1]);
   }
 
-  // Geo limits extraction (km radius) - handles "within", "radius", "distance", "sourcing branch"
-  const geoMatch = text.match(/(?:within|radius|geo(?:graphic)?|city\s*limit|distance)\s*(?::)?\s*(\d+)\s*(?:km|kms|kilometer)/i);
-  if (geoMatch) result.geo_limits_km = parseInt(geoMatch[1]);
+  // Geo limits extraction (km radius) - handles "within 100km", "Geo limits 100 kms", "Municipality & HMDA limits upto 100KM", "Upto 60Kms from the branch", "Geo Limit Extended to 60 Km"
+  const geoMatch = text.match(/(?:within|radius|geo(?:graphic)?(?:\s*lim(?:it|its)?)?|city\s*limit|distance|(?:municipality|hmda|ghmc|municipal|corporation)\s*(?:&|\band\b)?\s*(?:hmda|municipality|ghmc|limits?)?(?:\s*limits?)?)\s*(?::)?\s*(?:upto|up\s*to|extended\s*to)?\s*(\d+)\s*(?:km|kms|kilometer)/i)
+    || text.match(/(?:upto|up\s*to)\s*(\d+)\s*(?:km|kms|kilometer)\s*(?:from\s+(?:the\s+)?(?:branch|city|location|office|municipal))/i);
+  if (geoMatch) {
+    result.geo_limits_km = parseInt(geoMatch[1]);
+  } else if (/operative\s*location|service\s*area|coverage\s*area/i.test(text)) {
+    // Extract max km from location listings like "HYDERABAD > Upto 100 kms"
+    const allKm = [...text.matchAll(/(?:upto|up\s*to)\s*(\d+)\s*(?:km|kms|kilometer)/gi)];
+    if (allKm.length > 0) {
+      result.geo_limits_km = Math.max(...allKm.map(m => parseInt(m[1])));
+    }
+  }
 
   // Product type mapping from loan_type
   if (result.loan_type) {
@@ -1307,35 +1400,65 @@ function regexExtractPolicies(text) {
   const programs = [];
   const programPatterns = [
     { regex: /\bNIP\b|\bNo\s*Income\s*Program\b/i, label: 'NIP (No Income Program)' },
-    { regex: /\bLIP\b|\bLife\s*Insurance\s*(?:Policy|Program)\b/i, label: 'LIP' },
-    { regex: /\bBanking\s*(?:[Ss]urrogate|[Pp]rogram)\b/i, label: 'Banking Surrogate' },
+    { regex: /\bLIP\b|\bLiquid\s*Income\s*(?:Program|Method)\b|\bLife\s*Insurance\s*(?:Policy|Program)\b/i, label: 'LIP' },
+    { regex: /\bBanking\s*(?:[Ss]urrogate|[Pp]rogram)\b|\bAverage\s*Banking\s*Program\b/i, label: 'Banking Surrogate' },
     { regex: /\bKutcha\s*bills?\b/i, label: 'Kutcha Bills (No ITR)' },
     { regex: /\bNo\s*ITRS?\s*(?:Required|needed)?\b/i, label: 'No ITR Program' },
-    { regex: /\bITR\s*Program\b|\bITR\s*based\b/i, label: 'ITR Program' },
-    { regex: /\bGST\s*(?:based|program|surrogate)\b/i, label: 'GST Program' },
-    { regex: /\bGross\s*Turnover\b/i, label: 'Gross Turnover' },
-    { regex: /\bGross\s*Receipts?\b/i, label: 'Gross Receipts' },
+    { regex: /\bITR\s*Program\b|\bITR\s*based\b|\bRegular\s*income\s*method\b|\bCPM\b/i, label: 'ITR Program' },
+    { regex: /\bGST\s*(?:based|program|surrogate)?\b(?=.*(?:program|turnover|linked|method|upto|up\s*to|cr\b))/i, label: 'GST Program' },
+    { regex: /\bTurnover\s*linked\b|\bGross\s*Turnover\b/i, label: 'Turnover Linked' },
+    { regex: /\bGross\s*(?:professional\s*)?Receipts?\b/i, label: 'Gross Receipts' },
     { regex: /\bLow\s*LTV\b/i, label: 'Low LTV' },
-    { regex: /\b(?:PD\s*)?Assessment\b/i, label: 'Assessment' },
+    { regex: /\bPD\s*Assessment\b/i, label: 'PD Assessment' },
     { regex: /\bDSCR\b|\bDebt\s*Service\b/i, label: 'DSCR' },
-    { regex: /\bABB\b|\bAverage\s*Bank\s*Balance\b/i, label: 'ABB Based' },
+    { regex: /\bABB\b|\bAverage\s*Bank(?:ing)?\s*(?:Balance|Program)\b/i, label: 'ABB Based' },
     { regex: /\bOD\s*(?:based|program|surrogate)\b|\bCC\s*(?:based|program|surrogate)\b/i, label: 'OD/CC Based' },
     { regex: /\bsingle\s*doc(?:ument)?\b/i, label: 'Single Document' },
+    { regex: /\bEBITDA\s*(?:Margin\s*)?(?:Program)?\b/i, label: 'EBITDA Margin Program' },
+    { regex: /\bPure\s*Rental\s*(?:Program)?\b/i, label: 'Pure Rental Program' },
+    { regex: /\bRepayment\s*Track\s*Record\b|\bRTR\s*(?:method|program)?\b/i, label: 'Repayment Track Record' },
+    { regex: /\bIncome\s*Multip(?:lier|ler)\s*(?:Program)?\b/i, label: 'Income Multiplier Program' },
+    { regex: /\bHybrid\s*(?:Mortgage\s*)?(?:Product|Program)?\b/i, label: 'Hybrid Mortgage' },
+    { regex: /\bSubjective\s*Cash\s*Flow\b/i, label: 'Subjective Cash Flow' },
+    { regex: /\bLRD\b/i, label: 'LRD' },
   ];
-  for (const { regex, label } of programPatterns) {
-    if (regex.test(text)) programs.push(label);
+  // Helper: extract max loan amount from a text line (e.g. "up to 25cr", "- 5cr", "upto 10L")
+  function extractLineAmount(line) {
+    const crMatch = line.match(/(?:upto|up[\s-]*to|[-–—])\s*(\d+(?:\.\d+)?)\s*(?:cr|crore|crores)\b/i)
+      || line.match(/(\d+(?:\.\d+)?)\s*(?:cr|crore|crores)\b/i);
+    if (crMatch) {
+      const val = parseFloat(crMatch[1]);
+      return val >= 1 ? `${val}Cr` : `${val}Cr`;
+    }
+    const lMatch = line.match(/(?:upto|up[\s-]*to|[-–—])\s*(\d+(?:\.\d+)?)\s*(?:l|lakh|lakhs|lacs?)\b/i)
+      || line.match(/(\d+(?:\.\d+)?)\s*(?:l|lakh|lakhs|lacs?)\b/i);
+    if (lMatch) return `${parseFloat(lMatch[1])}L`;
+    return null;
   }
-  // Also extract numbered/bulleted program lists
-  const numberedList = text.match(/(?:^|\n)\s*\d+[.)]\s*(.+)/gm);
+
+  for (const { regex, label } of programPatterns) {
+    const match = text.match(regex);
+    if (match) {
+      // Find the line containing this match to extract the amount
+      const matchIdx = text.indexOf(match[0]);
+      const lineStart = text.lastIndexOf('\n', matchIdx) + 1;
+      const lineEndIdx = text.indexOf('\n', matchIdx);
+      const line = text.substring(lineStart, lineEndIdx === -1 ? text.length : lineEndIdx);
+      const amt = extractLineAmount(line);
+      programs.push(amt ? `${label} (upto ${amt})` : label);
+    }
+  }
+  // Also extract numbered/bulleted/emoji-checkmark program lists (☑️, ✅)
+  const numberedList = text.match(/(?:^|\n)\s*(?:\d+[.)]|[☑️✅🔹🔸])\s*(.+)/gm);
   if (numberedList) {
     for (const item of numberedList) {
-      const cleaned = item.replace(/^\s*\d+[.)]\s*/, '').trim();
-      if (cleaned.length > 2 && cleaned.length < 80) {
-        if (/surrogate|program|based|nip|lip|itr|gst|turnover|ltv|dscr|abb|income/i.test(cleaned)) {
+      const cleaned = item.replace(/^\s*(?:\d+[.)]|[☑️✅🔹🔸])\s*/u, '').trim();
+      if (cleaned.length > 2 && cleaned.length < 120) {
+        if (/surrogate|program|based|nip|lip|itr|gst|turnover|ltv|dscr|abb|income|ebitda|rental|rtr|repayment|hybrid|lrd|multiplier|method|cash\s*flow|liquid/i.test(cleaned)) {
           const cleanedLower = cleaned.toLowerCase();
           const isDuplicate = programs.some(p => {
             const pLower = p.toLowerCase();
-            const keywords = ['nip', 'lip', 'banking', 'itr', 'gst', 'turnover', 'ltv', 'dscr', 'abb', 'income'];
+            const keywords = ['nip', 'lip', 'banking', 'itr', 'gst', 'turnover', 'ltv', 'dscr', 'abb', 'income', 'ebitda', 'rental', 'rtr', 'hybrid', 'lrd', 'multiplier', 'cash flow', 'liquid'];
             return keywords.some(kw => pLower.includes(kw) && cleanedLower.includes(kw));
           });
           if (!isDuplicate) programs.push(cleaned);
@@ -1411,65 +1534,129 @@ function regexExtractPolicies(text) {
   if (contactMatch) result.banker_contact = contactMatch[1].replace(/[-\s]/g, '');
 
   // Banker name extraction
-  const bankerNameMatch = text.match(/(?:banker|rm|relationship\s*manager|contact\s*person|spoc|coordinator|branch\s*manager)\s*[-:.]?\s*([A-Z][A-Za-z.]+(?:[ \t]+[A-Z][A-Za-z.]+){0,3})/im);
-  if (bankerNameMatch) {
+  // Note: [A-Z][A-Za-z.]* allows single initials like "M Sekhar", "S Kumar"
+  // Designation keywords to reject as names
+  const DESIGNATION_RE = /^(?:area\s*head|sales\s*(?:head|manager)|branch\s*(?:head|manager)|zonal\s*(?:head|manager)|regional\s*(?:head|manager)|business\s*(?:head|manager)|senior\s*manager|asst\.?\s*manager|team\s*lead|cluster\s*head|deputy\s*manager|general\s*manager|chief\s*manager|assistant\s*(?:manager|vice)|avp|vp|agm|dgm|gm|manager)$/i;
+
+  // Name pattern: allows lowercase in subsequent words (e.g. "T. Sai kumar", "Sanem.Sainath")
+  const NAME_PAT = '[A-Z][A-Za-z.]*(?:[ \\t]+[A-Za-z][A-Za-z.]+){0,3}';
+  const NAME_RE = new RegExp('^' + NAME_PAT + '$');
+
+  const bankerNameMatch = text.match(new RegExp('(?:\\bbanker\\b|\\brm\\b|\\brelationship\\s*manager\\b|\\bcontact\\s*person\\b|\\bspoc\\b|\\bcoordinator\\b|\\bbranch\\s*manager\\b)\\s*[-:.]?\\s*(' + NAME_PAT + ')', 'm'))
+    || text.match(new RegExp('(?:\\bsr\\.?\\s*)?(?:\\bsales\\s*manager\\b|\\barea\\s*manager\\b|\\brelationship\\s*officer\\b)\\s*[-:.]?\\s*\\n\\s*(' + NAME_PAT + ')', 'm'))
+    || text.match(/(?:^|\n)\s*(?:I'?\s*m|I\s+am|This\s+is|myself)\s+([A-Z][A-Za-z.]*(?:[ \t]+[A-Za-z][A-Za-z.]+){0,3})\s+(?:from|at|with)\s/m);
+  if (bankerNameMatch && !DESIGNATION_RE.test(bankerNameMatch[1].trim())) {
     result.banker_name = bankerNameMatch[1].trim();
-  } else {
-    // Fallback: "Regards\nName" or "Best Regards\nName" pattern
-    const regardsMatch = text.match(/(?:best\s*)?(?:regards|rgds|thanks|thank\s*you)\s*[\n,]\s*([A-Z][A-Za-z.]+(?:[ \t]+[A-Z][A-Za-z.]+){0,3})/im);
-    if (regardsMatch) result.banker_name = regardsMatch[1].trim();
+  }
+  if (!result.banker_name) {
+    // Fallback: "Regards\nTitle?\nName" - skip designation lines after regards
+    const regardsBlock = text.match(/(?:best\s*)?(?:regards|rgds|thanks|thank\s*you)\s*[-:.]*\s*[\r\n]+([\s\S]{0,200})/im);
+    if (regardsBlock) {
+      const lines = regardsBlock[1].split(/\r?\n/).map(l => l.trim()).filter(l => l.length >= 2);
+      for (const line of lines) {
+        if (DESIGNATION_RE.test(line)) continue;
+        if (/^\+?\d[\d\s-]{7,}$/.test(line)) continue;
+        if (result.bank_name && line.toLowerCase().includes(result.bank_name.toLowerCase().split(' ')[0])) continue;
+        if (NAME_RE.test(line) && line.length <= 40) {
+          result.banker_name = line;
+          break;
+        }
+      }
+    }
+  }
+  // Fallback: "More Details:-\nName" (must be at start of line to avoid "for more details" mid-sentence)
+  if (!result.banker_name) {
+    const moreDetailsMatch = text.match(/(?:^|\n)\s*more\s*details\s*[-:.]*\s*\n\s*([A-Z][A-Za-z.]*(?:[ \t]+[A-Z][A-Za-z.]+){1,3})/im);
+    if (moreDetailsMatch) result.banker_name = moreDetailsMatch[1].trim();
+  }
+  // Fallback: "Name Title-Manager(Bank)" on same line
+  if (!result.banker_name) {
+    const nameManagerMatch = text.match(/\n([A-Z][A-Za-z.]*(?:\s+[A-Z][A-Za-z]+){0,2})\s+(?:BL|HL|LAP|RM|Sales|Loan|Area|Zonal|Regional|Branch|Business|Senior|Asst\.?)?[-\s]*(?:Manager|Head|Executive|Officer|AVP|VP|AGM|DGM|GM)\b[^\n]*/im);
+    if (nameManagerMatch) result.banker_name = nameManagerMatch[1].trim();
+  }
+  // Fallback: Name on one line, Title on next line (e.g. "M Sekhar\nSales Manager")
+  if (!result.banker_name) {
+    const nameAboveTitleMatch = text.match(new RegExp('\\n\\s*(' + NAME_PAT + ')\\s*\\n\\s*(?:BL|HL|LAP|RM|Sales|Loan|Area|Zonal|Regional|Branch|Business|Senior|Asst\\.?)?[-\\s]*(?:Manager|Head|Executive|Officer|AVP|VP|AGM|DGM|GM)\\b', 'm'));
+    if (nameAboveTitleMatch) {
+      const candidate = nameAboveTitleMatch[1].trim();
+      if (!/^(?:docs|roi|ltv|cibil|tenure|note|nob|abb|dscr|cmr|kindly|please|property|collateral)/i.test(candidate) && candidate.length <= 40) {
+        result.banker_name = candidate;
+      }
+    }
+  }
+  // Fallback: Name on line just before phone number (allows single compound names like "Sanem.Sainath")
+  if (!result.banker_name) {
+    const nameBeforePhone = text.match(new RegExp('\\n\\s*(' + NAME_PAT + ')\\s*\\n\\s*(?:\\+?91[-\\s]?)?[6-9]\\d{4}[-\\s]?\\d{5}', 'm'));
+    if (nameBeforePhone) {
+      const candidate = nameBeforePhone[1].trim();
+      if (!DESIGNATION_RE.test(candidate) && !/^(?:docs|roi|ltv|cibil|tenure|note|nob|abb|dscr|cmr|kindly|please|property|collateral)/i.test(candidate) && candidate.length <= 40) {
+        result.banker_name = candidate;
+      }
+    }
+  }
+  // Fallback: Name 2 lines before phone (Name\nTitle\nPhone)
+  if (!result.banker_name) {
+    const nameTitlePhone = text.match(new RegExp('\\n\\s*(' + NAME_PAT + ')\\s*\\n[^\\n]{3,40}\\n\\s*(?:\\+?91[-\\s]?)?[6-9]\\d{4}[-\\s]?\\d{5}', 'm'));
+    if (nameTitlePhone) {
+      const candidate = nameTitlePhone[1].trim();
+      if (!DESIGNATION_RE.test(candidate) && !/^(?:docs|roi|ltv|cibil|tenure|note|nob|abb|dscr|cmr|kindly|please|property|collateral|more\s*detail)/i.test(candidate) && candidate.length <= 40) {
+        result.banker_name = candidate;
+      }
+    }
   }
 
-  // --- Multi-product split ---
-  // If message has HL and LAP with separate ROI/LTV, create separate policies
-  const hasHL = detectedLoanTypes.includes('Home Loan');
-  const hasLAP = detectedLoanTypes.includes('LAP');
+  // --- Multi-product merge ---
+  // If message mentions multiple products (HL, LAP, BT), merge into one consolidated policy
   const hasProductSpecificData = Object.keys(productRoiMap).length > 0 || Object.keys(productLtvMap).length > 0;
 
-  if (hasHL && hasLAP && hasProductSpecificData) {
-    const policies = [];
-    for (const loanType of ['Home Loan', 'LAP']) {
-      const p = { ...result, loan_type: loanType, product_type: mapToProductType(loanType) };
-      // Assign product-specific ROI
-      const roiKey = loanType === 'Home Loan' ? 'HL' : 'LAP';
-      const roiVals = productRoiMap[roiKey] || productRoiMap[roiKey.toUpperCase()] || productRoiMap[loanType.toUpperCase().replace(/\s+/g, '_')];
+  if (detectedLoanTypes.length > 1 && hasProductSpecificData) {
+    // Combine loan types into single label
+    result.loan_type = detectedLoanTypes.join(' + ');
+    result.product_type = detectedLoanTypes.length > 1 ? 'Other' : mapToProductType(detectedLoanTypes[0]);
+
+    // Merge all product-specific ROI values into overall min/max
+    const allRoiVals = Object.values(productRoiMap).flat().filter(v => v > 0 && v < 50);
+    if (allRoiVals.length > 0) {
+      result.roi_min_pct = Math.min(...allRoiVals);
+      result.roi_max_pct = Math.max(...allRoiVals);
+    }
+
+    // Merge all product-specific LTV values into overall min/max
+    const allLtvVals = Object.values(productLtvMap).filter(v => v > 0 && v <= 100);
+    if (allLtvVals.length > 0) {
+      result.ltv_min_pct = Math.min(...allLtvVals);
+      result.ltv_pct = Math.max(...allLtvVals);
+    }
+
+    // Build product-wise breakdown for remarks
+    const productDetails = [];
+    for (const loanType of detectedLoanTypes) {
+      const key = loanType === 'Home Loan' ? 'HL' : loanType === 'LAP' ? 'LAP' : loanType === 'Balance Transfer' ? 'BT' : loanType.replace(/\s+/g, '_').toUpperCase();
+      const parts = [];
+      const roiVals = productRoiMap[key] || productRoiMap[key + '_BT'];
       if (roiVals && roiVals.length > 0) {
-        p.roi_min_pct = Math.min(...roiVals);
-        p.roi_max_pct = Math.max(...roiVals);
+        parts.push(`ROI ${Math.min(...roiVals)}%-${Math.max(...roiVals)}%`);
       }
-      // Assign product-specific LTV
-      const ltvKey = loanType === 'Home Loan' ? 'HL' : 'LAP';
-      if (productLtvMap[ltvKey] !== undefined) {
-        p.ltv_pct = productLtvMap[ltvKey];
-        delete p.ltv_min_pct;
+      if (productLtvMap[key] !== undefined) {
+        parts.push(`LTV ${productLtvMap[key]}%`);
       }
-      policies.push(p);
+      if (parts.length > 0) productDetails.push(`${key}: ${parts.join(', ')}`);
     }
-    // Add BT+Topup as separate policies if mentioned with LTV or ROI
+    // Add BT details if present
+    const btRoiKeys = Object.keys(productRoiMap).filter(k => k.endsWith('_BT'));
+    for (const btKey of btRoiKeys) {
+      const vals = productRoiMap[btKey];
+      if (vals && vals.length > 0) {
+        productDetails.push(`${btKey}: ROI ${Math.min(...vals)}%-${Math.max(...vals)}%`);
+      }
+    }
     if (productLtvMap['BT_TOPUP'] || productLtvMap['BT']) {
-      const btPolicy = { ...result, loan_type: 'Balance Transfer', product_type: 'BT_TopUp' };
-      btPolicy.ltv_pct = productLtvMap['BT_TOPUP'] || productLtvMap['BT'];
-      delete btPolicy.ltv_min_pct;
-      policies.push(btPolicy);
+      productDetails.push(`BT LTV: ${productLtvMap['BT_TOPUP'] || productLtvMap['BT']}%`);
     }
-    // Create product-specific BT policies if BT ROI data exists
-    for (const loanType of ['Home Loan', 'LAP']) {
-      const roiKey = (loanType === 'Home Loan' ? 'HL' : 'LAP') + '_BT';
-      const btRoiVals = productRoiMap[roiKey];
-      if (btRoiVals && btRoiVals.length > 0) {
-        const btP = { ...result, loan_type: 'Balance Transfer', product_type: 'BT_TopUp' };
-        btP.roi_min_pct = Math.min(...btRoiVals);
-        btP.roi_max_pct = Math.max(...btRoiVals);
-        // Extract BT-specific processing fee
-        const btPfMatch = text.match(new RegExp(
-          (loanType === 'Home Loan' ? '(?:home\\s*loan|hl)' : 'lap') +
-          '\\s*(?:bt|balance\\s*transfer)\\s*\\+?\\s*(?:top\\s*up|topup)?[^\\n]*?(?:pf|processing\\s*fee)\\s*[-:.]?\\s*(\\d+(?:\\.\\d+)?)\\s*%', 'i'
-        ));
-        if (btPfMatch) btP.processing_fee_pct = parseFloat(btPfMatch[1]);
-        policies.push(btP);
-      }
+    if (productDetails.length > 0) {
+      const breakdown = productDetails.join('; ');
+      result.other_remarks = result.other_remarks ? result.other_remarks + '; ' + breakdown : breakdown;
     }
-    return policies;
   }
 
   return [result];
@@ -1500,14 +1687,18 @@ async function aiExtractPolicy(text) {
   "max_tenure_years": number,
   "profiles": ["Salaried", "Self-Employed", "Professional", "NRI"],
   "loan_nature": "Secured/Unsecured/Both",
+  "own_house_required": "Yes/No (for business loans - whether borrower must own a house)",
+  "max_usl": number (max number of existing unsecured loans allowed, typically 3-5 for BL),
   "processing_fee_pct": number,
-  "collateral_types": ["Residential", "Commercial", "Industrial", "Plot/Land"],
+  "collateral_types": ["Residential", "Commercial", "Industrial", "Plot/Land", "Warehouse", "Self Occupied", "Let Out", "LRD", "Open Plot", "Hospital", "Hostel/PG", "Hotel", "Lodge", "Bar/Restaurant", "Function Hall", "Shopping Mall", "Cinema Hall", "Multiple Tenant"],
   "special_conditions": "string",
   "banker_name": "string (name of the banker/relationship manager mentioned)",
   "banker_contact": "string (phone number of the banker if mentioned)",
   "has_surrogate_program": true/false,
-  "surrogate_types": ["Banking_Surrogate", "GST", "Gross_Turnover", "LIP", "Low_LTV"]
+  "surrogate_types": ["Banking_Surrogate", "GST", "Gross_Turnover", "LIP", "Low_LTV", "ITR/CPM", "EBITDA_Margin", "Pure_Rental", "RTR", "Income_Multiplier", "Hybrid_Mortgage", "Subjective_Cash_Flow", "Gross_Professional_Receipts", "LRD", "Turnover_Linked"]
 }
+
+IMPORTANT: Extract loan_min_lakhs even when shown as "Minimum - 50 Lakhs" (separate line from maximum). Capture ALL property types mentioned including specialized ones (hospital, hostel, hotel, lodge, cinema, mall, etc.).
 
 Message:
 ${text.substring(0, 2000)}`;
@@ -3572,147 +3763,109 @@ function normalizeDeedDate(dateStr) {
 }
 
 // ============================================
-// IMAGE OCR SERVICE (OpenAI Vision via OpenRouter)
+// IMAGE OCR SERVICE (Google Gemini Vision API)
 // ============================================
 
 /**
- * Extract text from images (JPG/PNG) using OpenAI Vision API via OpenRouter
+ * Call Gemini Vision API with image(s) and a prompt. Shared helper for all OCR functions.
+ */
+async function callGeminiVision(imagePartsArray, promptText, timeoutMs = 60000) {
+  const response = await axios.post(
+    `${GEMINI_API_URL}?key=${GEMINI_API_KEY}`,
+    {
+      contents: [{
+        parts: [
+          { text: promptText },
+          ...imagePartsArray
+        ]
+      }],
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: 4000
+      }
+    },
+    {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: timeoutMs
+    }
+  );
+  const text = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  return text;
+}
+
+/**
+ * Extract text from images (JPG/PNG) using Google Gemini Vision API
  * Used for banker policy documents and other image-based documents
  */
 async function extractTextFromImage(imagePath) {
   try {
     console.log('🖼️ Starting image OCR extraction:', path.basename(imagePath));
-    
-    // Read image file and convert to base64
+
     const imageBuffer = fs.readFileSync(imagePath);
     const base64Image = imageBuffer.toString('base64');
-    
-    // Determine image MIME type
+
     const ext = path.extname(imagePath).toLowerCase();
     let mimeType = 'image/jpeg';
-    if (ext === '.png') {
-      mimeType = 'image/png';
-    } else if (ext === '.jpg' || ext === '.jpeg') {
-      mimeType = 'image/jpeg';
-    }
-    
+    if (ext === '.png') mimeType = 'image/png';
+
     console.log(`Image size: ${(imageBuffer.length / 1024).toFixed(2)} KB, Type: ${mimeType}`);
-    
-    // Retry logic for rate limiting
+
     let retries = 3;
-    let delay = 10000;
-    
+    let delay = 5000;
+
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        console.log(`🤖 Vision API attempt ${attempt}/${retries}...`);
-        
-        const response = await axios.post(
-          OPENROUTER_API_URL,
-          {
-            model: 'openai/gpt-4o', // GPT-4o with vision capabilities
-            messages: [
-              {
-                role: 'user',
-                content: [
-                  {
-                    type: 'text',
-                    text: `Extract all text from this image. This is a document (possibly a banker policy, financial document, or business document). 
-                    
+        console.log(`🤖 Gemini Vision attempt ${attempt}/${retries}...`);
+
+        const extractedText = await callGeminiVision(
+          [{ inline_data: { mime_type: mimeType, data: base64Image } }],
+          `Extract all text from this image. This is a document (possibly a banker policy, financial document, or business document).
 Please:
 1. Extract ALL text visible in the image
 2. Maintain the document structure and formatting as much as possible
 3. Preserve tables, lists, and hierarchical information
 4. Include headers, footers, and any metadata
 5. If this is a banker policy or financial document, pay special attention to:
-   - Policy details
-   - Names and addresses
-   - Account numbers
-   - Dates
-   - Amounts and percentages
-   - Terms and conditions
-
-Return the extracted text in a clear, structured format.`
-                  },
-                  {
-                    type: 'image_url',
-                    image_url: {
-                      url: `data:${mimeType};base64,${base64Image}`
-                    }
-                  }
-                ]
-              }
-            ],
-            temperature: 0.1,
-            max_tokens: 4000
-          },
-          {
-            headers: {
-              'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-              'Content-Type': 'application/json',
-              'HTTP-Referer': 'http://localhost:3000',
-              'X-Title': 'Customer Profiling App'
-            },
-            timeout: 60000 // 60 second timeout for vision processing
-          }
+   - Policy details, Names and addresses, Account numbers
+   - Dates, Amounts and percentages, Terms and conditions
+Return the extracted text in a clear, structured format.`,
+          60000
         );
-        
-        const extractedText = response.data.choices[0].message.content;
+
         console.log(`✓ Vision OCR successful: ${extractedText.length} characters extracted`);
-        
-        return {
-          success: true,
-          text: extractedText,
-          method: 'openai-vision-ocr',
-          charCount: extractedText.length
-        };
-        
+        return { success: true, text: extractedText, method: 'gemini-vision-ocr', charCount: extractedText.length };
+
       } catch (error) {
-        if (error.response && error.response.status === 429 && attempt < retries) {
-          console.log(`⚠️ Rate limit hit (429), waiting ${delay}ms before retry ${attempt + 1}/${retries}...`);
+        const status = error.response?.status;
+        const errDetail = error.response?.data?.error?.message || error.message;
+        console.error(`✗ Vision OCR error (attempt ${attempt}):`, status, errDetail);
+
+        if ((status === 429 || status === 503) && attempt < retries) {
+          console.log(`⚠️ Rate limit/overload (${status}), waiting ${delay}ms before retry...`);
           await new Promise(resolve => setTimeout(resolve, delay));
           delay *= 2;
           continue;
         }
-        
-        console.error(`✗ Vision OCR error (attempt ${attempt}):`, error.message);
-        
+
         if (attempt === retries) {
-          return {
-            success: false,
-            text: '',
-            method: 'openai-vision-ocr',
-            error: error.response?.status === 429 
-              ? 'API rate limit reached. Please wait and try again.' 
-              : error.message
-          };
+          return { success: false, text: '', method: 'gemini-vision-ocr', error: error.message };
         }
       }
     }
-    
-    return {
-      success: false,
-      text: '',
-      method: 'openai-vision-ocr',
-      error: 'Max retries reached'
-    };
-    
+
+    return { success: false, text: '', method: 'gemini-vision-ocr', error: 'Max retries reached' };
+
   } catch (error) {
     console.error('✗ Image OCR extraction failed:', error.message);
-    return {
-      success: false,
-      text: '',
-      method: 'openai-vision-ocr',
-      error: error.message
-    };
+    return { success: false, text: '', method: 'gemini-vision-ocr', error: error.message };
   }
 }
 
-// Extract text from scanned PDF using Vision OCR (renders first page to image)
+// Extract text from scanned PDF using Gemini Vision OCR (renders first page to image)
 async function extractTextFromScannedPDF(pdfPath) {
   try {
     console.log('🔍 Attempting Vision OCR for scanned PDF:', path.basename(pdfPath));
 
-    // Load PDF using pdfjs-dist
     const dataBuffer = fs.readFileSync(pdfPath);
     const uint8Array = new Uint8Array(dataBuffer);
     const pdfDoc = await pdfjsLib.getDocument({ data: uint8Array }).promise;
@@ -3720,86 +3873,43 @@ async function extractTextFromScannedPDF(pdfPath) {
     const numPages = pdfDoc.numPages;
     console.log(`PDF has ${numPages} pages, rendering first page for OCR...`);
 
-    // Render first page to canvas
     const page = await pdfDoc.getPage(1);
-    const viewport = page.getViewport({ scale: 2.0 }); // Higher scale for better OCR
+    const viewport = page.getViewport({ scale: 2.0 });
     const canvas = createCanvas(viewport.width, viewport.height);
     const context = canvas.getContext('2d');
 
-    await page.render({
-      canvasContext: context,
-      viewport: viewport
-    }).promise;
+    await page.render({ canvasContext: context, viewport }).promise;
 
-    // Convert canvas to PNG buffer
     const imageBuffer = canvas.toBuffer('image/png');
     const base64Image = imageBuffer.toString('base64');
 
     console.log(`Rendered page to image: ${(imageBuffer.length / 1024).toFixed(2)} KB`);
 
-    // Send to Vision API for OCR
     let retries = 2;
-    let delay = 10000;
+    let delay = 5000;
 
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        console.log(`🤖 Vision OCR attempt ${attempt}/${retries} for scanned PDF...`);
+        console.log(`🤖 Gemini Vision OCR attempt ${attempt}/${retries} for scanned PDF...`);
 
-        const response = await axios.post(
-          OPENROUTER_API_URL,
-          {
-            model: 'openai/gpt-4o',
-            messages: [
-              {
-                role: 'user',
-                content: [
-                  {
-                    type: 'text',
-                    text: `Extract ALL text from this document image. Pay special attention to:
+        const extractedText = await callGeminiVision(
+          [{ inline_data: { mime_type: 'image/png', data: base64Image } }],
+          `Extract ALL text from this document image. Pay special attention to:
 - Names, dates of birth, PAN numbers, Aadhaar numbers
 - Credit/CIBIL scores and bureau names
 - Any personal identification details
 - All numbers, dates, and reference numbers
-
-Return the extracted text exactly as it appears in the document.`
-                  },
-                  {
-                    type: 'image_url',
-                    image_url: {
-                      url: `data:image/png;base64,${base64Image}`
-                    }
-                  }
-                ]
-              }
-            ],
-            temperature: 0.1,
-            max_tokens: 4000
-          },
-          {
-            headers: {
-              'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-              'Content-Type': 'application/json',
-              'HTTP-Referer': 'http://localhost:3000',
-              'X-Title': 'Customer Profiling App'
-            },
-            timeout: 60000
-          }
+Return the extracted text exactly as it appears in the document.`,
+          60000
         );
 
-        const extractedText = response.data.choices[0].message.content;
         console.log(`✓ Scanned PDF OCR successful: ${extractedText.length} characters extracted`);
-
-        return {
-          success: true,
-          text: extractedText,
-          numPages: numPages,
-          method: 'vision-ocr-pdf',
-          charCount: extractedText.length
-        };
+        return { success: true, text: extractedText, numPages, method: 'gemini-vision-ocr-pdf', charCount: extractedText.length };
 
       } catch (error) {
-        if (error.response && error.response.status === 429 && attempt < retries) {
-          console.log(`⚠️ Rate limit hit, waiting ${delay}ms before retry...`);
+        const status = error.response?.status;
+        if ((status === 429 || status === 503) && attempt < retries) {
+          console.log(`⚠️ Rate limit/overload, waiting ${delay}ms before retry...`);
           await new Promise(resolve => setTimeout(resolve, delay));
           delay *= 2;
         } else if (attempt === retries) {
@@ -3808,15 +3918,15 @@ Return the extracted text exactly as it appears in the document.`
       }
     }
 
-    return { success: false, text: '', method: 'vision-ocr-pdf', error: 'Max retries reached' };
+    return { success: false, text: '', method: 'gemini-vision-ocr-pdf', error: 'Max retries reached' };
 
   } catch (error) {
     console.error('✗ Scanned PDF OCR failed:', error.message);
-    return { success: false, text: '', method: 'vision-ocr-pdf', error: error.message };
+    return { success: false, text: '', method: 'gemini-vision-ocr-pdf', error: error.message };
   }
 }
 
-// Extract text from ALL pages of a scanned PDF using Vision OCR (batches pages for efficiency)
+// Extract text from ALL pages of a scanned PDF using Gemini Vision OCR (batches pages for efficiency)
 async function extractAllPagesWithVisionOCR(pdfPath) {
   try {
     console.log('🔍 Starting multi-page Vision OCR:', path.basename(pdfPath));
@@ -3835,7 +3945,7 @@ async function extractAllPagesWithVisionOCR(pdfPath) {
 
     for (let startPage = 1; startPage <= pagesToProcess; startPage += BATCH_SIZE) {
       const endPage = Math.min(startPage + BATCH_SIZE - 1, pagesToProcess);
-      const imageContents = [];
+      const imageParts = [];
 
       for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
         const page = await pdfDoc.getPage(pageNum);
@@ -3848,54 +3958,29 @@ async function extractAllPagesWithVisionOCR(pdfPath) {
         const imageBuffer = canvas.toBuffer('image/png');
         const base64Image = imageBuffer.toString('base64');
 
-        imageContents.push({
-          type: 'image_url',
-          image_url: { url: `data:image/png;base64,${base64Image}` }
-        });
+        imageParts.push({ inline_data: { mime_type: 'image/png', data: base64Image } });
       }
 
       let retries = 2;
-      let delay = 10000;
+      let delay = 5000;
       for (let attempt = 1; attempt <= retries; attempt++) {
         try {
           console.log(`🤖 OCR pages ${startPage}-${endPage} (attempt ${attempt})...`);
 
-          const response = await axios.post(
-            OPENROUTER_API_URL,
-            {
-              model: 'openai/gpt-4o',
-              messages: [{
-                role: 'user',
-                content: [
-                  {
-                    type: 'text',
-                    text: `Extract ALL text from these ${endPage - startPage + 1} document page(s). These are financial/ITR documents. Preserve all text including headings like "Computation of Total Income", "Balance Sheet", "Profit and Loss Account", "Indian Income Tax Return Acknowledgement", assessment year, financial year, etc. Extract all numbers, dates, and financial data. Return the text exactly as it appears.`
-                  },
-                  ...imageContents
-                ]
-              }],
-              temperature: 0.1,
-              max_tokens: 4000
-            },
-            {
-              headers: {
-                'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-                'Content-Type': 'application/json',
-                'HTTP-Referer': 'http://localhost:3000',
-                'X-Title': 'Customer Profiling App'
-              },
-              timeout: 90000
-            }
+          const batchText = await callGeminiVision(
+            imageParts,
+            `Extract ALL text from these ${endPage - startPage + 1} document page(s). These are financial/ITR documents. Preserve all text including headings like "Computation of Total Income", "Balance Sheet", "Profit and Loss Account", "Indian Income Tax Return Acknowledgement", assessment year, financial year, etc. Extract all numbers, dates, and financial data. Return the text exactly as it appears.`,
+            90000
           );
 
-          const batchText = response.data.choices[0].message.content;
           allText += '\n' + batchText;
           console.log(`✓ Pages ${startPage}-${endPage}: ${batchText.length} chars extracted`);
-          break; // Success, move to next batch
+          break;
 
         } catch (error) {
-          if (error.response && error.response.status === 429 && attempt < retries) {
-            console.log(`⚠️ Rate limit hit, waiting ${delay}ms before retry...`);
+          const status = error.response?.status;
+          if ((status === 429 || status === 503) && attempt < retries) {
+            console.log(`⚠️ Rate limit/overload, waiting ${delay}ms before retry...`);
             await new Promise(resolve => setTimeout(resolve, delay));
             delay *= 2;
           } else if (attempt === retries) {
@@ -3911,13 +3996,13 @@ async function extractAllPagesWithVisionOCR(pdfPath) {
       success: allText.length > 0,
       text: allText,
       numPages: numPages,
-      method: 'vision-ocr-multipage',
+      method: 'gemini-vision-ocr-multipage',
       charCount: allText.length
     };
 
   } catch (error) {
     console.error('✗ Multi-page Vision OCR failed:', error.message);
-    return { success: false, text: '', method: 'vision-ocr-multipage', error: error.message };
+    return { success: false, text: '', method: 'gemini-vision-ocr-multipage', error: error.message };
   }
 }
 
@@ -7166,7 +7251,8 @@ app.get('/admin/policies', async (req, res) => {
       bank: req.query.bank || '',
       department: req.query.department || '',
       loanType: req.query.loanType || '',
-      productType: req.query.productType || ''
+      productType: req.query.productType || '',
+      search: req.query.search || ''
     };
 
     const query = { is_deleted: false };
@@ -7174,6 +7260,22 @@ app.get('/admin/policies', async (req, res) => {
     if (filters.department) query.department = filters.department;
     if (filters.loanType) query.loan_type = filters.loanType;
     if (filters.productType) query.product_type = filters.productType;
+    if (filters.search) {
+      const searchRegex = new RegExp(filters.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      query.$or = [
+        { bank_name: searchRegex },
+        { other_remarks: searchRegex },
+        { profiles: searchRegex },
+        { programs: searchRegex },
+        { collateral_types: searchRegex },
+        { loan_type: searchRegex },
+        { department: searchRegex },
+        { product_type: searchRegex },
+        { banker_name: searchRegex },
+        { special_conditions: searchRegex },
+        { raw_message_text: searchRegex }
+      ];
+    }
 
     const totalCount = await BankPolicy.countDocuments(query);
     const totalPages = Math.ceil(totalCount / perPage);
@@ -7216,6 +7318,100 @@ app.post('/admin/policies/bulk-delete', async (req, res) => {
   }
 });
 
+// Admin: Re-extract fields from raw_message_text for all policies
+app.post('/admin/policies/reextract', async (req, res) => {
+  try {
+    const policies = await BankPolicy.find({ is_deleted: false, raw_message_text: { $exists: true, $ne: '' } });
+    let updated = 0;
+    for (const p of policies) {
+      const text = p.raw_message_text;
+
+      // Full regex re-extraction with updated patterns
+      const regexResults = regexExtractPolicies(text);
+      const regexPolicy = Array.isArray(regexResults) ? regexResults[0] || {} : regexResults;
+
+      // Overwrite all extracted fields
+      const changes = {};
+      const fillable = [
+        'loan_min_lakhs', 'loan_max_lakhs', 'roi_min_pct', 'roi_max_pct',
+        'ltv_pct', 'ltv_min_pct', 'geo_limits_km', 'min_cibil',
+        'max_tenure_years', 'processing_fee_pct', 'loan_nature',
+        'own_house_required', 'max_usl', 'special_conditions', 'other_remarks',
+        'banker_name', 'banker_contact', 'profiles', 'programs', 'collateral_types'
+      ];
+
+      for (const field of fillable) {
+        const val = regexPolicy[field];
+        if (val !== null && val !== undefined && val !== '' && !(Array.isArray(val) && val.length === 0)) {
+          changes[field] = val;
+        }
+      }
+
+      if (Object.keys(changes).length > 0) {
+        await BankPolicy.findByIdAndUpdate(p._id, { $set: changes });
+        updated++;
+      }
+    }
+    res.json({ success: true, total: policies.length, updated });
+  } catch (err) {
+    console.error('Re-extract error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Admin: Re-extract single policy via AI
+app.post('/admin/policies/:id/reextract', async (req, res) => {
+  try {
+    const policy = await BankPolicy.findById(req.params.id);
+    if (!policy) return res.status(404).json({ success: false, error: 'Policy not found' });
+    if (!policy.raw_message_text) return res.status(400).json({ success: false, error: 'No raw text available' });
+
+    const text = policy.raw_message_text;
+
+    // Phase 1: Full regex extraction (fast, uses all updated patterns)
+    const regexResults = regexExtractPolicies(text);
+    const regexPolicy = Array.isArray(regexResults) ? regexResults[0] || {} : regexResults;
+
+    // Phase 2: AI extraction for fields regex missed
+    let aiResult = {};
+    try {
+      aiResult = await aiExtractPolicy(text);
+    } catch (aiErr) {
+      console.error('AI re-extract fallback error:', aiErr.message);
+    }
+
+    // Merge: regex takes priority, AI fills gaps
+    const merged = { ...aiResult, ...regexPolicy };
+
+    // Apply all extracted fields (overwrite with fresh extraction)
+    const changes = {};
+    const fillable = [
+      'bank_name', 'department', 'loan_type', 'product_type',
+      'loan_min_lakhs', 'loan_max_lakhs', 'roi_min_pct', 'roi_max_pct',
+      'ltv_pct', 'ltv_min_pct', 'geo_limits_km', 'min_cibil',
+      'max_tenure_years', 'processing_fee_pct', 'loan_nature',
+      'own_house_required', 'max_usl', 'special_conditions', 'other_remarks',
+      'banker_name', 'banker_contact', 'profiles', 'programs', 'collateral_types'
+    ];
+
+    for (const field of fillable) {
+      const val = merged[field];
+      if (val !== null && val !== undefined && val !== '' && !(Array.isArray(val) && val.length === 0)) {
+        changes[field] = val;
+      }
+    }
+
+    if (Object.keys(changes).length > 0) {
+      await BankPolicy.findByIdAndUpdate(policy._id, { $set: changes });
+    }
+
+    res.json({ success: true, updated: Object.keys(changes).length, fields: Object.keys(changes) });
+  } catch (err) {
+    console.error('Re-extract single policy error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Admin: Soft-delete policy
 app.post('/admin/policies/:id/delete', async (req, res) => {
   try {
@@ -7234,13 +7430,14 @@ app.post('/admin/policies/:id/update', async (req, res) => {
       'loan_min_lakhs', 'loan_max_lakhs', 'roi_min_pct', 'roi_max_pct',
       'ltv_pct', 'ltv_min_pct', 'geo_limits_km', 'min_cibil',
       'max_tenure_years', 'processing_fee_pct', 'loan_nature',
+      'own_house_required', 'max_usl',
       'special_conditions', 'other_remarks', 'banker_name', 'banker_contact'
     ];
     const arrayFields = ['profiles', 'programs', 'collateral_types'];
     const numberFields = [
       'loan_min_lakhs', 'loan_max_lakhs', 'roi_min_pct', 'roi_max_pct',
       'ltv_pct', 'ltv_min_pct', 'geo_limits_km', 'min_cibil',
-      'max_tenure_years', 'processing_fee_pct'
+      'max_tenure_years', 'processing_fee_pct', 'max_usl'
     ];
 
     const update = {};

@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="/css/proposal.css">
     <style>
         body { background: #f0f0f0 !important; }
+        .container { max-width: 100%; padding: 6px 10px; }
         .filters-bar {
             display: flex;
             gap: 12px;
@@ -25,8 +26,8 @@
         }
         .filters-bar select { min-width: 160px; }
 
-        .policies-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-        .policies-table th, .policies-table td { padding: 10px 8px; text-align: left; border-bottom: 1px solid #eee; }
+        .policies-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .policies-table th, .policies-table td { padding: 6px 5px; text-align: left; border-bottom: 1px solid #eee; }
         .policies-table th { background: #f8f9fa; font-weight: 600; color: #2c3e50; position: sticky; top: 0; z-index: 2; }
         .policies-table tr:hover { background: #fafafa; }
         .policies-table .amount { white-space: nowrap; }
@@ -82,6 +83,21 @@
             margin-right: 4px;
         }
         .btn-edit-sm:hover { background: #27ae60; color: white; }
+        .btn-reextract-sm {
+            padding: 4px 8px;
+            background: #fef9e7;
+            color: #d35400;
+            border: 1px solid #f0c27a;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            margin-right: 4px;
+            line-height: 1;
+        }
+        .btn-reextract-sm:hover { background: #f39c12; color: white; border-color: #f39c12; }
+        .btn-reextract-sm:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-reextract-sm .spin { display: inline-block; animation: spin 1s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
         /* Edit Modal */
         .modal-overlay {
@@ -151,7 +167,39 @@
 
         .table-scroll { overflow: auto; max-height: calc(100vh - 220px); }
         .profile-tags { display: flex; gap: 4px; flex-wrap: wrap; }
-        .profile-tag { background: #eee; padding: 1px 6px; border-radius: 8px; font-size: 0.8em; }
+        .profile-tag { background: #eee; padding: 1px 6px; border-radius: 8px; font-size: 0.8em; white-space: nowrap; }
+        .col-profiles { min-width: 180px; }
+        .col-programs { min-width: 200px; }
+        .col-collateral { min-width: 200px; }
+
+        .raw-text-cell { position: relative; text-align: center; }
+        .raw-text-icon {
+            cursor: pointer;
+            font-size: 15px;
+            opacity: 0.5;
+            transition: opacity 0.15s;
+        }
+        .raw-text-icon:hover { opacity: 1; }
+        .raw-text-popup {
+            display: none;
+            position: fixed;
+            z-index: 999;
+            background: #1e1e1e;
+            color: #e0e0e0;
+            padding: 12px 14px;
+            border-radius: 8px;
+            font-size: 12px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+            width: 450px;
+            max-height: 350px;
+            overflow-y: auto;
+            box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+            pointer-events: none;
+        }
+        .raw-text-icon:hover + .raw-text-popup,
+        .raw-text-popup:hover { display: block; pointer-events: auto; }
 
         .bulk-bar {
             display: none;
@@ -202,10 +250,13 @@
             <a href="/admin/import-chat" class="btn btn-primary">+ Import Chat</a>
             <a href="/admin/banks" class="btn btn-secondary">Banks</a>
             <a href="/admin/surrogates" class="btn btn-secondary">Surrogates</a>
+            <button class="btn btn-secondary" onclick="reextractAll()" id="btnReextract" style="background:#fef9e7; color:#d35400; border:1px solid #f0c27a;">Re-extract Fields</button>
         </div>
 
         <!-- Filters -->
         <div class="filters-bar">
+            <input type="text" id="filterSearch" placeholder="Search policies..." value="<%= filters.search || '' %>" onkeydown="if(event.key==='Enter') applyFilters()" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; min-width: 200px;">
+            <button onclick="applyFilters()" style="padding: 8px 14px; background: #3498db; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px;">Search</button>
             <select id="filterBank" onchange="applyFilters()">
                 <option value="">All Banks</option>
                 <% bankNames.forEach(b => { %>
@@ -245,6 +296,7 @@
                 <thead>
                     <tr>
                         <th><input type="checkbox" id="selectAll" onchange="toggleSelectAll(this)"></th>
+                        <th style="width:28px;"></th>
                         <th>Bank</th>
                         <th>Type</th>
                         <th>Dept</th>
@@ -256,9 +308,11 @@
                         <th>Geo</th>
                         <th>CIBIL</th>
                         <th>Tenure</th>
-                        <th>Profiles</th>
-                        <th>Programs</th>
-                        <th>Collateral</th>
+                        <th>Own House</th>
+                        <th>Max USL</th>
+                        <th class="col-profiles">Profiles</th>
+                        <th class="col-programs">Programs</th>
+                        <th class="col-collateral">Collateral</th>
                         <th>Remarks</th>
                         <th>Banker</th>
                         <th>Contact</th>
@@ -267,7 +321,7 @@
                 </thead>
                 <tbody>
                     <% if (policies.length === 0) { %>
-                        <tr><td colspan="19" style="text-align:center; color:#999; padding:30px;">No policies found. <a href="/admin/import-chat">Import a chat</a> to get started.</td></tr>
+                        <tr><td colspan="22" style="text-align:center; color:#999; padding:30px;">No policies found. <a href="/admin/import-chat">Import a chat</a> to get started.</td></tr>
                     <% } %>
                     <% policies.forEach(p => { %>
                         <tr id="row-<%= p._id %>" data-policy='<%- JSON.stringify({
@@ -285,6 +339,8 @@
                             geo_limits_km: p.geo_limits_km != null ? p.geo_limits_km : "",
                             min_cibil: p.min_cibil != null ? p.min_cibil : "",
                             max_tenure_years: p.max_tenure_years != null ? p.max_tenure_years : "",
+                            own_house_required: p.own_house_required || "",
+                            max_usl: p.max_usl != null ? p.max_usl : "",
                             processing_fee_pct: p.processing_fee_pct != null ? p.processing_fee_pct : "",
                             profiles: (p.profiles || []).join(", "),
                             programs: (p.programs || []).join(", "),
@@ -296,6 +352,12 @@
                             banker_contact: p.banker_contact || ""
                         }).replace(/'/g, "&#39;") %>'>
                             <td><input type="checkbox" class="policy-cb" value="<%= p._id %>" onchange="updateSelection()"></td>
+                            <td class="raw-text-cell">
+                                <% if (p.raw_message_text) { %>
+                                    <span class="raw-text-icon" onmouseenter="positionPopup(event, this)">&#128203;</span>
+                                    <div class="raw-text-popup"><%- (p.raw_message_text || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') %></div>
+                                <% } %>
+                            </td>
                             <td><strong><%= p.bank_name %></strong></td>
                             <td>
                                 <% if (p.bank_id && p.bank_id.bank_type) { %>
@@ -325,21 +387,23 @@
                             <td><%= p.geo_limits_km ? p.geo_limits_km + 'km' : '-' %></td>
                             <td><%= p.min_cibil || '-' %></td>
                             <td><%= p.max_tenure_years ? p.max_tenure_years + 'y' : '-' %></td>
-                            <td>
+                            <td><%= p.own_house_required || '-' %></td>
+                            <td><%= p.max_usl != null && p.max_usl !== '' ? p.max_usl : '-' %></td>
+                            <td class="col-profiles">
                                 <div class="profile-tags">
                                     <% (p.profiles || []).forEach(pr => { %>
                                         <span class="profile-tag"><%= pr %></span>
                                     <% }); %>
                                 </div>
                             </td>
-                            <td>
+                            <td class="col-programs">
                                 <div class="profile-tags">
                                     <% (p.programs || []).forEach(pg => { %>
                                         <span class="profile-tag" style="background:#e8daef; color:#8e44ad;"><%= pg %></span>
                                     <% }); %>
                                 </div>
                             </td>
-                            <td>
+                            <td class="col-collateral">
                                 <div class="profile-tags">
                                     <% (p.collateral_types || []).forEach(ct => { %>
                                         <span class="profile-tag" style="background:#d5f5e3; color:#1e8449;"><%= ct %></span>
@@ -352,7 +416,8 @@
                             <td style="font-size:13px; white-space:nowrap;"><% if (p.banker_contact) { %><a href="tel:<%= p.banker_contact %>" style="color:#2980b9;"><%= p.banker_contact %></a><% } else { %>-<% } %></td>
                             <td style="white-space:nowrap;">
                                 <button class="btn-edit-sm" onclick="editPolicy('<%= p._id %>')">Edit</button>
-                                <button class="btn-delete-sm" onclick="deletePolicy('<%= p._id %>')">Delete</button>
+                                <button class="btn-delete-sm" onclick="deletePolicy('<%= p._id %>')">Del</button>
+                                <button class="btn-reextract-sm" id="reex-<%= p._id %>" onclick="reextractOne('<%= p._id %>')" title="Re-extract missing fields via AI"><% if (p.raw_message_text) { %>&#x21bb;<% } else { %>&#x21bb;<% } %></button>
                             </td>
                         </tr>
                     <% }); %>
@@ -462,6 +527,19 @@
                     </select>
                 </div>
                 <div>
+                    <label>Own House Required</label>
+                    <select id="edit_own_house_required">
+                        <option value="">-</option>
+                        <option value="Yes">Yes</option>
+                        <option value="No">No</option>
+                        <option value="Not specified">Not specified</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Max USL</label>
+                    <input type="number" id="edit_max_usl" step="1" min="0" max="20">
+                </div>
+                <div>
                     <label>Banker Name</label>
                     <input type="text" id="edit_banker_name">
                 </div>
@@ -498,12 +576,48 @@
     </div>
 
     <script>
+        function positionPopup(e, icon) {
+            const popup = icon.nextElementSibling;
+            if (!popup) return;
+            const rect = icon.getBoundingClientRect();
+            let top = rect.bottom + 4;
+            let left = rect.left + 10;
+            if (left + 460 > window.innerWidth) left = window.innerWidth - 470;
+            if (left < 5) left = 5;
+            if (top + 360 > window.innerHeight) top = rect.top - 360;
+            popup.style.top = top + 'px';
+            popup.style.left = left + 'px';
+        }
+
+        async function reextractAll() {
+            if (!confirm('Re-extract ROI, Own House, Max USL, and Banker Name from raw text for all policies?')) return;
+            const btn = document.getElementById('btnReextract');
+            btn.textContent = 'Extracting...';
+            btn.disabled = true;
+            try {
+                const resp = await fetch('/admin/policies/reextract', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+                const data = await resp.json();
+                if (data.success) {
+                    alert('Done! ' + data.updated + ' of ' + data.total + ' policies updated.');
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+            btn.textContent = 'Re-extract Fields';
+            btn.disabled = false;
+        }
+
         function applyFilters() {
             const bank = document.getElementById('filterBank').value;
             const dept = document.getElementById('filterDept').value;
             const loanType = document.getElementById('filterLoanType').value;
             const productType = document.getElementById('filterProductType').value;
+            const search = document.getElementById('filterSearch').value.trim();
             const params = new URLSearchParams();
+            if (search) params.set('search', search);
             if (bank) params.set('bank', bank);
             if (dept) params.set('department', dept);
             if (loanType) params.set('loanType', loanType);
@@ -586,7 +700,7 @@
             'bank_name', 'department', 'loan_type', 'product_type',
             'loan_min_lakhs', 'loan_max_lakhs', 'roi_min_pct', 'roi_max_pct',
             'ltv_pct', 'ltv_min_pct', 'geo_limits_km', 'min_cibil',
-            'max_tenure_years', 'processing_fee_pct', 'loan_nature',
+            'max_tenure_years', 'processing_fee_pct', 'loan_nature', 'own_house_required', 'max_usl',
             'special_conditions', 'other_remarks', 'banker_name', 'banker_contact',
             'profiles', 'programs', 'collateral_types'
         ];
@@ -610,6 +724,36 @@
         document.getElementById('editModal').addEventListener('click', function(e) {
             if (e.target === this) closeEditModal();
         });
+
+        async function reextractOne(id) {
+            const btn = document.getElementById('reex-' + id);
+            btn.innerHTML = '<span class="spin">&#x21bb;</span>';
+            btn.disabled = true;
+            try {
+                const resp = await fetch('/admin/policies/' + id + '/reextract', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+                const data = await resp.json();
+                if (data.success) {
+                    if (data.updated > 0) {
+                        btn.innerHTML = '&#x2713;';
+                        btn.style.color = '#27ae60';
+                        btn.style.borderColor = '#27ae60';
+                        setTimeout(() => window.location.reload(), 800);
+                    } else {
+                        btn.innerHTML = '&#x21bb;';
+                        btn.disabled = false;
+                        alert('No missing fields to fill. ' + (data.message || ''));
+                    }
+                } else {
+                    alert('Error: ' + data.error);
+                    btn.innerHTML = '&#x21bb;';
+                    btn.disabled = false;
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+                btn.innerHTML = '&#x21bb;';
+                btn.disabled = false;
+            }
+        }
 
         async function savePolicy() {
             const id = document.getElementById('editPolicyId').value;

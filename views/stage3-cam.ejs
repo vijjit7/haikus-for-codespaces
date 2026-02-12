@@ -156,6 +156,11 @@
             box-shadow: 0 2px 5px rgba(0,0,0,0.2);
         }
 
+        .container {
+            max-width: 98%;
+            padding: 10px 15px;
+        }
+
         .cam-memo {
             min-height: 40px;
             vertical-align: top;
@@ -173,27 +178,27 @@
     <div class="container">
         <header>
             <h1>Stage 3: Credit Appraisal Memo</h1>
-            <p class="subtitle">Proposal ID: #<%= proposal.id %> | Applicant: <%= proposal.applicantName || proposal.customerName %></p>
+            <p class="subtitle">Applicant: <%= proposal.applicantName || proposal.customerName %></p>
         </header>
 
         <!-- Progress Tracker -->
         <div class="progress-tracker">
-            <div class="progress-step completed">
+            <a href="/proposals/<%= proposal.id %>/edit" class="progress-step completed" style="text-decoration:none;">
                 <div class="step-number">1</div>
                 <div class="step-label">Proposal</div>
-            </div>
-            <div class="progress-step completed">
+            </a>
+            <a href="/stage2/<%= proposal.id %>" class="progress-step completed" style="text-decoration:none;">
                 <div class="step-number">2</div>
                 <div class="step-label">Documents</div>
-            </div>
-            <div class="progress-step active">
+            </a>
+            <a href="/stage3/<%= proposal.id %>" class="progress-step active" style="text-decoration:none;">
                 <div class="step-number">3</div>
                 <div class="step-label">CAM</div>
-            </div>
-            <div class="progress-step">
+            </a>
+            <a href="/stage4/<%= proposal.id %>" class="progress-step completed" style="text-decoration:none;">
                 <div class="step-number">4</div>
                 <div class="step-label">Banker Match</div>
-            </div>
+            </a>
         </div>
 
         <div class="stage3-container">
@@ -1524,6 +1529,7 @@
                                         <button class="head-link" onclick="goToAnalysis('banking')">Banking</button>
                                     </td>
                                     <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="bankingDetails">
+                                        <div id="bankingDetailsMemo"></div>
                                         <div class="memo-content"><%= proposal.camMemo?.bankingDetails || '' %></div>
                                     </td>
                                 </tr>
@@ -4793,6 +4799,154 @@
                 btn.textContent = 'Save P&L Sales Data';
             }
         }
+
+        // Auto-populate Banking Details in CAM from Banking Analysis panel
+        document.addEventListener('DOMContentLoaded', function() {
+            const bankingMemoDiv = document.getElementById('bankingDetailsMemo');
+            if (!bankingMemoDiv) return;
+
+            const bankingPanel = document.getElementById('bankingPanel');
+            if (!bankingPanel) return;
+
+            const accountBlocks = bankingPanel.querySelectorAll('div[style*="border-left: 4px solid #3498db"]');
+            if (accountBlocks.length === 0) return;
+
+            const thStyle = 'padding: 5px 8px; border: 1px solid #bbdefb; text-align: left; font-size: 0.85em;';
+            const thRightStyle = 'padding: 5px 8px; border: 1px solid #bbdefb; text-align: right; font-size: 0.85em;';
+            const tdStyle = 'padding: 4px 8px; border: 1px solid #e0e0e0; font-size: 0.85em;';
+            const tdRightStyle = 'padding: 4px 8px; border: 1px solid #e0e0e0; text-align: right; font-size: 0.85em;';
+            const totalTdStyle = 'padding: 4px 8px; border: 1px solid #e0e0e0; font-size: 0.85em; font-weight: 700; background: #e8f5e9;';
+            const totalTdRightStyle = 'padding: 4px 8px; border: 1px solid #e0e0e0; text-align: right; font-size: 0.85em; font-weight: 700; background: #e8f5e9;';
+            const sectionHead = (text) => `<strong style="color: #1565c0; font-size: 0.9em;">${text}</strong>`;
+
+            let html = '';
+
+            accountBlocks.forEach((block, idx) => {
+                const h4 = block.querySelector('h4');
+                const acNo = h4 ? (h4.querySelector('span') || {}).textContent || '' : '';
+                const namePara = block.querySelector('p[style*="color: #666"]');
+                const acName = namePara ? namePara.textContent.replace('Account Name:', '').trim() : '';
+
+                if (idx > 0) html += '<hr style="border: none; border-top: 1px solid #ccc; margin: 12px 0;">';
+
+                html += `<div style="margin-bottom: 12px; padding: 8px; background: #f0f7ff; border-radius: 6px; border-left: 3px solid #3498db;">`;
+                html += `<strong style="color: #2c3e50;">A/C No: ${acNo}</strong>`;
+                if (acName) html += `<span style="color: #666; margin-left: 8px;">(${acName})</span>`;
+                html += `</div>`;
+
+                const tables = block.querySelectorAll('table');
+
+                // Helper to extract rows from a table
+                function getTableData(table) {
+                    const data = [];
+                    table.querySelectorAll('tbody tr').forEach(row => {
+                        const cells = row.querySelectorAll('td');
+                        data.push(Array.from(cells).map(c => c.textContent.trim()));
+                    });
+                    return data;
+                }
+
+                // 1. Combined Credits & Debits table
+                if (tables.length >= 2) {
+                    const creditRows = getTableData(tables[0]);
+                    const debitRows = getTableData(tables[1]);
+
+                    html += `<div style="margin-bottom: 10px;">`;
+                    html += sectionHead('Monthly Credits & Debits');
+                    html += `<table style="width: 100%; border-collapse: collapse; margin-top: 5px;">`;
+                    html += `<thead><tr style="background: #e3f2fd;">`;
+                    html += `<th style="${thStyle}">Month</th>`;
+                    html += `<th style="${thRightStyle}">Credits (Rs.)</th>`;
+                    html += `<th style="${thRightStyle}">Debits (Rs.)</th>`;
+                    html += `</tr></thead><tbody>`;
+
+                    // Build month map from credits
+                    const months = [];
+                    let totalCr = '', totalDr = '';
+                    creditRows.forEach(r => {
+                        if (r[0] === 'Total') { totalCr = r[1]; return; }
+                        if (r.length >= 2) months.push({ month: r[0], credit: r[1] });
+                    });
+                    // Map debits by index
+                    const debitMap = {};
+                    debitRows.forEach(r => {
+                        if (r[0] === 'Total') { totalDr = r[1]; return; }
+                        debitMap[r[0]] = r[1];
+                    });
+
+                    months.forEach((m, i) => {
+                        const bg = i % 2 === 0 ? '#fff' : '#f5f9ff';
+                        html += `<tr style="background: ${bg};">`;
+                        html += `<td style="${tdStyle}">${m.month}</td>`;
+                        html += `<td style="${tdRightStyle}">${m.credit}</td>`;
+                        html += `<td style="${tdRightStyle}">${debitMap[m.month] || '-'}</td>`;
+                        html += `</tr>`;
+                    });
+                    // Also add debit-only months not in credits
+                    Object.keys(debitMap).forEach(dm => {
+                        if (!months.find(m => m.month === dm)) {
+                            html += `<tr><td style="${tdStyle}">${dm}</td><td style="${tdRightStyle}">-</td><td style="${tdRightStyle}">${debitMap[dm]}</td></tr>`;
+                        }
+                    });
+
+                    html += `<tr><td style="${totalTdStyle}">Total</td>`;
+                    html += `<td style="${totalTdRightStyle}">${totalCr}</td>`;
+                    html += `<td style="${totalTdRightStyle}">${totalDr}</td>`;
+                    html += `</tr></tbody></table></div>`;
+                }
+
+                // 2. Average Daily Balances (4th table)
+                if (tables.length >= 4) {
+                    const avgRows = getTableData(tables[3]);
+                    html += `<div style="margin-bottom: 10px;">`;
+                    html += sectionHead('Average Daily Balance');
+                    html += `<table style="width: 100%; border-collapse: collapse; margin-top: 5px;">`;
+                    html += `<thead><tr style="background: #e3f2fd;">`;
+                    html += `<th style="${thStyle}">Month</th>`;
+                    html += `<th style="${thRightStyle}">Avg. Balance (Rs.)</th>`;
+                    html += `</tr></thead><tbody>`;
+
+                    avgRows.forEach((r, i) => {
+                        if (r.length < 2) return;
+                        const isTotal = r[0] === 'Overall Average';
+                        const style = isTotal ? totalTdStyle : tdStyle;
+                        const styleR = isTotal ? totalTdRightStyle : tdRightStyle;
+                        const bg = isTotal ? '' : (i % 2 === 0 ? ' background: #fff;' : ' background: #f5f9ff;');
+                        html += `<tr style="${bg}"><td style="${style}">${r[0]}</td><td style="${styleR}">${r[1]}</td></tr>`;
+                    });
+
+                    html += `</tbody></table></div>`;
+                }
+
+                // 3. Adverse Observations (5th table)
+                if (tables.length >= 5) {
+                    const advRows = getTableData(tables[4]);
+                    html += `<div style="margin-bottom: 10px;">`;
+                    html += sectionHead('Adverse Observations');
+                    html += `<table style="width: 100%; border-collapse: collapse; margin-top: 5px;">`;
+                    html += `<thead><tr style="background: #fce4ec;">`;
+                    html += `<th style="padding: 5px 8px; border: 1px solid #f8bbd0; text-align: left; font-size: 0.85em;">Particulars</th>`;
+                    html += `<th style="padding: 5px 8px; border: 1px solid #f8bbd0; text-align: right; font-size: 0.85em;">Inward</th>`;
+                    html += `<th style="padding: 5px 8px; border: 1px solid #f8bbd0; text-align: right; font-size: 0.85em;">Outward</th>`;
+                    html += `</tr></thead><tbody>`;
+
+                    advRows.forEach(r => {
+                        if (r.length < 3) return;
+                        const hasIssue = r[1] !== '0' || r[2] !== '0';
+                        const color = hasIssue ? ' color: #c62828; font-weight: 600;' : '';
+                        html += `<tr><td style="${tdStyle}">${r[0]}</td>`;
+                        html += `<td style="${tdRightStyle}${color}">${r[1]}</td>`;
+                        html += `<td style="${tdRightStyle}${color}">${r[2]}</td></tr>`;
+                    });
+
+                    html += `</tbody></table></div>`;
+                }
+            });
+
+            if (html) {
+                bankingMemoDiv.innerHTML = html;
+            }
+        });
 
         // Update growth percentages dynamically when P&L values change
         document.addEventListener('DOMContentLoaded', function() {
