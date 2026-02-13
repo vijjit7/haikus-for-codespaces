@@ -777,7 +777,7 @@ function scorePolicyRelevance(text) {
 // Known banks/NBFCs/HFCs with type classification
 const KNOWN_BANKS_MAP = {
   // Public Sector Banks
-  'SBI': 'Bank', 'State Bank': 'Bank', 'HDFC Bank': 'Bank', 'HDFC': 'Bank', 'ICICI Bank': 'Bank', 'ICICI': 'Bank', 'Axis Bank': 'Bank', 'Axis': 'Bank', 'Kotak Mahindra': 'Bank', 'Kotak': 'Bank',
+  'SBI': 'Bank', 'State Bank': 'Bank', 'HDFC Bank': 'Bank', 'HDFC': 'Bank', 'ICICI Bank': 'Bank', 'ICICI': 'Bank', 'Axis Bank': 'Bank', 'Axis Finance': 'NBFC', 'Axis': 'Bank', 'Kotak Mahindra': 'Bank', 'Kotak': 'Bank',
   'Bank of Baroda': 'Bank', 'BOB': 'Bank', 'PNB': 'Bank', 'Punjab National': 'Bank',
   'Canara': 'Bank', 'Union Bank': 'Bank', 'Indian Bank': 'Bank', 'Bank of India': 'Bank', 'BOI': 'Bank',
   'Central Bank': 'Bank', 'UCO Bank': 'Bank', 'Indian Overseas': 'Bank', 'IOB': 'Bank',
@@ -811,7 +811,8 @@ const KNOWN_BANKS_MAP = {
   'Northern Arc': 'NBFC', 'Profectus Capital': 'NBFC',
   'Anand Rathi': 'NBFC', 'Ugro Capital': 'NBFC',
   'Vastu Housing': 'HFC', 'Vistaar Finance': 'NBFC',
-  'Clix Capital': 'NBFC', 'Clix Housing': 'HFC'
+  'Clix Capital': 'NBFC', 'Clix Housing': 'HFC',
+  'Poonawalla Fincorp': 'NBFC', 'Poonawala Fincorp': 'NBFC', 'Poonawalla': 'NBFC'
 };
 // Backward-compatible array (sorted longest-first so "Axis Bank" matches before "Axis")
 const KNOWN_BANKS = Object.keys(KNOWN_BANKS_MAP).sort((a, b) => b.length - a.length);
@@ -886,6 +887,8 @@ const BANK_NAME_NORMALIZE = {
   'jana small finance': 'Jana Small Finance Bank',
   'jio credit': 'Jio Credit',
   'jio finance': 'Jio Finance',
+  'axis finance': 'Axis Finance Ltd',
+  'axis finance ltd': 'Axis Finance Ltd',
 };
 
 // Find or create Bank entity
@@ -1241,7 +1244,8 @@ function regexExtractPolicies(text) {
   }
 
   // CIBIL extraction (handles "CIBIL - Min 650", "CIBIL: 700", "Min CIBIL 650")
-  const cibilMatch = text.match(/(?:cibil|credit\s*score|min(?:imum)?\s*(?:cibil|score))\s*[-:.]?\s*(?:above|min(?:imum)?|>|>=)?\s*(\d{3})/i);
+  const cibilMatch = text.match(/(?:cibil|credit\s*score|min(?:imum)?\s*(?:cibil|score))\s*[-:.]?\s*(?:above|min(?:imum)?|>|>=)?\s*(\d{3})/i)
+    || text.match(/(?:cibil)[^\n]{0,60}?(?:upto|up\s*to|from|above|>=?)\s*(\d{3})/i);
   if (cibilMatch) result.min_cibil = parseInt(cibilMatch[1]);
 
   // Tenure extraction (handle multiline: "Tenure\nLap - 15 Years", "Tenure: Up to 240 Months")
@@ -1379,7 +1383,7 @@ function regexExtractPolicies(text) {
   }
 
   // Geo limits extraction (km radius) - handles "within 100km", "Geo limits 100 kms", "Municipality & HMDA limits upto 100KM", "Upto 60Kms from the branch", "Geo Limit Extended to 60 Km"
-  const geoMatch = text.match(/(?:within|radius|geo(?:graphic)?(?:\s*lim(?:it|its)?)?|city\s*limit|distance|(?:municipality|hmda|ghmc|municipal|corporation)\s*(?:&|\band\b)?\s*(?:hmda|municipality|ghmc|limits?)?(?:\s*limits?)?)\s*(?::)?\s*(?:upto|up\s*to|extended\s*to)?\s*(\d+)\s*(?:km|kms|kilometer)/i)
+  const geoMatch = text.match(/(?:within|radius|geo(?:graphic)?(?:\s*(?:location|lim(?:it|its)?))?|city\s*limit|distance|(?:municipality|hmda|ghmc|municipal|corporation)\s*(?:&|\band\b)?\s*(?:hmda|municipality|ghmc|limits?)?(?:\s*limits?)?)\s*(?::)?\s*(?:upto|up\s*to|extended\s*to)?\s*(\d+)\s*(?:km|kms|kilometer)/i)
     || text.match(/(?:upto|up\s*to)\s*(\d+)\s*(?:km|kms|kilometer)\s*(?:from\s+(?:the\s+)?(?:branch|city|location|office|municipal))/i);
   if (geoMatch) {
     result.geo_limits_km = parseInt(geoMatch[1]);
@@ -1526,6 +1530,21 @@ function regexExtractPolicies(text) {
       if (!isDuplicate) remarks.push(note);
     }
   }
+  // Capture KEY HIGHLIGHTS / USP / FEATURES section items into special_conditions
+  const specialConditions = [];
+  const highlightSectionMatch = text.match(/(?:key\s*highlight|usp|key\s*feature|highlight|salient\s*feature|special\s*feature)\s*[s:]?\s*[:\n]([\s\S]*?)(?:\n\s*(?:contact|📞|regard|call\s*(?:for|us)|for\s*(?:more|any)\s*(?:detail|query|assist)|━|───|$))/i);
+  if (highlightSectionMatch) {
+    const lines = highlightSectionMatch[1].split('\n');
+    for (const line of lines) {
+      const cleaned = line.replace(/^\s*[✅☑️✔️🔹🔸•\-*\d.)]+\s*/u, '').trim();
+      if (cleaned.length < 5 || cleaned.length > 150) continue;
+      // Skip lines already captured in other fields
+      if (/^(?:geo\s*location|loan\s*amount|base\s*rate|roi\b|ltv\b)/i.test(cleaned)) continue;
+      specialConditions.push(cleaned);
+    }
+  }
+  if (specialConditions.length > 0) result.special_conditions = specialConditions.join('\n');
+
   if (remarks.length > 0) result.other_remarks = remarks.join('; ');
 
   // Banker contact number extraction (Indian mobile: 10 digits starting with 6-9)
@@ -1536,7 +1555,7 @@ function regexExtractPolicies(text) {
   // Banker name extraction
   // Note: [A-Z][A-Za-z.]* allows single initials like "M Sekhar", "S Kumar"
   // Designation keywords to reject as names
-  const DESIGNATION_RE = /^(?:area\s*head|sales\s*(?:head|manager)|branch\s*(?:head|manager)|zonal\s*(?:head|manager)|regional\s*(?:head|manager)|business\s*(?:head|manager)|senior\s*manager|asst\.?\s*manager|team\s*lead|cluster\s*head|deputy\s*manager|general\s*manager|chief\s*manager|assistant\s*(?:manager|vice)|avp|vp|agm|dgm|gm|manager)$/i;
+  const DESIGNATION_RE = /^(?:area\s*head|area\s*sales\s*manager|sales\s*(?:head|manager)|branch\s*(?:head|manager)|zonal\s*(?:head|manager)|regional\s*(?:head|manager)|business\s*(?:head|manager)|senior\s*manager|asst\.?\s*manager|team\s*lead|cluster\s*head|deputy\s*manager|general\s*manager|chief\s*manager|assistant\s*(?:manager|vice)|avp|vp|agm|dgm|gm|asm|dsm|rsm|bm|manager)$/i;
 
   // Name pattern: allows lowercase in subsequent words (e.g. "T. Sai kumar", "Sanem.Sainath")
   const NAME_PAT = '[A-Z][A-Za-z.]*(?:[ \\t]+[A-Za-z][A-Za-z.]+){0,3}';
@@ -1571,12 +1590,12 @@ function regexExtractPolicies(text) {
   }
   // Fallback: "Name Title-Manager(Bank)" on same line
   if (!result.banker_name) {
-    const nameManagerMatch = text.match(/\n([A-Z][A-Za-z.]*(?:\s+[A-Z][A-Za-z]+){0,2})\s+(?:BL|HL|LAP|RM|Sales|Loan|Area|Zonal|Regional|Branch|Business|Senior|Asst\.?)?[-\s]*(?:Manager|Head|Executive|Officer|AVP|VP|AGM|DGM|GM)\b[^\n]*/im);
+    const nameManagerMatch = text.match(/\n([A-Z][A-Za-z.]*(?:\s+[A-Z][A-Za-z]+){0,2})\s+(?:BL|HL|LAP|RM|Sales|Loan|Area|Zonal|Regional|Branch|Business|Senior|Asst\.?)?[-\s]*(?:Manager|Head|Executive|Officer|AVP|VP|AGM|DGM|GM|ASM|DSM|RSM|BM)\b[^\n]*/im);
     if (nameManagerMatch) result.banker_name = nameManagerMatch[1].trim();
   }
   // Fallback: Name on one line, Title on next line (e.g. "M Sekhar\nSales Manager")
   if (!result.banker_name) {
-    const nameAboveTitleMatch = text.match(new RegExp('\\n\\s*(' + NAME_PAT + ')\\s*\\n\\s*(?:BL|HL|LAP|RM|Sales|Loan|Area|Zonal|Regional|Branch|Business|Senior|Asst\\.?)?[-\\s]*(?:Manager|Head|Executive|Officer|AVP|VP|AGM|DGM|GM)\\b', 'm'));
+    const nameAboveTitleMatch = text.match(new RegExp('\\n\\s*(' + NAME_PAT + ')\\s*\\n\\s*(?:BL|HL|LAP|RM|Sales|Loan|Area|Zonal|Regional|Branch|Business|Senior|Asst\\.?)?[-\\s]*(?:Manager|Head|Executive|Officer|AVP|VP|AGM|DGM|GM|ASM|DSM|RSM|BM)\\b', 'm'));
     if (nameAboveTitleMatch) {
       const candidate = nameAboveTitleMatch[1].trim();
       if (!/^(?:docs|roi|ltv|cibil|tenure|note|nob|abb|dscr|cmr|kindly|please|property|collateral)/i.test(candidate) && candidate.length <= 40) {
@@ -1600,6 +1619,16 @@ function regexExtractPolicies(text) {
     if (nameTitlePhone) {
       const candidate = nameTitlePhone[1].trim();
       if (!DESIGNATION_RE.test(candidate) && !/^(?:docs|roi|ltv|cibil|tenure|note|nob|abb|dscr|cmr|kindly|please|property|collateral|more\s*detail)/i.test(candidate) && candidate.length <= 40) {
+        result.banker_name = candidate;
+      }
+    }
+  }
+  // Fallback: Name on line before "Title/Phone" or "Title-Phone" (e.g. "Surendra Thommandru\nASM/9966865008")
+  if (!result.banker_name) {
+    const nameAboveTitlePhone = text.match(new RegExp('\\n\\s*(' + NAME_PAT + ')\\s*\\n\\s*(?:ASM|DSM|RSM|BM|RM|AVP|VP|AGM|DGM|GM|Manager|Head|Executive|Officer)\\s*[/\\-]\\s*(?:\\+?91[-\\s]?)?[6-9]\\d{4}[-\\s]?\\d{5}', 'im'));
+    if (nameAboveTitlePhone) {
+      const candidate = nameAboveTitlePhone[1].trim();
+      if (!DESIGNATION_RE.test(candidate) && candidate.length <= 40) {
         result.banker_name = candidate;
       }
     }
@@ -2628,6 +2657,8 @@ function findMatchingPolicies(proposal, policies) {
       policy_label: policy.policy_label,
       programs: policy.programs || [],
       other_remarks: policy.other_remarks || '',
+      banker_name: policy.banker_name || '',
+      banker_contact: policy.banker_contact || '',
       surrogate_matches: policy._surrogateIds || [],
       match_score: Math.min(score, 100),
       match_reasons: matchReasons,
@@ -7024,6 +7055,154 @@ Keep it professional and within 150-200 words. Start directly with the business 
   } catch (err) {
     console.error('Error generating business summary:', err.message);
     res.status(500).json({ error: 'Failed to generate business summary: ' + err.message });
+  }
+});
+
+// Stage 3: Generate CAM text summary for WhatsApp sharing
+app.get('/stage3/:proposalId/cam-text', async (req, res) => {
+  try {
+    const proposal = getProposalById(req.params.proposalId);
+    if (!proposal) return res.status(404).json({ success: false, error: 'Proposal not found' });
+
+    const debtProfiles = await DebtProfile.find({ proposalId: req.params.proposalId }).sort({ sNo: 1 });
+
+    // Helper: format Indian currency
+    const fmtAmt = (n) => {
+      if (!n) return '-';
+      return '₹' + parseInt(n).toLocaleString('en-IN');
+    };
+
+    // 1. Case Type
+    const appType = proposal.applicantType || '';
+    const loanCat = proposal.loanCategory || 'Fresh Loan';
+    const natOfLoan = proposal.natureOfLoan || '';
+    const typOfLoan = proposal.typeOfLoan || 'Loan';
+    const btBank = proposal.btFromBank || '';
+    let caseType = `${proposal.applicantName || 'Applicant'}`;
+    if (appType) caseType += ` (${appType})`;
+    caseType += ` - ${loanCat === 'Balance Transfer' ? 'BT' + (btBank ? ' from ' + btBank : '') : 'Fresh'} ${natOfLoan} ${typOfLoan}`;
+    if (proposal.loanAmount) caseType += ` ${fmtAmt(proposal.loanAmount)}`;
+    if (proposal.loanTenure) caseType += ` / ${proposal.loanTenure} Yrs`;
+
+    // 2. CIBIL scores
+    let cibilInfo = '';
+    if (proposal.documents) {
+      const creditDocs = proposal.documents.filter(d => d.category === 'creditReports');
+      creditDocs.forEach(d => {
+        if (d.extractedDetails && d.extractedDetails.cibilScore) {
+          const name = d.extractedDetails.personName || d.classification || 'Applicant';
+          cibilInfo += `${name}: ${d.extractedDetails.cibilScore}\n`;
+        }
+      });
+    }
+    if (!cibilInfo && proposal.applicantCibil) cibilInfo = `Applicant: ${proposal.applicantCibil}\n`;
+
+    // 3. Co-applicants
+    let coAppInfo = '';
+    if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+      proposal.coApplicants.forEach((ca, i) => {
+        coAppInfo += `${i + 1}. ${ca.name || '-'}`;
+        if (ca.relation) coAppInfo += ` (${ca.relation})`;
+        if (ca.pan) coAppInfo += ` PAN: ${ca.pan}`;
+        coAppInfo += '\n';
+      });
+    }
+
+    // 4. Financial summary from ITR docs
+    let finInfo = '';
+    if (proposal.documents) {
+      const finDocs = proposal.documents.filter(d => d.category === 'financials');
+      const fyMap = {};
+      finDocs.forEach(d => {
+        const classMatch = (d.classification || '').match(/FY\s*(\d{4}-\d{2,4})/i);
+        if (classMatch && d.extractedDetails) {
+          const fy = classMatch[1];
+          const det = d.extractedDetails;
+          if (!fyMap[fy]) fyMap[fy] = {};
+          if (det.turnover) fyMap[fy].turnover = det.turnover;
+          if (det.netProfit) fyMap[fy].netProfit = det.netProfit;
+          if (det.grossProfit) fyMap[fy].grossProfit = det.grossProfit;
+          if (det.depreciation) fyMap[fy].depreciation = det.depreciation;
+        }
+      });
+      Object.keys(fyMap).sort().forEach(fy => {
+        const d = fyMap[fy];
+        finInfo += `FY ${fy}: `;
+        if (d.turnover) finInfo += `Sales: ${fmtAmt(d.turnover)} | `;
+        if (d.netProfit) finInfo += `NP: ${fmtAmt(d.netProfit)} | `;
+        if (d.depreciation) finInfo += `Dep: ${fmtAmt(d.depreciation)} | `;
+        finInfo = finInfo.replace(/\| $/, '') + '\n';
+      });
+    }
+    // Turnover data fallback
+    if (!finInfo && proposal.turnoverData) {
+      if (proposal.turnoverData.fy2324) finInfo += `FY 2023-24 Sales: ${fmtAmt(proposal.turnoverData.fy2324)}\n`;
+      if (proposal.turnoverData.fy2425) finInfo += `FY 2024-25 Sales: ${fmtAmt(proposal.turnoverData.fy2425)}\n`;
+    }
+
+    // 5. Debt profile
+    let debtInfo = '';
+    let totalEmi = 0, totalPOS = 0;
+    debtProfiles.forEach((dp, i) => {
+      debtInfo += `${i + 1}. ${dp.bank || '-'} - ${dp.loanType || '-'} | Amt: ${fmtAmt(dp.loanAmount)} | EMI: ${fmtAmt(dp.emi)}\n`;
+      totalEmi += dp.emi || 0;
+      totalPOS += dp.loanAmount || 0;
+    });
+    if (totalEmi > 0) debtInfo += `Total EMI: ${fmtAmt(totalEmi)}\n`;
+
+    // 6. Banking summary from extracted bank statements
+    let bankingInfo = '';
+    if (proposal.documents) {
+      const bankDocs = proposal.documents.filter(d => d.category === 'banking');
+      bankDocs.forEach(d => {
+        if (d.extractedDetails) {
+          const det = d.extractedDetails;
+          const bankName = det.bankName || d.originalName || '-';
+          let line = bankName;
+          if (det.averageBalance) line += ` | ABB: ${fmtAmt(det.averageBalance)}`;
+          if (det.totalCredits) line += ` | Credits: ${fmtAmt(det.totalCredits)}`;
+          if (det.totalDebits) line += ` | Debits: ${fmtAmt(det.totalDebits)}`;
+          bankingInfo += line + '\n';
+        }
+      });
+    }
+
+    // 7. Collateral / Property
+    let collateralInfo = '';
+    if (proposal.collateralType) collateralInfo += `Type: ${proposal.collateralType}\n`;
+    if (proposal.propertyValue) collateralInfo += `Value: ${fmtAmt(proposal.propertyValue)}\n`;
+    if (proposal.propertyAddress) collateralInfo += `Address: ${proposal.propertyAddress}\n`;
+
+    // 8. Business details
+    let bizInfo = '';
+    if (proposal.industry) bizInfo += `Industry: ${proposal.industry}\n`;
+    if (proposal.businessNature) bizInfo += `Nature: ${proposal.businessNature}\n`;
+    if (proposal.yearsInBusiness) bizInfo += `Vintage: ${proposal.yearsInBusiness} Yrs\n`;
+    if (proposal.businessWebsiteSummary) bizInfo += `Summary: ${proposal.businessWebsiteSummary.substring(0, 300)}\n`;
+
+    // Build the full CAM text
+    let camText = `*CREDIT APPRAISAL MEMO*\n`;
+    camText += `━━━━━━━━━━━━━━━\n`;
+    camText += `*${caseType}*\n\n`;
+
+    if (bizInfo) camText += `*Business:*\n${bizInfo}\n`;
+    if (coAppInfo) camText += `*Co-Applicants:*\n${coAppInfo}\n`;
+    if (cibilInfo) camText += `*CIBIL Scores:*\n${cibilInfo}\n`;
+    if (finInfo) camText += `*Financials (P&L):*\n${finInfo}\n`;
+    if (debtInfo) camText += `*Debt Profile:*\n${debtInfo}\n`;
+    if (bankingInfo) camText += `*Banking Summary:*\n${bankingInfo}\n`;
+    if (collateralInfo) camText += `*Collateral:*\n${collateralInfo}\n`;
+
+    if (proposal.endUseOfFunds) {
+      camText += `*End Use:* ${proposal.endUseOfFunds}`;
+      if (proposal.endUseOthersDesc) camText += ` - ${proposal.endUseOthersDesc}`;
+      camText += '\n';
+    }
+
+    res.json({ success: true, text: camText.trim() });
+  } catch (err) {
+    console.error('CAM text error:', err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

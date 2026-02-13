@@ -12,6 +12,8 @@ const BankerMatchSchema = new mongoose.Schema({
     match_score: { type: Number, default: 0 },
     match_reasons: [String],
     disqualify_reasons: [String],
+    banker_name: String,
+    banker_contact: String,
     surrogate_matches: [{ type: mongoose.Schema.Types.ObjectId, ref: 'SurrogateProgram' }],
     status: { type: String, enum: ['matched', 'shortlisted', 'applied', 'approved', 'rejected', 'disqualified'], default: 'matched' }
   }],

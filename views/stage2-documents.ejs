@@ -24,6 +24,10 @@
             <p class="subtitle">Applicant: <%= proposal.applicantName || proposal.customerName %></p>
         </header>
 
+        <div style="margin-bottom: 15px;">
+            <a href="/" class="btn btn-secondary">← Dashboard</a>
+        </div>
+
         <div class="progress-tracker">
             <a href="/proposals/<%= proposal.id %>/edit" class="progress-step completed" style="text-decoration:none;">
                 <div class="step-number">1</div>
@@ -1190,8 +1194,11 @@
                         <button class="tab-btn-pending" onclick="showPendingTab('turnover')">Turnover (<%= pendingByCategory.turnover.length %>)</button>
                         <button class="tab-btn-pending" onclick="showPendingTab('debtProfile')">Debt Profile (<%= pendingByCategory.debtProfile.length %>)</button>
                         <button class="tab-btn-pending" onclick="showPendingTab('collateral')">Collateral (<%= pendingByCategory.collateral.length %>)</button>
+                        <% if (allPending.length > 0) { %>
+                        <button onclick="copyAllPendings()" style="background:#1976d2; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85em; font-weight:600; margin-left:auto;">Copy All Pendings</button>
+                        <% } %>
                     </div>
-                
+
                     <!-- Pending Documents Content -->
                     <div id="pendingTabContent" class="pending-tab-content">
 
@@ -4044,6 +4051,44 @@
             } catch (error) {
                 alert('Error: ' + error.message);
             }
+        }
+
+        // Copy all pending documents to clipboard
+        function copyAllPendings() {
+            // Collect visible (non-dismissed) pending items from the DOM
+            var items = document.querySelectorAll('.pending-category-content[data-pending-category="all"] .pending-item');
+            var lines = [];
+            var count = 0;
+            items.forEach(function(li) {
+                if (li.style.display !== 'none') {
+                    count++;
+                    var text = li.getAttribute('data-pending-text');
+                    lines.push(count + '. ' + text);
+                }
+            });
+            if (lines.length === 0) {
+                alert('No pending documents to copy.');
+                return;
+            }
+            var header = 'Pending Documents for <%= proposal.applicantName %>\n';
+            header += '━━━━━━━━━━━━━━━\n';
+            var fullText = header + lines.join('\n');
+            navigator.clipboard.writeText(fullText).then(function() {
+                var btn = event.target;
+                var orig = btn.textContent;
+                btn.textContent = 'Copied!';
+                btn.style.background = '#4caf50';
+                setTimeout(function() { btn.textContent = orig; btn.style.background = '#1976d2'; }, 2000);
+            }).catch(function() {
+                // Fallback for older browsers
+                var ta = document.createElement('textarea');
+                ta.value = fullText;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                alert('Copied ' + lines.length + ' pending items to clipboard!');
+            });
         }
 
         // Pending documents tab functionality
