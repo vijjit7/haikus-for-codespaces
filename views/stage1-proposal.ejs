@@ -14,6 +14,10 @@
             <p class="subtitle">Stage 1: Basic Customer Proposal</p>
         </header>
 
+        <div style="margin-bottom: 15px;">
+            <a href="/" class="btn btn-secondary">← Dashboard</a>
+        </div>
+
         <div class="form-container">
             <form id="proposalForm">
                 <!-- Customer Basic Information -->
@@ -78,8 +82,8 @@
                                 </div>
 
                                 <div class="form-group">
-                                    <label for="coApplicantAge_0">Age (Years)</label>
-                                    <input type="number" id="coApplicantAge_0" name="coApplicants[0].age" min="18" max="100" placeholder="Age">
+                                    <label for="coApplicantDob_0">Date of Birth</label>
+                                    <input type="date" id="coApplicantDob_0" name="coApplicants[0].dob">
                                 </div>
 
                                 <div class="form-group">
@@ -402,8 +406,8 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="coApplicantAge_${coApplicantCount}">Age (Years)</label>
-                        <input type="number" id="coApplicantAge_${coApplicantCount}" name="coApplicants[${coApplicantCount}].age" min="18" max="100" placeholder="Age">
+                        <label for="coApplicantDob_${coApplicantCount}">Date of Birth</label>
+                        <input type="date" id="coApplicantDob_${coApplicantCount}" name="coApplicants[${coApplicantCount}].dob">
                     </div>
 
                     <div class="form-group">

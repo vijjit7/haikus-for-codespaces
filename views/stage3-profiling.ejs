@@ -14,6 +14,10 @@
             <p class="subtitle">Applicant: <%= proposal.applicantName || proposal.customerName %></p>
         </header>
 
+        <div style="margin-bottom: 15px;">
+            <a href="/" class="btn btn-secondary">← Dashboard</a>
+        </div>
+
         <div class="progress-tracker">
             <a href="/proposals/<%= proposal.id %>/edit" class="progress-step completed" style="text-decoration:none;">
                 <div class="step-number">1</div>

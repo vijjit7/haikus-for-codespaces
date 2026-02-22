@@ -130,7 +130,7 @@
                 <form id="bulkUploadForm" enctype="multipart/form-data">
                     <div class="form-group">
                         <div class="file-input-wrapper">
-                            <input type="file" id="bulkDocuments" name="bulkDocuments" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.zip">
+                            <input type="file" id="bulkDocuments" name="bulkDocuments" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.zip,.rar">
                             <div class="file-input-display">
                                 <span class="file-icon">📎</span>
                                 <span class="file-text">Choose files or drag here</span>
@@ -155,9 +155,13 @@
                 </div>
             </div>
 
-            <!-- Merge Documents Section -->
-            <div class="merge-documents-section card" style="margin-top: 20px;">
-                <h2>📑 Merge Documents</h2>
+            <!-- Merge Documents Section (collapsed by default) -->
+            <div style="margin-top: 20px; display: flex; align-items: center; gap: 8px;">
+                <button type="button" id="mergeSectionToggle" onclick="document.getElementById('mergeSection').style.display = document.getElementById('mergeSection').style.display === 'none' ? 'block' : 'none'; this.textContent = document.getElementById('mergeSection').style.display === 'none' ? '+' : '-';" style="width: 28px; height: 28px; border-radius: 50%; border: 1px solid #3498db; background: #eaf2f8; color: #3498db; font-size: 18px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; line-height: 1;">+</button>
+                <span style="font-size: 0.9em; color: #666;">Merge Documents</span>
+            </div>
+            <div id="mergeSection" class="merge-documents-section card" style="display: none; margin-top: 10px;">
+                <h2>Merge Documents</h2>
                 <p class="upload-instructions">Merge multiple PDFs into one document (e.g., ITR Acknowledgement + Computation + P&L)</p>
 
                 <div class="form-group">
@@ -182,13 +186,13 @@
                         <span style="color: #666;">.pdf</span>
                     </div>
                     <button type="button" class="btn btn-primary" onclick="mergeAndDownload()">
-                        📥 Merge & Download
+                        Merge & Download
                     </button>
                     <button type="button" class="btn btn-success" onclick="mergeAndUpload()" style="margin-left: 10px;">
-                        ⬆️ Merge & Upload
+                        Merge & Upload
                     </button>
                     <button type="button" class="btn btn-secondary" onclick="clearMergeFiles()" style="margin-left: 10px;">
-                        🗑️ Clear
+                        Clear
                     </button>
                 </div>
 
@@ -389,6 +393,16 @@
                     </ul>
                 </div>
 
+                <!-- Other Documents -->
+                <div class="doc-category">
+                    <h3 class="category-title">Other Documents (Non-Mandatory)</h3>
+                    <ul class="doc-list">
+                        <li>Group Company Financials</li>
+                        <li>Group Company ITR</li>
+                        <li>Any other supporting documents</li>
+                    </ul>
+                </div>
+
                 <p class="categorization-note">All uploaded documents needs to be categorised into below tabs</p>
                 </div><!-- end reqDocsContent -->
             </div>
@@ -434,6 +448,7 @@
                         <button class="tab-btn" onclick="showTab('turnover')">Turnover</button>
                         <button class="tab-btn" onclick="showTab('debtProfile')">Debt Profile</button>
                         <button class="tab-btn" onclick="showTab('collateral')">Collateral</button>
+                        <button class="tab-btn" onclick="showTab('otherDocuments')">Other Documents</button>
                     </div>
 
                 <!-- Tab Content -->
@@ -496,7 +511,9 @@
                                                     <option value="banking" <%= file.category === 'banking' ? 'selected' : '' %>>Banking</option>
                                                     <option value="turnover" <%= file.category === 'turnover' ? 'selected' : '' %>>Turnover</option>
                                                     <option value="debtProfile" <%= file.category === 'debtProfile' ? 'selected' : '' %>>Debt Profile</option>
+                                                    <option value="otherIncome" <%= file.category === 'otherIncome' ? 'selected' : '' %>>Other Income</option>
                                                     <option value="collateral" <%= file.category === 'collateral' ? 'selected' : '' %>>Collateral</option>
+                                                    <option value="otherDocuments" <%= file.category === 'otherDocuments' ? 'selected' : '' %>>Other Documents</option>
                                                 </select>
                                                 <a class="btn-download"
                                                     href="/uploads/<%= proposalId %>/<%= file.filename %>"
@@ -564,13 +581,14 @@
 
                             // Extract document type prefix (e.g., "PAN Card of", "GST Certificate of")
                             const docTypePrefixes = [
-                                'pan card of', 'aadhar card of', 'gst certificate of',
+                                'pan card of', 'aadhar card of', 'passport photo of', 'gst certificate of',
                                 'labour license of', 'udyam certificate of', 'firm registration certificate of',
                                 'itr of', 'bank statement of', 'overdraft bank statement of',
                                 'personal credit report of', 'business credit report of',
                                 'partnership deed', 'reconstituted partnership deed',
                                 'certificate of incorporation', 'memorandum of association', 'articles of association',
                                 'gst 3b returns', 'gst 1 returns', 'all existing loan details',
+                                'rental agreement', 'rent receipts', 'list of properties',
                                 'title documents', 'tax paid receipts', 'approved sanction plan',
                                 'encumberance certificate'
                             ];
@@ -593,6 +611,24 @@
                                     // Extract the name part after the prefix
                                     const expectedNamePart = docNameLower.substring(matchedPrefix.length).trim();
                                     const classifiedNamePart = classifiedDoc.substring(matchedPrefix.length).trim();
+
+                                    // For ITR and Form 26AS: FY year must match exactly, then fuzzy match on name
+                                    if (matchedPrefix === 'itr of' || matchedPrefix === 'form 26as of') {
+                                        const expectedFyMatch = expectedNamePart.match(/^(fy\s*\d{4}-\d{2})\s+of\s+(.+)/);
+                                        const classifiedFyMatch = classifiedNamePart.match(/^(fy\s*\d{4}-\d{2})\s+of\s+(.+)/);
+                                        if (expectedFyMatch && classifiedFyMatch) {
+                                            // FY year must match
+                                            if (expectedFyMatch[1].replace(/\s/g,'') !== classifiedFyMatch[1].replace(/\s/g,'')) return false;
+                                            // Then fuzzy match on entity name
+                                            const expectedName = expectedFyMatch[2].trim();
+                                            const classifiedName = classifiedFyMatch[2].trim();
+                                            const expFirst = expectedName.split(' ')[0];
+                                            const clsFirst = classifiedName.split(' ')[0];
+                                            if (expFirst === clsFirst) return true;
+                                            if (classifiedName.includes(expFirst) || expectedName.includes(clsFirst)) return true;
+                                            return false;
+                                        }
+                                    }
 
                                     // Check for fuzzy match - at least first word matches
                                     const expectedFirstWord = expectedNamePart.split(' ')[0];
@@ -631,7 +667,9 @@
                             banking: [],
                             turnover: [],
                             debtProfile: [],
-                            collateral: []
+                            otherIncome: [],
+                            collateral: [],
+                            otherDocuments: []
                         };
                         
                         // Populate ALL document types for each category (regardless of classification status)
@@ -639,12 +677,14 @@
                         if (proposal.applicantType === 'Individual') {
                             allDocTypesByCategory.personalId.push('PAN Card of ' + (proposal.applicantName || proposal.customerName));
                             allDocTypesByCategory.personalId.push('Aadhar Card of ' + (proposal.applicantName || proposal.customerName));
+                            allDocTypesByCategory.personalId.push('Passport Photo of ' + (proposal.applicantName || proposal.customerName));
                         }
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
                                 if (co.type === 'Individual') {
                                     allDocTypesByCategory.personalId.push('PAN Card of ' + co.name);
                                     allDocTypesByCategory.personalId.push('Aadhar Card of ' + co.name);
+                                    allDocTypesByCategory.personalId.push('Passport Photo of ' + co.name);
                                 }
                             });
                         }
@@ -748,11 +788,21 @@
                         allDocTypesByCategory.debtProfile.push('Existing Loans Sanction Letter / RTR / SOA');
 
                         // Collateral
+                        // Other Income (Rental Income / Property Income)
+                        allDocTypesByCategory.otherIncome.push('Rental Agreement / Lease Deed');
+                        allDocTypesByCategory.otherIncome.push('Rent Receipts / Bank Credit Proof');
+                        allDocTypesByCategory.otherIncome.push('List of Properties with Rental Income');
+
                         allDocTypesByCategory.collateral.push('Title Documents');
                         allDocTypesByCategory.collateral.push('Tax paid Receipts');
                         allDocTypesByCategory.collateral.push('Approved Sanction Plan');
                         allDocTypesByCategory.collateral.push('Encumberance Certificate');
                         allDocTypesByCategory.collateral.push('Title Documents - Unregistered');
+
+                        // Other Documents (Non-Mandatory)
+                        allDocTypesByCategory.otherDocuments.push('Group Company Financials');
+                        allDocTypesByCategory.otherDocuments.push('Group Company ITR');
+                        allDocTypesByCategory.otherDocuments.push('Other Supporting Documents');
 
                         // Categorize pending documents based on what's NOT uploaded OR not classified
                         const pendingByCategory = {
@@ -764,43 +814,34 @@
                             banking: [],
                             turnover: [],
                             debtProfile: [],
-                            collateral: []
+                            otherIncome: [],
+                            collateral: [],
+                            otherDocuments: []
                         };
 
                         // Count uploaded documents by category
                         const uploadedPersonalIdCount = getUploadedCountInCategory('personalId');
                         
-                        // Personal ID documents - check for each individual
-                        let requiredPersonalIdCount = 0;
+                        // Add pending personal ID docs
                         if (proposal.applicantType === 'Individual') {
-                            requiredPersonalIdCount += 2; // PAN + Aadhar for applicant
+                            const pan1 = 'PAN Card of ' + (proposal.applicantName || proposal.customerName);
+                            const aadhar1 = 'Aadhar Card of ' + (proposal.applicantName || proposal.customerName);
+                            const photo1 = 'Passport Photo of ' + (proposal.applicantName || proposal.customerName);
+                            if (!isDocClassified(pan1)) pendingByCategory.personalId.push(pan1);
+                            if (!isDocClassified(aadhar1)) pendingByCategory.personalId.push(aadhar1);
+                            if (!isDocClassified(photo1)) pendingByCategory.personalId.push(photo1);
                         }
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
-                            proposal.coApplicants.forEach(co => {
+                            proposal.coApplicants.forEach((co, idx) => {
                                 if (co.type === 'Individual') {
-                                    requiredPersonalIdCount += 2; // PAN + Aadhar for each individual co-applicant
+                                    const pan = 'PAN Card of ' + co.name;
+                                    const aadhar = 'Aadhar Card of ' + co.name;
+                                    const photo = 'Passport Photo of ' + co.name;
+                                    if (!isDocClassified(pan)) pendingByCategory.personalId.push(pan);
+                                    if (!isDocClassified(aadhar)) pendingByCategory.personalId.push(aadhar);
+                                    if (!isDocClassified(photo)) pendingByCategory.personalId.push(photo);
                                 }
                             });
-                        }
-
-                        // Add pending personal ID docs
-                        if (uploadedPersonalIdCount < requiredPersonalIdCount) {
-                            if (proposal.applicantType === 'Individual') {
-                                const pan1 = 'PAN Card of ' + (proposal.applicantName || proposal.customerName);
-                                const aadhar1 = 'Aadhar Card of ' + (proposal.applicantName || proposal.customerName);
-                                if (!isDocClassified(pan1)) pendingByCategory.personalId.push(pan1);
-                                if (!isDocClassified(aadhar1)) pendingByCategory.personalId.push(aadhar1);
-                            }
-                            if (proposal.coApplicants && proposal.coApplicants.length > 0) {
-                                proposal.coApplicants.forEach((co, idx) => {
-                                    if (co.type === 'Individual') {
-                                        const pan = 'PAN Card of ' + co.name;
-                                        const aadhar = 'Aadhar Card of ' + co.name;
-                                        if (!isDocClassified(pan)) pendingByCategory.personalId.push(pan);
-                                        if (!isDocClassified(aadhar)) pendingByCategory.personalId.push(aadhar);
-                                    }
-                                });
-                            }
                         }
 
                         // Business ID (only for non-individual)
@@ -1064,20 +1105,25 @@
                                     });
                                 }
 
-                                // Gaps between periods?
+                                // Gaps between periods? (clip to required 12-month window)
                                 for (let i = 0; i < mergedPeriods.length - 1; i++) {
-                                    const gapStart = new Date(mergedPeriods[i].to.getTime() + 86400000);
-                                    const gapEnd = new Date(mergedPeriods[i + 1].from.getTime() - 86400000);
+                                    let gapStart = new Date(mergedPeriods[i].to.getTime() + 86400000);
+                                    let gapEnd = new Date(mergedPeriods[i + 1].from.getTime() - 86400000);
+                                    // Clip to required window
+                                    if (gapStart < requiredFromDate) gapStart = new Date(requiredFromDate);
+                                    if (gapEnd > requiredToDate) gapEnd = new Date(requiredToDate);
                                     if (gapStart <= gapEnd) {
                                         gaps.push({ from: gapStart, to: gapEnd });
                                     }
                                 }
 
-                                // Gap at end?
+                                // Gap at end? (clip start to required window)
                                 const lastPeriod = mergedPeriods[mergedPeriods.length - 1];
                                 if (lastPeriod.to < requiredToDate) {
+                                    let gapFrom = new Date(lastPeriod.to.getTime() + 86400000);
+                                    if (gapFrom < requiredFromDate) gapFrom = new Date(requiredFromDate);
                                     gaps.push({
-                                        from: new Date(lastPeriod.to.getTime() + 86400000),
+                                        from: gapFrom,
                                         to: requiredToDate
                                     });
                                 }
@@ -1156,6 +1202,14 @@
                             });
                         }
 
+                        // Other Income (Rental Income / Property Income)
+                        const rentalAgreement = 'Rental Agreement / Lease Deed';
+                        const rentReceipts = 'Rent Receipts / Bank Credit Proof';
+                        const propertyList = 'List of Properties with Rental Income';
+                        if (!isDocClassified(rentalAgreement)) pendingByCategory.otherIncome.push(rentalAgreement);
+                        if (!isDocClassified(rentReceipts)) pendingByCategory.otherIncome.push(rentReceipts);
+                        if (!isDocClassified(propertyList)) pendingByCategory.otherIncome.push(propertyList);
+
                         // Collateral
                         const titleDocs = 'Title Documents';
                         const taxReceipts = 'Tax paid Receipts';
@@ -1193,10 +1247,9 @@
                         <button class="tab-btn-pending" onclick="showPendingTab('banking')">Banking (<%= pendingByCategory.banking.length %>)</button>
                         <button class="tab-btn-pending" onclick="showPendingTab('turnover')">Turnover (<%= pendingByCategory.turnover.length %>)</button>
                         <button class="tab-btn-pending" onclick="showPendingTab('debtProfile')">Debt Profile (<%= pendingByCategory.debtProfile.length %>)</button>
+                        <button class="tab-btn-pending" onclick="showPendingTab('otherIncome')">Other Income (<%= pendingByCategory.otherIncome.length %>)</button>
                         <button class="tab-btn-pending" onclick="showPendingTab('collateral')">Collateral (<%= pendingByCategory.collateral.length %>)</button>
-                        <% if (allPending.length > 0) { %>
-                        <button onclick="copyAllPendings()" style="background:#1976d2; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85em; font-weight:600; margin-left:auto;">Copy All Pendings</button>
-                        <% } %>
+                        <button class="tab-btn-pending" onclick="showPendingTab('otherDocuments')">Other Docs (<%= pendingByCategory.otherDocuments.length %>)</button>
                     </div>
 
                     <!-- Pending Documents Content -->
@@ -1209,6 +1262,9 @@
                     <% } else { %>
                         <!-- All Pending -->
                         <div class="pending-category-content" data-pending-category="all">
+                            <div style="text-align:right; margin-bottom:10px;">
+                                <button onclick="copyAllPendings()" style="background:#1976d2; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85em; font-weight:600;">Copy All Pendings</button>
+                            </div>
                             <ul class="pending-list">
                                 <% allPending.forEach((item, idx) => { %>
                                     <li class="pending-item" data-pending-text="<%= item.text.replace(/"/g, '&quot;') %>" data-category="<%= item.category %>">
@@ -2956,13 +3012,20 @@
                                 f.category === 'debtProfile' &&
                                 (f.filename.endsWith('.xlsx') || f.filename.endsWith('.xls'))
                             );
+                            // Check if there are OCR'd image/PDF files in debtProfile category
+                            const debtProfileOcrFiles = uploadedFiles.filter(f =>
+                                f.category === 'debtProfile' &&
+                                !f.filename.endsWith('.xlsx') && !f.filename.endsWith('.xls') &&
+                                f.extractedText && f.extractedText.trim().length > 50
+                            );
+                            const totalDebtFiles = debtProfileExcelFiles.length + debtProfileOcrFiles.length;
                             %>
 
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px;">
                                 <h3 style="margin: 0;">Debt Profile Table</h3>
-                                <% if (debtProfileExcelFiles.length > 0) { %>
+                                <% if (totalDebtFiles > 0) { %>
                                     <button onclick="extractDebtProfile()" class="btn btn-primary" style="font-size: 0.85em; padding: 6px 12px;">
-                                        🔄 Extract from Excel (<%= debtProfileExcelFiles.length %> file<%= debtProfileExcelFiles.length > 1 ? 's' : '' %>)
+                                        🔄 Extract Debt Profile (<%= totalDebtFiles %> file<%= totalDebtFiles > 1 ? 's' : '' %>)
                                     </button>
                                 <% } %>
                             </div>
@@ -3179,17 +3242,156 @@
                             
                             <% } else { %>
                                 <p style="color: #666; font-style: italic; margin-top: 15px;">
-                                    <% if (debtProfileExcelFiles.length > 0) { %>
-                                        Excel file(s) found. Click "Extract from Excel" to populate the debt profile table.
+                                    <% if (totalDebtFiles > 0) { %>
+                                        Debt profile file(s) found. Click "Extract Debt Profile" to populate the table.
                                     <% } else { %>
-                                        No debt profile data available yet. Upload Excel file with loan details and categorize as "Debt Profile".
+                                        No debt profile data available yet. Upload Excel/image/PDF file with loan details and categorize as "Debt Profile".
                                     <% } %>
+                                </p>
+                            <% } %>
+                        </div>
+
+                        <!-- Other Income Pending -->
+                        <div class="pending-category-content" data-pending-category="otherIncome" style="display: none;">
+                            <% if (pendingByCategory.otherIncome.length > 0) { %>
+                                <ul class="pending-list">
+                                    <% pendingByCategory.otherIncome.forEach((doc, idx) => { %>
+                                        <li class="pending-item" data-pending-text="<%= doc.replace(/"/g, '&quot;') %>">
+                                            <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                                                <div><span class="warning-icon">⚠️</span> <%= doc %></div>
+                                                <button onclick="dismissPendingItem('otherIncome', <%= idx %>, this)" style="background: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85em; white-space: nowrap;" title="Mark as not required">✕ Dismiss</button>
+                                            </div>
+                                        </li>
+                                    <% }); %>
+                                </ul>
+                            <% } else { %>
+                                <p class="success-message">✓ All Other Income documents uploaded!</p>
+                            <% } %>
+
+                            <%
+                            const otherIncomeFiles = uploadedFiles.filter(f =>
+                                f.category === 'otherIncome' &&
+                                f.extractedText && f.extractedText.trim().length > 50
+                            );
+                            const otherIncomeDetails = proposal.otherIncomeDetails;
+                            %>
+
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px;">
+                                <h3 style="margin: 0;">Other Income (Rental Details)</h3>
+                                <% if (otherIncomeFiles.length > 0) { %>
+                                    <button onclick="extractOtherIncome()" id="extractOtherIncomeBtn" class="btn btn-primary" style="font-size: 0.85em; padding: 6px 12px;">
+                                        🔄 Extract Other Income (<%= otherIncomeFiles.length %> file<%= otherIncomeFiles.length > 1 ? 's' : '' %>)
+                                    </button>
+                                <% } %>
+                            </div>
+
+                            <% if (otherIncomeDetails && otherIncomeDetails.rentals && otherIncomeDetails.rentals.length > 0) { %>
+                            <div style="overflow-x: auto; margin-top: 10px;">
+                                <table class="debt-profile-table" style="width: 100%; border-collapse: collapse; font-size: 0.85em;">
+                                    <thead>
+                                        <tr style="background: #e8eaf6;">
+                                            <th style="padding: 8px; border: 1px solid #c5cae9; text-align: center; white-space: nowrap;">S.No</th>
+                                            <th style="padding: 8px; border: 1px solid #c5cae9; white-space: nowrap;">Owner Name</th>
+                                            <th style="padding: 8px; border: 1px solid #c5cae9; white-space: nowrap;">Tenant</th>
+                                            <th style="padding: 8px; border: 1px solid #c5cae9; white-space: nowrap;">Property Address</th>
+                                            <th style="padding: 8px; border: 1px solid #c5cae9; text-align: right; white-space: nowrap;">Monthly Rent</th>
+                                            <th style="padding: 8px; border: 1px solid #c5cae9; white-space: nowrap;">Rent Period</th>
+                                            <th style="padding: 8px; border: 1px solid #c5cae9; white-space: nowrap;">Start Date</th>
+                                            <th style="padding: 8px; border: 1px solid #c5cae9; white-space: nowrap;">Escalation</th>
+                                            <th style="padding: 8px; border: 1px solid #c5cae9; text-align: center; white-space: nowrap;">TDS</th>
+                                            <th style="padding: 8px; border: 1px solid #c5cae9; text-align: center; white-space: nowrap;">GST</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <% otherIncomeDetails.rentals.forEach(rental => { %>
+                                        <tr>
+                                            <td style="padding: 8px; border: 1px solid #e0e0e0; text-align: center;"><%= rental.sNo %></td>
+                                            <td style="padding: 8px; border: 1px solid #e0e0e0;"><%= rental.ownerName %></td>
+                                            <td style="padding: 8px; border: 1px solid #e0e0e0;"><%= rental.tenant %></td>
+                                            <td style="padding: 8px; border: 1px solid #e0e0e0; max-width: 200px;"><%= rental.propertyAddress %></td>
+                                            <td style="padding: 8px; border: 1px solid #e0e0e0; text-align: right; font-weight: 600;"><%= rental.monthlyRent ? '₹' + Number(rental.monthlyRent).toLocaleString('en-IN') : '-' %></td>
+                                            <td style="padding: 8px; border: 1px solid #e0e0e0;"><%= rental.rentPeriod || '-' %></td>
+                                            <td style="padding: 8px; border: 1px solid #e0e0e0;"><%= rental.rentStartDate || '-' %></td>
+                                            <td style="padding: 8px; border: 1px solid #e0e0e0;"><%= rental.escalation || '-' %></td>
+                                            <td style="padding: 8px; border: 1px solid #e0e0e0; text-align: center;"><%= rental.tdsDeducted || '-' %></td>
+                                            <td style="padding: 8px; border: 1px solid #e0e0e0; text-align: center;"><%= rental.gstApplicable || '-' %></td>
+                                        </tr>
+                                        <% }); %>
+                                    </tbody>
+                                    <tfoot>
+                                        <tr style="background: #e8f5e9; font-weight: 700;">
+                                            <td colspan="4" style="padding: 8px; border: 1px solid #c8e6c9; text-align: right;">Total Monthly Rent:</td>
+                                            <td style="padding: 8px; border: 1px solid #c8e6c9; text-align: right;">₹<%= Number(otherIncomeDetails.totalMonthlyRent || 0).toLocaleString('en-IN') %></td>
+                                            <td colspan="2" style="padding: 8px; border: 1px solid #c8e6c9; text-align: right;">Total Annual Rent:</td>
+                                            <td colspan="3" style="padding: 8px; border: 1px solid #c8e6c9; text-align: left; color: #2e7d32;">₹<%= Number(otherIncomeDetails.totalAnnualRent || 0).toLocaleString('en-IN') %></td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                            <% } else if (otherIncomeFiles.length > 0) { %>
+                                <p style="color: #666; font-style: italic; margin-top: 15px;">
+                                    Other income file(s) found. Click "Extract Other Income" to populate the table.
+                                </p>
+                            <% } else { %>
+                                <p style="color: #666; font-style: italic; margin-top: 15px;">
+                                    No other income data available yet. Upload rental agreement/income documents and categorize as "Other Income".
                                 </p>
                             <% } %>
                         </div>
 
                         <!-- Collateral Pending -->
                         <div class="pending-category-content" data-pending-category="collateral" style="display: none;">
+                            <!-- Title Documents Table -->
+                            <div style="margin-bottom: 20px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                    <h4 style="margin: 0; color: #1a237e; font-size: 1em;">Title Documents</h4>
+                                    <div style="display: flex; gap: 8px;">
+                                        <button onclick="extractTitleDocsFromUploads()" id="extractTitleBtn" style="background: #e65100; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 0.85em; font-weight: 600;">Extract from Documents</button>
+                                        <button onclick="addTitleDocRow()" style="background: #1976d2; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 0.85em; font-weight: 600;">+ Add Row</button>
+                                    </div>
+                                </div>
+                                <div style="overflow-x: auto;">
+                                    <table class="files-table" id="titleDocsTable" style="width: 100%; border-collapse: collapse;">
+                                        <thead>
+                                            <tr style="background: #e8eaf6;">
+                                                <th style="padding: 8px 10px; text-align: left; font-size: 0.85em; white-space: nowrap;">S.No</th>
+                                                <th style="padding: 8px 10px; text-align: left; font-size: 0.85em; white-space: nowrap;">Document No.</th>
+                                                <th style="padding: 8px 10px; text-align: left; font-size: 0.85em; white-space: nowrap;">Date</th>
+                                                <th style="padding: 8px 10px; text-align: left; font-size: 0.85em; white-space: nowrap;">Buyer</th>
+                                                <th style="padding: 8px 10px; text-align: left; font-size: 0.85em; white-space: nowrap;">Seller</th>
+                                                <th style="padding: 8px 10px; text-align: left; font-size: 0.85em;">Schedule of the Property</th>
+                                                <th style="padding: 8px 10px; text-align: center; font-size: 0.85em; width: 60px;">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="titleDocsBody">
+                                            <% const titleDocs = proposal.titleDocuments || []; %>
+                                            <% if (titleDocs.length > 0) { %>
+                                                <% titleDocs.forEach((td, idx) => { %>
+                                                    <tr data-row-idx="<%= idx %>">
+                                                        <td style="padding: 6px 10px; font-size: 0.85em;"><%= idx + 1 %></td>
+                                                        <td style="padding: 6px 10px;"><input type="text" value="<%= td.documentNo || '' %>" class="td-input" data-field="documentNo" style="width: 100%; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85em;"></td>
+                                                        <td style="padding: 6px 10px;"><input type="date" value="<%= td.date || '' %>" class="td-input" data-field="date" style="padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85em;"></td>
+                                                        <td style="padding: 6px 10px;"><input type="text" value="<%= td.buyer || '' %>" class="td-input" data-field="buyer" style="width: 100%; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85em;"></td>
+                                                        <td style="padding: 6px 10px;"><input type="text" value="<%= td.seller || '' %>" class="td-input" data-field="seller" style="width: 100%; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85em;"></td>
+                                                        <td style="padding: 6px 10px;"><input type="text" value="<%= td.propertySchedule || '' %>" class="td-input" data-field="propertySchedule" style="width: 100%; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85em;"></td>
+                                                        <td style="padding: 6px 10px; text-align: center;">
+                                                            <button onclick="deleteTitleDocRow(this)" style="background: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8em;" title="Delete row">✕</button>
+                                                        </td>
+                                                    </tr>
+                                                <% }); %>
+                                            <% } else { %>
+                                                <tr class="empty-row">
+                                                    <td colspan="7" style="padding: 12px; text-align: center; color: #999; font-size: 0.85em;">No title documents added. Click "+ Add Row" to add.</td>
+                                                </tr>
+                                            <% } %>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div style="text-align: right; margin-top: 8px;">
+                                    <button onclick="saveTitleDocuments()" style="background: #2e7d32; color: white; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-size: 0.85em; font-weight: 600;">Save Title Documents</button>
+                                </div>
+                            </div>
+
                             <% if (pendingByCategory.collateral.length > 0) { %>
                                 <ul class="pending-list">
                                     <% pendingByCategory.collateral.forEach((doc, idx) => { %>
@@ -3203,6 +3405,42 @@
                                 </ul>
                             <% } else { %>
                                 <p class="success-message">✓ All Collateral documents uploaded!</p>
+                            <% } %>
+                        </div>
+
+                        <!-- Other Documents Pending -->
+                        <div class="pending-category-content" data-pending-category="otherDocuments" style="display: none;">
+                            <%
+                            const otherDocsFiles = uploadedFiles.filter(f => f.category === 'otherDocuments');
+                            %>
+                            <p style="color: #666; font-style: italic; margin-bottom: 10px;">
+                                Non-mandatory documents like group company financials and other supporting documents.
+                            </p>
+                            <% if (otherDocsFiles.length > 0) { %>
+                                <div style="overflow-x: auto; margin-top: 10px;">
+                                    <table class="debt-profile-table" style="width: 100%; border-collapse: collapse; font-size: 0.85em;">
+                                        <thead>
+                                            <tr style="background: #e8eaf6;">
+                                                <th style="padding: 8px; border: 1px solid #c5cae9; text-align: center;">#</th>
+                                                <th style="padding: 8px; border: 1px solid #c5cae9;">File Name</th>
+                                                <th style="padding: 8px; border: 1px solid #c5cae9;">Classification</th>
+                                                <th style="padding: 8px; border: 1px solid #c5cae9;">Uploaded</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <% otherDocsFiles.forEach((doc, idx) => { %>
+                                            <tr>
+                                                <td style="padding: 8px; border: 1px solid #e0e0e0; text-align: center;"><%= idx + 1 %></td>
+                                                <td style="padding: 8px; border: 1px solid #e0e0e0;"><%= doc.originalName %></td>
+                                                <td style="padding: 8px; border: 1px solid #e0e0e0;"><%= doc.classification || 'Not classified' %></td>
+                                                <td style="padding: 8px; border: 1px solid #e0e0e0;"><%= new Date(doc.uploadedAt).toLocaleDateString() %></td>
+                                            </tr>
+                                            <% }); %>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            <% } else { %>
+                                <p style="color: #999; margin-top: 10px;">No other documents uploaded yet. Upload group company financials or supporting documents and categorize as "Other Documents".</p>
                             <% } %>
                         </div>
 
@@ -3253,6 +3491,8 @@
 
     <!-- PDF-lib for merging PDFs -->
     <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <!-- JSZip for client-side ZIP preview -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
     <script>
         const proposalId = '<%= proposal.id %>';
@@ -3580,36 +3820,189 @@
 
         // Track selected files separately (since FileList is read-only)
         let selectedFiles = [];
+        // Map: index in selectedFiles → { entries: [{ name, fullPath, blob, size, checked, isDuplicate }], expanded: true }
+        const zipPreviews = new Map();
+
+        function getFileIcon(name) {
+            const ext = name.split('.').pop().toLowerCase();
+            if (ext === 'pdf') return '📄';
+            if (['jpg','jpeg','png','gif','bmp','webp','svg'].includes(ext)) return '🖼️';
+            if (ext === 'zip') return '📦';
+            if (['doc','docx'].includes(ext)) return '📝';
+            if (['xls','xlsx','csv'].includes(ext)) return '📊';
+            return '📎';
+        }
+
+        function getMimeType(name) {
+            const ext = name.split('.').pop().toLowerCase();
+            const map = { pdf:'application/pdf', jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png',
+                gif:'image/gif', bmp:'image/bmp', webp:'image/webp', svg:'image/svg+xml',
+                doc:'application/msword', docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                xls:'application/vnd.ms-excel', xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                csv:'text/csv', txt:'text/plain', zip:'application/zip' };
+            return map[ext] || 'application/octet-stream';
+        }
+
+        // Process incoming files — detect ZIPs, read them with JSZip
+        async function processIncomingFiles(files) {
+            const duplicates = [];
+            for (const file of files) {
+                const existsInSelection = selectedFiles.some(f => f.name === file.name && f.size === file.size);
+                if (existsInSelection) continue;
+
+                const idx = selectedFiles.length;
+                selectedFiles.push(file);
+
+                if (file.name.toLowerCase().endsWith('.zip')) {
+                    try {
+                        const zip = await JSZip.loadAsync(file);
+                        const entries = [];
+                        const promises = [];
+                        zip.forEach((relativePath, zipEntry) => {
+                            if (zipEntry.dir) return;
+                            const entryName = relativePath.split('/').pop();
+                            if (!entryName) return;
+                            promises.push(
+                                zipEntry.async('blob').then(blob => {
+                                    const isDup = existingFileNames.has(entryName);
+                                    if (isDup) duplicates.push(entryName);
+                                    entries.push({
+                                        name: entryName,
+                                        fullPath: relativePath,
+                                        blob: blob,
+                                        size: blob.size,
+                                        checked: !isDup,
+                                        isDuplicate: isDup
+                                    });
+                                })
+                            );
+                        });
+                        await Promise.all(promises);
+                        // Sort entries alphabetically
+                        entries.sort((a, b) => a.fullPath.localeCompare(b.fullPath));
+                        zipPreviews.set(idx, { entries, expanded: true });
+                    } catch (err) {
+                        console.error('Failed to read ZIP:', err);
+                        alert('Could not preview ZIP "' + file.name + '" (may be corrupted or password-protected). It will be uploaded as-is for server-side processing.');
+                        if (existingFileNames.has(file.name)) duplicates.push(file.name);
+                    }
+                } else {
+                    if (existingFileNames.has(file.name)) duplicates.push(file.name);
+                }
+            }
+            if (duplicates.length > 0) {
+                alert('These files already exist:\n\n' + duplicates.join('\n') + '\n\nDuplicates are highlighted and unchecked. Remove or re-check them to upload.');
+            }
+            renderFilePreview();
+        }
+
+        function toggleZipExpand(idx) {
+            const zp = zipPreviews.get(idx);
+            if (zp) { zp.expanded = !zp.expanded; renderFilePreview(); }
+        }
+
+        function toggleZipEntry(fileIdx, entryIdx) {
+            const zp = zipPreviews.get(fileIdx);
+            if (zp) { zp.entries[entryIdx].checked = !zp.entries[entryIdx].checked; renderFilePreview(); }
+        }
+
+        function toggleAllZipEntries(fileIdx, checked) {
+            const zp = zipPreviews.get(fileIdx);
+            if (zp) { zp.entries.forEach(e => e.checked = checked); renderFilePreview(); }
+        }
 
         // Function to render file preview with remove buttons
         function renderFilePreview() {
             bulkFilePreview.innerHTML = '';
 
             selectedFiles.forEach((file, index) => {
-                const isDuplicate = existingFileNames.has(file.name);
-                const fileItem = document.createElement('div');
-                fileItem.className = 'file-preview-item';
-                if (isDuplicate) fileItem.style.background = '#fff3e0';
-                fileItem.innerHTML = `
-                    <span class="file-icon">${file.type.includes('pdf') ? '📄' : file.type.includes('image') ? '🖼️' : file.name.endsWith('.zip') ? '📦' : '📝'}</span>
-                    <span class="file-name" ${isDuplicate ? 'style="color:#e65100;"' : ''}>${file.name}</span>
-                    ${isDuplicate ? '<span style="color:#e65100;font-size:0.78em;font-weight:600;background:#ffe0b2;padding:2px 6px;border-radius:3px;">Already exists</span>' : ''}
-                    <span class="file-size">${(file.size / 1024).toFixed(2)} KB</span>
-                    <button type="button" class="file-remove-btn" onclick="removeFile(${index})" title="Remove file">✕</button>
-                `;
-                bulkFilePreview.appendChild(fileItem);
+                if (zipPreviews.has(index)) {
+                    // Render ZIP preview
+                    const zp = zipPreviews.get(index);
+                    const checkedCount = zp.entries.filter(e => e.checked).length;
+                    const container = document.createElement('div');
+                    container.className = 'zip-preview-container';
+
+                    // Header
+                    const header = document.createElement('div');
+                    header.className = 'zip-header';
+                    header.innerHTML = `
+                        <span class="zip-icon">📦</span>
+                        <span class="zip-name">${file.name}</span>
+                        <span class="zip-count">${checkedCount}/${zp.entries.length} selected</span>
+                        <span class="zip-toggle ${zp.expanded ? 'expanded' : ''}">▶</span>
+                        <button type="button" class="file-remove-btn" onclick="event.stopPropagation(); removeFile(${index})" title="Remove ZIP">✕</button>
+                    `;
+                    header.addEventListener('click', (e) => {
+                        if (e.target.closest('.file-remove-btn')) return;
+                        toggleZipExpand(index);
+                    });
+                    container.appendChild(header);
+
+                    if (zp.expanded) {
+                        // Actions bar
+                        const actions = document.createElement('div');
+                        actions.className = 'zip-actions';
+                        actions.innerHTML = `
+                            <button type="button" onclick="toggleAllZipEntries(${index}, true)">Select All</button>
+                            <button type="button" onclick="toggleAllZipEntries(${index}, false)">Deselect All</button>
+                        `;
+                        container.appendChild(actions);
+
+                        // Entries list
+                        const list = document.createElement('div');
+                        list.className = 'zip-entries-list';
+                        zp.entries.forEach((entry, eIdx) => {
+                            const item = document.createElement('div');
+                            item.className = 'zip-entry-item' + (entry.isDuplicate ? ' zip-entry-duplicate' : '');
+                            item.innerHTML = `
+                                <input type="checkbox" ${entry.checked ? 'checked' : ''} onchange="toggleZipEntry(${index}, ${eIdx})">
+                                <span class="entry-icon">${getFileIcon(entry.name)}</span>
+                                <span class="entry-name" title="${entry.fullPath}">${entry.name}</span>
+                                ${entry.isDuplicate ? '<span class="duplicate-badge">Already exists</span>' : ''}
+                                <span class="entry-size">${(entry.size / 1024).toFixed(1)} KB</span>
+                            `;
+                            list.appendChild(item);
+                        });
+                        container.appendChild(list);
+                    }
+
+                    bulkFilePreview.appendChild(container);
+                } else {
+                    // Regular file
+                    const isDuplicate = existingFileNames.has(file.name);
+                    const fileItem = document.createElement('div');
+                    fileItem.className = 'file-preview-item';
+                    if (isDuplicate) fileItem.style.background = '#fff3e0';
+                    fileItem.innerHTML = `
+                        <span class="file-icon">${getFileIcon(file.name)}</span>
+                        <span class="file-name" ${isDuplicate ? 'style="color:#e65100;"' : ''}>${file.name}</span>
+                        ${isDuplicate ? '<span class="duplicate-badge">Already exists</span>' : ''}
+                        <span class="file-size">${(file.size / 1024).toFixed(2)} KB</span>
+                        <button type="button" class="file-remove-btn" onclick="removeFile(${index})" title="Remove file">✕</button>
+                    `;
+                    bulkFilePreview.appendChild(fileItem);
+                }
             });
 
-            // Update file count display
             updateFileCount();
         }
-        
+
         // Function to remove a file from the selection
         function removeFile(index) {
             selectedFiles.splice(index, 1);
+            // Rebuild zipPreviews Map with shifted indices
+            const newMap = new Map();
+            zipPreviews.forEach((val, key) => {
+                if (key === index) return; // removed
+                const newKey = key > index ? key - 1 : key;
+                newMap.set(newKey, val);
+            });
+            zipPreviews.clear();
+            newMap.forEach((val, key) => zipPreviews.set(key, val));
             renderFilePreview();
         }
-        
+
         // Function to update file count
         function updateFileCount() {
             let countDisplay = document.getElementById('selectedFileCount');
@@ -3619,11 +4012,25 @@
                 countDisplay.className = 'selected-file-count';
                 bulkFilePreview.parentNode.insertBefore(countDisplay, bulkFilePreview);
             }
-            
+
             const clearAllBtn = document.getElementById('clearAllFilesBtn');
-            
+
+            // Count actual files to upload (checked ZIP entries + regular files)
+            let totalFiles = 0;
+            selectedFiles.forEach((file, idx) => {
+                if (zipPreviews.has(idx)) {
+                    totalFiles += zipPreviews.get(idx).entries.filter(e => e.checked).length;
+                } else {
+                    totalFiles++;
+                }
+            });
+
             if (selectedFiles.length > 0) {
-                countDisplay.innerHTML = `<strong>${selectedFiles.length}</strong> file(s) selected`;
+                const zipCount = zipPreviews.size;
+                const label = zipCount > 0
+                    ? `<strong>${totalFiles}</strong> file(s) to upload (from ${selectedFiles.length} selection${selectedFiles.length > 1 ? 's' : ''})`
+                    : `<strong>${totalFiles}</strong> file(s) selected`;
+                countDisplay.innerHTML = label;
                 countDisplay.style.display = 'block';
                 if (clearAllBtn) clearAllBtn.style.display = 'inline-flex';
             } else {
@@ -3631,29 +4038,18 @@
                 if (clearAllBtn) clearAllBtn.style.display = 'none';
             }
         }
-        
+
         // Function to clear all selected files
         function clearAllFiles() {
             selectedFiles = [];
-            bulkFileInput.value = ''; // Clear the file input
+            zipPreviews.clear();
+            bulkFileInput.value = '';
             renderFilePreview();
         }
 
         // File input preview
         bulkFileInput.addEventListener('change', function(e) {
-            const files = Array.from(e.target.files);
-            const duplicates = [];
-            files.forEach(file => {
-                const existsInSelection = selectedFiles.some(f => f.name === file.name && f.size === file.size);
-                if (!existsInSelection) {
-                    if (existingFileNames.has(file.name)) duplicates.push(file.name);
-                    selectedFiles.push(file);
-                }
-            });
-            if (duplicates.length > 0) {
-                alert('These files already exist:\n\n' + duplicates.join('\n') + '\n\nThey are highlighted. Remove them or upload to replace.');
-            }
-            renderFilePreview();
+            processIncomingFiles(Array.from(e.target.files));
         });
 
         // Drag and drop
@@ -3681,74 +4077,80 @@
         });
 
         fileInputWrapper.addEventListener('drop', function(e) {
-            const dt = e.dataTransfer;
-            const files = Array.from(dt.files);
-            const duplicates = [];
-            files.forEach(file => {
-                const existsInSelection = selectedFiles.some(f => f.name === file.name && f.size === file.size);
-                if (!existsInSelection) {
-                    if (existingFileNames.has(file.name)) duplicates.push(file.name);
-                    selectedFiles.push(file);
-                }
-            });
-            if (duplicates.length > 0) {
-                alert('These files already exist:\n\n' + duplicates.join('\n') + '\n\nThey are highlighted. Remove them or upload to replace.');
-            }
-            renderFilePreview();
+            processIncomingFiles(Array.from(e.dataTransfer.files));
         });
 
-        // Form submission
+        // Form submission — flatten checked ZIP entries into individual files
         bulkUploadForm.addEventListener('submit', async function(e) {
             e.preventDefault();
-            
+
             const formData = new FormData();
-            
+
             if (selectedFiles.length === 0) {
                 alert('Please select at least one file');
                 return;
             }
 
-            const dupes = selectedFiles.filter(f => existingFileNames.has(f.name));
-            if (dupes.length > 0) {
-                const proceed = confirm('These files already exist:\n\n' + dupes.map(f => f.name).join('\n') + '\n\nRemove them from the selection first, or click OK to skip duplicates and upload only new files.');
+            // Build list of files to upload
+            const filesToUpload = [];
+            selectedFiles.forEach((file, idx) => {
+                if (zipPreviews.has(idx)) {
+                    const zp = zipPreviews.get(idx);
+                    zp.entries.forEach(entry => {
+                        if (entry.checked) {
+                            filesToUpload.push(new File([entry.blob], entry.name, { type: getMimeType(entry.name) }));
+                        }
+                    });
+                } else {
+                    filesToUpload.push(file);
+                }
+            });
+
+            if (filesToUpload.length === 0) {
+                alert('No files selected for upload. Check at least one file.');
+                return;
+            }
+
+            // Check for duplicates among the files to upload
+            const dupeNames = filesToUpload.filter(f => existingFileNames.has(f.name)).map(f => f.name);
+            if (dupeNames.length > 0) {
+                const proceed = confirm('These files already exist:\n\n' + dupeNames.join('\n') + '\n\nClick OK to skip duplicates and upload only new files.');
                 if (!proceed) return;
-                // Filter out duplicates
-                const newFiles = selectedFiles.filter(f => !existingFileNames.has(f.name));
+                const newFiles = filesToUpload.filter(f => !existingFileNames.has(f.name));
                 if (newFiles.length === 0) {
                     alert('All selected files already exist. Nothing to upload.');
                     return;
                 }
-                for (let file of newFiles) {
+                for (const file of newFiles) {
                     formData.append('documents', file);
                 }
             } else {
-                for (let file of selectedFiles) {
+                for (const file of filesToUpload) {
                     formData.append('documents', file);
                 }
             }
             formData.append('proposalId', proposalId);
-            
-            // Show progress with better messaging
+
+            // Show progress
             uploadProgress.style.display = 'block';
             const progressText = uploadProgress.querySelector('.progress-text');
-            progressText.textContent = `Uploading ${selectedFiles.length} file(s)... This may take a few minutes for PDF processing.`;
-            
-            // Disable submit button to prevent double submission
+            progressText.textContent = `Uploading ${filesToUpload.length} file(s)... This may take a few minutes for PDF processing.`;
+
             const submitBtn = bulkUploadForm.querySelector('button[type="submit"]');
             submitBtn.disabled = true;
             submitBtn.style.opacity = '0.5';
-            
+
             try {
                 console.log('Starting upload...');
                 const response = await fetch(`/stage2/${proposalId}/upload`, {
                     method: 'POST',
                     body: formData
                 });
-                
+
                 console.log('Response received:', response.status);
                 const result = await response.json();
                 console.log('Result:', result);
-                
+
                 if (result.success) {
                     uploadProgress.style.display = 'none';
                     alert('Documents uploaded and processed successfully!');
@@ -4201,9 +4603,47 @@
             }
         }
 
-        // Extract debt profile from uploaded Excel files
+        // Extract other income (rental details) from uploaded files
+        async function extractOtherIncome() {
+            if (!confirm('This will extract rental/other income details from files in Other Income category. Continue?')) {
+                return;
+            }
+
+            const btn = document.getElementById('extractOtherIncomeBtn');
+            const originalText = btn.textContent;
+            btn.textContent = '⏳ Extracting...';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch(`/stage2/${proposalId}/extract-other-income`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const result = await response.json();
+                console.log('Other income extraction result:', result);
+
+                if (result.success) {
+                    alert(`Successfully extracted ${result.count} rental record(s)! Page will reload to show the results.`);
+                    window.location.reload();
+                } else {
+                    alert('Extraction failed: ' + result.message);
+                    btn.textContent = originalText;
+                    btn.disabled = false;
+                }
+            } catch (error) {
+                console.error('Other income extraction error:', error);
+                alert('Error: ' + error.message);
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        // Extract debt profile from uploaded files (Excel, image, PDF)
         async function extractDebtProfile() {
-            if (!confirm('This will extract loan details from Excel files in Debt Profile category. Continue?')) {
+            if (!confirm('This will extract loan details from files in Debt Profile category. Continue?')) {
                 return;
             }
 
@@ -4487,6 +4927,107 @@
             
             document.body.appendChild(modal);
             console.log('Modal appended to body');
+        }
+
+        // Title Documents table functions
+        function addTitleDocRow() {
+            var tbody = document.getElementById('titleDocsBody');
+            // Remove empty row if present
+            var emptyRow = tbody.querySelector('.empty-row');
+            if (emptyRow) emptyRow.remove();
+            var rowCount = tbody.querySelectorAll('tr:not(.empty-row)').length;
+            var tr = document.createElement('tr');
+            tr.setAttribute('data-row-idx', rowCount);
+            tr.innerHTML = '<td style="padding: 6px 10px; font-size: 0.85em;">' + (rowCount + 1) + '</td>' +
+                '<td style="padding: 6px 10px;"><input type="text" class="td-input" data-field="documentNo" style="width: 100%; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85em;" placeholder="Doc No."></td>' +
+                '<td style="padding: 6px 10px;"><input type="date" class="td-input" data-field="date" style="padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85em;"></td>' +
+                '<td style="padding: 6px 10px;"><input type="text" class="td-input" data-field="buyer" style="width: 100%; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85em;" placeholder="Buyer name"></td>' +
+                '<td style="padding: 6px 10px;"><input type="text" class="td-input" data-field="seller" style="width: 100%; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85em;" placeholder="Seller name"></td>' +
+                '<td style="padding: 6px 10px;"><input type="text" class="td-input" data-field="propertySchedule" style="width: 100%; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85em;" placeholder="Schedule of property"></td>' +
+                '<td style="padding: 6px 10px; text-align: center;"><button onclick="deleteTitleDocRow(this)" style="background: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8em;" title="Delete row">✕</button></td>';
+            tbody.appendChild(tr);
+        }
+
+        function deleteTitleDocRow(btn) {
+            var tbody = document.getElementById('titleDocsBody');
+            btn.closest('tr').remove();
+            // Renumber rows
+            var rows = tbody.querySelectorAll('tr:not(.empty-row)');
+            if (rows.length === 0) {
+                tbody.innerHTML = '<tr class="empty-row"><td colspan="7" style="padding: 12px; text-align: center; color: #999; font-size: 0.85em;">No title documents added. Click "+ Add Row" to add.</td></tr>';
+            } else {
+                rows.forEach(function(row, i) {
+                    row.setAttribute('data-row-idx', i);
+                    row.querySelector('td').textContent = i + 1;
+                });
+            }
+        }
+
+        async function extractTitleDocsFromUploads() {
+            var btn = document.getElementById('extractTitleBtn');
+            btn.disabled = true;
+            btn.textContent = 'Extracting...';
+            try {
+                var res = await fetch('/stage2/<%= proposalId %>/reprocess-collateral', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                var data = await res.json();
+                if (data.success && data.titleDocuments && data.titleDocuments.length > 0) {
+                    // Rebuild table with extracted data
+                    var tbody = document.getElementById('titleDocsBody');
+                    tbody.innerHTML = '';
+                    data.titleDocuments.forEach(function(td, idx) {
+                        var tr = document.createElement('tr');
+                        tr.setAttribute('data-row-idx', idx);
+                        tr.innerHTML = '<td style="padding: 6px 10px; font-size: 0.85em;">' + (idx + 1) + '</td>' +
+                            '<td style="padding: 6px 10px;"><input type="text" value="' + (td.documentNo || '').replace(/"/g, '&quot;') + '" class="td-input" data-field="documentNo" style="width: 100%; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85em;"></td>' +
+                            '<td style="padding: 6px 10px;"><input type="text" value="' + (td.date || '').replace(/"/g, '&quot;') + '" class="td-input" data-field="date" style="width: 100%; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85em;"></td>' +
+                            '<td style="padding: 6px 10px;"><input type="text" value="' + (td.buyer || '').replace(/"/g, '&quot;') + '" class="td-input" data-field="buyer" style="width: 100%; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85em;"></td>' +
+                            '<td style="padding: 6px 10px;"><input type="text" value="' + (td.seller || '').replace(/"/g, '&quot;') + '" class="td-input" data-field="seller" style="width: 100%; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85em;"></td>' +
+                            '<td style="padding: 6px 10px;"><input type="text" value="' + (td.propertySchedule || '').replace(/"/g, '&quot;') + '" class="td-input" data-field="propertySchedule" style="width: 100%; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85em;"></td>' +
+                            '<td style="padding: 6px 10px; text-align: center;"><button onclick="deleteTitleDocRow(this)" style="background: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8em;" title="Delete row">✕</button></td>';
+                        tbody.appendChild(tr);
+                    });
+                    alert(data.message);
+                } else {
+                    alert(data.error || data.message || 'No title documents could be extracted. Ensure collateral documents are uploaded and categorized.');
+                }
+            } catch (err) {
+                alert('Error extracting: ' + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Extract from Documents';
+            }
+        }
+
+        async function saveTitleDocuments() {
+            var tbody = document.getElementById('titleDocsBody');
+            var rows = tbody.querySelectorAll('tr:not(.empty-row)');
+            var docs = [];
+            rows.forEach(function(row) {
+                var inputs = row.querySelectorAll('.td-input');
+                var doc = {};
+                inputs.forEach(function(inp) {
+                    doc[inp.getAttribute('data-field')] = inp.value.trim();
+                });
+                docs.push(doc);
+            });
+            try {
+                var res = await fetch('/stage2/<%= proposalId %>/title-documents', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ titleDocuments: docs })
+                });
+                var data = await res.json();
+                if (data.success) {
+                    alert('Title documents saved successfully!');
+                } else {
+                    alert('Error saving: ' + (data.error || 'Unknown error'));
+                }
+            } catch (err) {
+                alert('Error saving title documents: ' + err.message);
+            }
         }
 
         // Dismiss a pending document item (mark as not required)

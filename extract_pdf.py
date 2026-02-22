@@ -182,4 +182,5 @@ if __name__ == "__main__":
         "numPages": num_pages,
         "tables": tables
     }
+    
     print(json.dumps(output))

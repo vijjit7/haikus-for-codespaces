@@ -779,6 +779,137 @@ header h1 {
     font-size: 0.95em;
 }
 
+/* ZIP Preview Styles */
+.zip-preview-container {
+    background: #f0f7ff;
+    border: 1px solid #b3d4fc;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    overflow: hidden;
+}
+
+.zip-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: #e3edf7;
+    cursor: pointer;
+    user-select: none;
+}
+
+.zip-header .zip-icon {
+    font-size: 1.3em;
+}
+
+.zip-header .zip-name {
+    flex: 1;
+    font-weight: 600;
+    color: #1a3a5c;
+    font-size: 0.95em;
+}
+
+.zip-header .zip-count {
+    font-size: 0.82em;
+    color: #5a7a9a;
+    background: #d0e3f5;
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+
+.zip-header .zip-toggle {
+    font-size: 0.9em;
+    color: #5a7a9a;
+    transition: transform 0.2s;
+}
+
+.zip-header .zip-toggle.expanded {
+    transform: rotate(90deg);
+}
+
+.zip-actions {
+    display: flex;
+    gap: 8px;
+    padding: 6px 12px;
+    background: #e8f0fa;
+    border-bottom: 1px solid #cddcee;
+}
+
+.zip-actions button {
+    padding: 3px 10px;
+    font-size: 0.78em;
+    border: 1px solid #b3c8e0;
+    background: white;
+    border-radius: 3px;
+    cursor: pointer;
+    color: #3a6a9a;
+    transition: background 0.2s;
+}
+
+.zip-actions button:hover {
+    background: #d0e3f5;
+}
+
+.zip-entries-list {
+    padding: 4px 0;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.zip-entry-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    font-size: 0.9em;
+    transition: background 0.15s;
+}
+
+.zip-entry-item:hover {
+    background: #e3edf7;
+}
+
+.zip-entry-item input[type="checkbox"] {
+    flex-shrink: 0;
+    accent-color: #1976d2;
+}
+
+.zip-entry-item .entry-icon {
+    font-size: 1em;
+    flex-shrink: 0;
+}
+
+.zip-entry-item .entry-name {
+    flex: 1;
+    color: #2c3e50;
+    word-break: break-all;
+}
+
+.zip-entry-item .entry-size {
+    font-size: 0.82em;
+    color: #7f8c8d;
+    flex-shrink: 0;
+}
+
+.zip-entry-item.zip-entry-duplicate {
+    background: #fff8e1;
+}
+
+.zip-entry-item.zip-entry-duplicate .entry-name {
+    color: #e65100;
+}
+
+.duplicate-badge {
+    font-size: 0.72em;
+    font-weight: 600;
+    color: #e65100;
+    background: #ffe0b2;
+    padding: 1px 6px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
 /* Upload Buttons */
 .upload-buttons {
     display: flex;

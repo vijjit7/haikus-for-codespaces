@@ -2,8 +2,8 @@ let express = require('express');
 let app = express();
 
 // IMPORTANT: JSON body parser must be before routes
-app.use(express.json({ limit: '20mb' }));
-app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 const { execFile } = require('child_process');
 const mongoose = require('mongoose');
@@ -14,6 +14,7 @@ const BankerMatch = require('./models/BankerMatch');
 const ChatMessage = require('./models/ChatMessage');
 const Bank = require('./models/Bank');
 const SurrogateProgram = require('./models/SurrogateProgram');
+const BankerContact = require('./models/BankerContact');
 const crypto = require('crypto');
 let ejs = require('ejs');
 const fs = require('fs');
@@ -21,6 +22,7 @@ const path = require('path');
 const multer = require('multer');
 const pdfParse = require('pdf-parse');
 const AdmZip = require('adm-zip');
+const { createExtractorFromData } = require('node-unrar-js');
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 const { createCanvas } = require('canvas');
 const axios = require('axios');
@@ -184,14 +186,14 @@ function getRowValue(row, ...possibleNames) {
 function processDebtProfileData(data, proposalId) {
   return data.map((row, idx) => {
     // Skip if row is essentially empty
-    const bank = getRowValue(row, 'Bank Name', 'Bank', 'Lender', 'Financial Institution', 'bank name');
+    const bank = getRowValue(row, 'Bank Name', 'Bank', 'Lender', 'Financial Institution', 'Financier', 'bank name');
     const loanAmount = getRowValue(row, 'Loan Amount', 'Amount', 'Sanctioned Amount', 'loan amount');
     if (!bank && !loanAmount) {
       return null; // Will be filtered out below
     }
     // Get values using flexible matching
     const emiStartDate = getRowValue(row, 'EMI Start Date', 'EMI Start', 'Start Date', 'emi start date');
-    const tenure = getRowValue(row, 'Tenure', 'Loan Tenure', 'Tenure (Months)', 'tenure');
+    const tenure = getRowValue(row, 'Tenure', 'Loan Tenure', 'Tenure (Months)', 'Tenor', 'Tenor (months)', 'tenure');
     const sanctionDate = getRowValue(row, 'Sanction Date', 'Date of Sanction', 'sanction date');
 
     const { monthsCompleted, percentCompleted } = calculateTenureProgress(emiStartDate, tenure);
@@ -200,8 +202,8 @@ function processDebtProfileData(data, proposalId) {
 
     return {
       sNo: getRowValue(row, 'S.No', 'SNo', 'Sr.No', 's.no', 'sno') || idx + 1,
-      loanApplicant: getRowValue(row, 'Applicant', 'Loan Applicant', 'Borrower', 'Name', 'applicant'),
-      bank: getRowValue(row, 'Bank Name', 'Bank', 'Lender', 'Financial Institution', 'bank name'),
+      loanApplicant: getRowValue(row, 'Applicant', 'Loan Applicant', 'Borrower', 'Borrower Name', 'Name', 'applicant'),
+      bank: getRowValue(row, 'Bank Name', 'Bank', 'Lender', 'Financial Institution', 'Financier', 'bank name'),
       loanType: getRowValue(row, 'Loan Type', 'Type of Loan', 'Product', 'loan type'),
       loanAmount: Number(String(getRowValue(row, 'Loan Amount', 'Amount', 'Sanctioned Amount', 'loan amount') || 0).replace(/[^0-9.-]/g, '')) || 0,
       emi: Number(String(getRowValue(row, 'EMI', 'Monthly EMI', 'emi') || 0).replace(/[^0-9.-]/g, '')) || 0,
@@ -274,8 +276,8 @@ function findHeaderRowAndParseExcel(sheet) {
     return xlsx.utils.sheet_to_json(sheet, { defval: '' });
   }
 
-  // Extract headers from the header row
-  const headers = rawData[headerRowIndex].map(h => String(h || '').trim());
+  // Extract headers from the header row (clean newlines/carriage returns from header text)
+  const headers = rawData[headerRowIndex].map(h => String(h || '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim());
 
   // Convert remaining rows to objects using these headers
   const result = [];
@@ -291,16 +293,10 @@ function findHeaderRowAndParseExcel(sheet) {
     });
 
     // Only add if there's meaningful data (at least has a loan amount or bank name)
-    // Use case-insensitive check
-    const objLower = {};
-    Object.keys(obj).forEach(k => {
-      objLower[k.toLowerCase().trim()] = obj[k];
-    });
-
-    const hasData = objLower['loan amount'] || objLower['loanamount'] || objLower['amount'] ||
-                    objLower['bank name'] || objLower['bankname'] || objLower['bank'] ||
-                    objLower['emi'] || objLower['monthly emi'] ||
-                    objLower['lender'] || objLower['financial institution'];
+    // Use partial key matching (handles headers like "Loan Amount (in Lakhs)", "EMI(Rs.)", "Financier")
+    const objKeys = Object.keys(obj).map(k => k.toLowerCase().trim());
+    const dataKeywords = ['loan amount', 'amount', 'bank', 'financier', 'lender', 'emi', 'financial institution'];
+    const hasData = dataKeywords.some(kw => objKeys.some(k => k.includes(kw) && obj[Object.keys(obj)[objKeys.indexOf(k)]] !== '' && obj[Object.keys(obj)[objKeys.indexOf(k)]] !== undefined));
 
     if (hasData) {
       result.push(obj);
@@ -321,18 +317,26 @@ app.post('/stage2/:proposalId/extract-debt-profile', async (req, res) => {
     }
 
     // Find Excel files in debtProfile category
-    const debtProfileDocs = (proposal.documents || []).filter(doc =>
+    const excelDocs = (proposal.documents || []).filter(doc =>
       doc.category === 'debtProfile' &&
       (doc.filename.endsWith('.xlsx') || doc.filename.endsWith('.xls'))
     );
 
-    if (debtProfileDocs.length === 0) {
-      return res.status(400).json({ success: false, message: 'No Excel files found in Debt Profile category' });
+    // Find image/PDF files with extracted text in debtProfile category
+    const ocrDocs = (proposal.documents || []).filter(doc =>
+      doc.category === 'debtProfile' &&
+      !doc.filename.endsWith('.xlsx') && !doc.filename.endsWith('.xls') &&
+      doc.extractedText && doc.extractedText.trim().length > 50
+    );
+
+    if (excelDocs.length === 0 && ocrDocs.length === 0) {
+      return res.status(400).json({ success: false, message: 'No debt profile files found (Excel or image/PDF with extracted text)' });
     }
 
     let allDebtProfiles = [];
 
-    for (const doc of debtProfileDocs) {
+    // Process Excel files
+    for (const doc of excelDocs) {
       const filePath = path.join(UPLOADS_DIR, proposalId, doc.filename);
       if (fs.existsSync(filePath)) {
         try {
@@ -370,8 +374,82 @@ app.post('/stage2/:proposalId/extract-debt-profile', async (req, res) => {
       }
     }
 
+    // Process OCR'd image/PDF files using AI extraction
+    for (const doc of ocrDocs) {
+      try {
+        console.log('\n========================================');
+        console.log('📊 PROCESSING OCR DEBT PROFILE:', doc.originalName || doc.filename);
+        console.log('Text length:', doc.extractedText.length);
+        console.log('========================================');
+
+        // Clean up extracted text (remove markdown code blocks from Vision OCR)
+        let ocrText = doc.extractedText.replace(/```(?:text|json)?\n?/g, '').replace(/```/g, '').trim();
+
+        const aiResult = await extractWithDocumentAI(ocrText, 'debt-profile', []);
+        if (aiResult.success && aiResult.data && Array.isArray(aiResult.data.loans)) {
+          const loans = aiResult.data.loans;
+          console.log('AI extracted', loans.length, 'loan records');
+
+          loans.forEach((loan, idx) => {
+            const emiStartDate = loan.emiStartDate || '';
+            const tenure = parseInt(loan.tenure) || 0;
+            const { monthsCompleted, percentCompleted } = calculateTenureProgress(emiStartDate, tenure);
+
+            allDebtProfiles.push({
+              sNo: loan.sNo || idx + 1,
+              loanApplicant: loan.applicant || '',
+              bank: loan.bank || '',
+              loanType: loan.loanType || '',
+              loanAmount: Number(String(loan.loanAmount || 0).replace(/[^0-9.-]/g, '')) || 0,
+              emi: Number(String(loan.emi || 0).replace(/[^0-9.-]/g, '')) || 0,
+              roi: Number(String(loan.roi || 0).replace(/[^0-9.-]/g, '')) || 0,
+              sanctionDate: loan.sanctionDate || '',
+              tenure: tenure,
+              emiStartDate: emiStartDate,
+              emiEndDate: loan.emiEndDate || calculateEmiEndDate(emiStartDate, tenure),
+              monthsCompleted: monthsCompleted,
+              percentTenureCompleted: percentCompleted,
+              proposalId: proposalId
+            });
+          });
+        } else {
+          console.log('AI extraction failed, attempting manual text parsing...');
+          // Fallback: parse tabular text manually
+          const lines = ocrText.split('\n').filter(l => l.trim());
+          // Skip header line(s), look for numbered rows
+          for (const line of lines) {
+            const match = line.match(/^\s*(\d+)\s+(.+)/);
+            if (match) {
+              const parts = match[2].split(/\s{2,}|\t/);
+              if (parts.length >= 3) {
+                const applicant = parts[0] || '';
+                const bank = parts[1] || '';
+                const loanType = parts[2] || '';
+                const amounts = match[2].match(/[\d,]+(?:\.\d+)?/g) || [];
+                const numAmounts = amounts.map(a => parseFloat(a.replace(/,/g, ''))).filter(n => !isNaN(n));
+
+                allDebtProfiles.push({
+                  sNo: parseInt(match[1]),
+                  loanApplicant: applicant.trim(),
+                  bank: bank.trim(),
+                  loanType: loanType.trim(),
+                  loanAmount: numAmounts[0] || 0,
+                  emi: numAmounts.length > 1 ? numAmounts[1] : 0,
+                  roi: numAmounts.find(n => n > 0 && n < 30) || 0,
+                  tenure: 0,
+                  proposalId: proposalId
+                });
+              }
+            }
+          }
+        }
+      } catch (ocrErr) {
+        console.error('Error processing OCR debt profile:', doc.originalName, ocrErr.message);
+      }
+    }
+
     if (allDebtProfiles.length === 0) {
-      return res.status(400).json({ success: false, message: 'No data could be extracted from Excel files' });
+      return res.status(400).json({ success: false, message: 'No data could be extracted from debt profile files' });
     }
 
     // Remove previous debt profiles for this proposal and insert new
@@ -382,6 +460,156 @@ app.post('/stage2/:proposalId/extract-debt-profile', async (req, res) => {
   } catch (err) {
     console.error('Error extracting debt profile:', err);
     res.status(500).json({ success: false, message: 'Error processing debt profile' });
+  }
+});
+
+// Route to extract other income (rental) details from uploaded files
+app.post('/stage2/:proposalId/extract-other-income', async (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const proposal = getProposalById(proposalId);
+
+    if (!proposal) {
+      return res.status(404).json({ success: false, message: 'Proposal not found' });
+    }
+
+    // Find all files in otherIncome category
+    const otherIncomeDocs = (proposal.documents || []).filter(doc =>
+      doc.category === 'otherIncome'
+    );
+
+    if (otherIncomeDocs.length === 0) {
+      return res.status(400).json({ success: false, message: 'No other income files found. Upload documents and categorize as "Other Income".' });
+    }
+
+    let allRentals = [];
+    const proposalDir = path.join(UPLOADS_DIR, proposalId);
+
+    for (const doc of otherIncomeDocs) {
+      try {
+        const filePath = path.join(proposalDir, doc.filename);
+        if (!fs.existsSync(filePath)) {
+          console.log('File not found, skipping:', doc.filename);
+          continue;
+        }
+
+        console.log('\n========================================');
+        console.log('💵 PROCESSING OTHER INCOME:', doc.originalName || doc.filename);
+        console.log('========================================');
+
+        let fullText = '';
+        const ext = path.extname(doc.filename).toLowerCase();
+
+        // Re-OCR images directly from file (stored text may be truncated)
+        if (['.jpg', '.jpeg', '.png'].includes(ext)) {
+          console.log('🖼️ Running OCR on image:', doc.originalName);
+          const ocrResult = await extractTextFromImage(filePath);
+          if (ocrResult.success && ocrResult.text) {
+            fullText = ocrResult.text;
+            console.log(`✓ OCR extracted ${ocrResult.charCount} characters`);
+            // Update stored text with full version
+            const latestProposal = getProposalById(proposalId);
+            const docIdx = latestProposal.documents.findIndex(d => d.filename === doc.filename);
+            if (docIdx !== -1) {
+              latestProposal.documents[docIdx].extractedText = fullText;
+              updateProposal(proposalId, { documents: latestProposal.documents });
+            }
+          } else {
+            console.log('OCR failed for:', doc.originalName, ocrResult.error);
+            continue;
+          }
+        }
+        // Re-extract PDFs directly from file
+        else if (ext === '.pdf') {
+          console.log('📄 Extracting text from PDF:', doc.originalName);
+          const pdfResult = await extractPDFWithTableDetection(filePath, false);
+          fullText = pdfResult.text || '';
+
+          // Vision OCR fallback for scanned PDFs
+          if (!fullText || fullText.trim().length < 200) {
+            console.log('Short/empty text, trying Vision OCR...');
+            try {
+              const ocrResult = await extractAllPagesWithVisionOCR(filePath);
+              if (ocrResult.success && ocrResult.text) {
+                fullText = fullText ? fullText + '\n\n' + ocrResult.text : ocrResult.text;
+                console.log(`✓ Vision OCR extracted ${ocrResult.text.length} characters`);
+              }
+            } catch (ocrErr) {
+              console.error('Vision OCR error:', ocrErr.message);
+            }
+          }
+
+          if (!fullText || fullText.trim().length < 50) {
+            console.log('Insufficient text from PDF, skipping:', doc.originalName);
+            continue;
+          }
+
+          // Update stored text with full version
+          const latestProposal = getProposalById(proposalId);
+          const docIdx = latestProposal.documents.findIndex(d => d.filename === doc.filename);
+          if (docIdx !== -1) {
+            latestProposal.documents[docIdx].extractedText = fullText;
+            updateProposal(proposalId, { documents: latestProposal.documents });
+          }
+        }
+        // Use stored text as fallback
+        else if (doc.extractedText && doc.extractedText.trim().length > 50) {
+          fullText = doc.extractedText;
+        } else {
+          console.log('No text available for:', doc.originalName);
+          continue;
+        }
+
+        console.log('Text length:', fullText.length);
+        let ocrText = fullText.replace(/```(?:text|json|markdown)?\n?/g, '').replace(/```/g, '').trim();
+
+        const aiResult = await extractWithDocumentAI(ocrText, 'other-income', []);
+        if (aiResult.success && aiResult.data && Array.isArray(aiResult.data.rentals)) {
+          const rentals = aiResult.data.rentals;
+          console.log('AI extracted', rentals.length, 'rental records from', doc.originalName);
+
+          rentals.forEach((rental, idx) => {
+            allRentals.push({
+              sNo: rental.sNo || idx + 1,
+              ownerName: rental.ownerName || '',
+              tenant: rental.tenant || '',
+              propertyAddress: rental.propertyAddress || '',
+              monthlyRent: Number(String(rental.monthlyRent || 0).replace(/[^0-9.-]/g, '')) || 0,
+              rentPeriod: rental.rentPeriod || '',
+              rentStartDate: rental.rentStartDate || '',
+              escalation: rental.escalation || '',
+              tdsDeducted: rental.tdsDeducted || '',
+              gstApplicable: rental.gstApplicable || '',
+              sourceFile: doc.originalName || doc.filename
+            });
+          });
+        } else {
+          console.log('AI extraction returned no rental data for:', doc.originalName);
+        }
+      } catch (docErr) {
+        console.error('Error processing other income doc:', doc.originalName, docErr.message);
+      }
+    }
+
+    if (allRentals.length === 0) {
+      return res.status(400).json({ success: false, message: 'No rental/income data could be extracted from the uploaded files' });
+    }
+
+    // Save to proposal
+    const totalMonthlyRent = allRentals.reduce((sum, r) => sum + (r.monthlyRent || 0), 0);
+    updateProposal(proposalId, {
+      otherIncomeDetails: {
+        rentals: allRentals,
+        totalMonthlyRent: totalMonthlyRent,
+        totalAnnualRent: totalMonthlyRent * 12,
+        extractedAt: new Date().toISOString()
+      }
+    });
+
+    res.json({ success: true, message: `Extracted ${allRentals.length} rental record(s)`, count: allRentals.length });
+  } catch (err) {
+    console.error('Error extracting other income:', err);
+    res.status(500).json({ success: false, message: 'Error processing other income documents' });
   }
 });
 
@@ -531,7 +759,7 @@ const PDF_SERVICE_URL = 'http://localhost:5001';
 const PDF_SERVICE_TIMEOUT = 30000; // 30 seconds
 
 // OpenRouter API Configuration for Document AI
-const OPENROUTER_API_KEY = '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';
+const OPENROUTER_API_KEY = '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';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const GEMINI_API_KEY = 'AIzaSyARiov95XN7RdyNWoOebWCVeWN6uGB3e6g';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent';
@@ -564,17 +792,17 @@ const storage = multer.diskStorage({
 const upload = multer({ 
   storage: storage,
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /pdf|doc|docx|jpg|jpeg|png|xls|xlsx|zip/;
+    const allowedTypes = /pdf|doc|docx|jpg|jpeg|png|xls|xlsx|zip|rar/;
     const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    
+
     // Allow if extension matches
     if (extname) {
       return cb(null, true);
     } else {
-      cb(new Error('Only documents, images, and zip files are allowed!'));
+      cb(new Error('Only documents, images, zip and rar files are allowed!'));
     }
   },
-  limits: { fileSize: 20 * 1024 * 1024 } // 20MB limit
+  limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
 });
 
 // Data storage paths
@@ -617,14 +845,28 @@ function saveProposal(proposal) {
 }
 
 function updateProposal(proposalId, updates) {
-  const proposals = getProposals();
-  const index = proposals.findIndex(p => p.id === proposalId);
-  if (index !== -1) {
-    proposals[index] = { ...proposals[index], ...updates };
-    fs.writeFileSync(PROPOSALS_FILE, JSON.stringify(proposals, null, 2));
-    return proposals[index];
+  // Retry on file write conflicts (concurrent access)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const proposals = getProposals();
+      const index = proposals.findIndex(p => p.id === proposalId);
+      if (index !== -1) {
+        proposals[index] = { ...proposals[index], ...updates };
+        fs.writeFileSync(PROPOSALS_FILE, JSON.stringify(proposals, null, 2));
+        return proposals[index];
+      }
+      return null;
+    } catch (err) {
+      if (attempt < 2) {
+        // Small delay before retry
+        const delay = 100 * (attempt + 1);
+        const start = Date.now();
+        while (Date.now() - start < delay) { /* busy wait */ }
+        continue;
+      }
+      throw err;
+    }
   }
-  return null;
 }
 
 // ========== STAGE 4: WhatsApp Chat Parser + Banker Matching ==========
@@ -812,7 +1054,11 @@ const KNOWN_BANKS_MAP = {
   'Anand Rathi': 'NBFC', 'Ugro Capital': 'NBFC',
   'Vastu Housing': 'HFC', 'Vistaar Finance': 'NBFC',
   'Clix Capital': 'NBFC', 'Clix Housing': 'HFC',
-  'Poonawalla Fincorp': 'NBFC', 'Poonawala Fincorp': 'NBFC', 'Poonawalla': 'NBFC'
+  'Poonawalla Fincorp': 'NBFC', 'Poonawala Fincorp': 'NBFC', 'Poonawalla': 'NBFC',
+  'DCB Bank': 'Bank', 'DCB': 'Bank',
+  'Vridhi Home Finance': 'HFC', 'Vridhi': 'HFC',
+  'Truhome Finance': 'HFC', 'Truhome': 'HFC',
+  'Unity Small Finance': 'Bank', 'Unity SFB': 'Bank'
 };
 // Backward-compatible array (sorted longest-first so "Axis Bank" matches before "Axis")
 const KNOWN_BANKS = Object.keys(KNOWN_BANKS_MAP).sort((a, b) => b.length - a.length);
@@ -1735,7 +1981,7 @@ ${text.substring(0, 2000)}`;
     const response = await axios.post(
       OPENROUTER_API_URL,
       {
-        model: 'google/gemini-flash-1.5',
+        model: 'google/gemini-2.0-flash-001',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
         max_tokens: 800
@@ -2869,12 +3115,14 @@ function getDocumentTypesForCategory(category, proposal) {
       if (proposal.applicantType === 'Individual') {
         docTypes.push(`PAN Card of ${applicantName}`);
         docTypes.push(`Aadhar Card of ${applicantName}`);
+        docTypes.push(`Passport Photo of ${applicantName}`);
       }
       if (proposal.coApplicants && proposal.coApplicants.length > 0) {
         proposal.coApplicants.forEach(co => {
           if (co.type === 'Individual' && co.name) {
             docTypes.push(`PAN Card of ${co.name}`);
             docTypes.push(`Aadhar Card of ${co.name}`);
+            docTypes.push(`Passport Photo of ${co.name}`);
           }
         });
       }
@@ -2949,6 +3197,12 @@ function getDocumentTypesForCategory(category, proposal) {
       docTypes.push('All Existing Loan Details');
       break;
       
+    case 'otherIncome':
+      docTypes.push('Rental Agreement / Lease Deed');
+      docTypes.push('Rent Receipts / Bank Credit Proof');
+      docTypes.push('List of Properties with Rental Income');
+      break;
+
     case 'collateral':
       docTypes.push('Title Documents');
       docTypes.push('Tax paid Receipts');
@@ -2956,8 +3210,14 @@ function getDocumentTypesForCategory(category, proposal) {
       docTypes.push('Encumberance Certificate');
       docTypes.push('Title Documents - Unregistered');
       break;
+
+    case 'otherDocuments':
+      docTypes.push('Group Company Financials');
+      docTypes.push('Group Company ITR');
+      docTypes.push('Other Supporting Documents');
+      break;
   }
-  
+
   return docTypes;
 }
 
@@ -3039,6 +3299,27 @@ function ruleBasedClassification(lowerName, lowerText, category, docTypes) {
     case 'debtProfile':
       return 'All Existing Loan Details';
       
+    case 'otherIncome':
+      if (lowerName.includes('lease') || lowerName.includes('rental agreement') ||
+          lowerText.includes('lease deed') || lowerText.includes('rental agreement') ||
+          lowerText.includes('lease agreement')) {
+        return 'Rental Agreement / Lease Deed';
+      }
+      if (lowerName.includes('rent receipt') || lowerName.includes('bank credit') ||
+          lowerText.includes('rent receipt') || lowerText.includes('rental receipt')) {
+        return 'Rent Receipts / Bank Credit Proof';
+      }
+      if (lowerName.includes('propert') || lowerName.includes('rental income') ||
+          lowerText.includes('rental income') || lowerText.includes('list of properties') ||
+          lowerText.includes('property income')) {
+        return 'List of Properties with Rental Income';
+      }
+      // Default: classify as first matching doc type based on any rental/income keywords
+      if (lowerText.includes('rent') || lowerText.includes('lease') || lowerText.includes('tenant')) {
+        return 'Rental Agreement / Lease Deed';
+      }
+      break;
+
     case 'collateral':
       if (lowerName.includes('tax') && lowerName.includes('receipt')) {
         return 'Tax paid Receipts';
@@ -3056,8 +3337,23 @@ function ruleBasedClassification(lowerName, lowerText, category, docTypes) {
         return 'Title Documents';
       }
       break;
+
+    case 'otherDocuments':
+      if (lowerName.includes('group') && (lowerName.includes('financial') || lowerName.includes('itr'))) {
+        if (lowerName.includes('itr') || lowerText.includes('income tax return') || lowerText.includes('assessment year')) {
+          return 'Group Company ITR';
+        }
+        return 'Group Company Financials';
+      }
+      if (lowerText.includes('income tax return') || lowerText.includes('assessment year') || lowerText.includes('computation of income')) {
+        return 'Group Company ITR';
+      }
+      if (lowerText.includes('profit and loss') || lowerText.includes('balance sheet') || lowerText.includes('revenue from operations')) {
+        return 'Group Company Financials';
+      }
+      return 'Other Supporting Documents';
   }
-  
+
   return '';
 }
 
@@ -3614,6 +3910,105 @@ Respond ONLY with valid JSON in this exact format:
     }
   ]
 }`;
+    } else if (documentType === 'debt-profile') {
+      prompt = `You are a financial document extraction AI. Extract all loan/debt records from this debt profile document.
+
+Document Text:
+${text.substring(0, 8000)}
+
+Extract each loan as an object with these fields:
+- sNo: serial number
+- applicant: borrower/applicant name
+- bank: bank or financial institution name
+- loanType: type of loan (e.g., Cash Credit, Term Loan, Unsecured, Home Loan)
+- loanAmount: loan/sanctioned amount as a plain number (remove commas). For Indian format like 10,00,00,000 = 100000000
+- emi: monthly EMI as a plain number
+- roi: rate of interest as a decimal number (e.g., 8.33)
+- tenure: tenure in months as a number
+- emiStartDate: EMI start date in DD-MM-YYYY format
+- sanctionDate: sanction date in DD-MM-YYYY format if available
+
+IMPORTANT:
+- Parse Indian number format: 10,00,00,000 = 100000000, 3,49,99,999 = 34999999, 14,60,000 = 1460000
+- Return null for fields not found in a row
+- Include ALL loan records, even if some fields are missing
+
+Respond ONLY with valid JSON:
+{
+  "loans": [
+    {
+      "sNo": 1,
+      "applicant": "Name",
+      "bank": "Bank Name",
+      "loanType": "Loan Type",
+      "loanAmount": 100000000,
+      "emi": null,
+      "roi": 8.33,
+      "tenure": null,
+      "emiStartDate": null,
+      "sanctionDate": null
+    }
+  ]
+}`;
+    } else if (documentType === 'financial-itr') {
+      // Smart text selection: find P&L / Revenue sections instead of just first 10K chars
+      let financialText = '';
+      const textLower = text.toLowerCase();
+
+      // Detect unit (Lakhs/Crores) from document
+      let docUnit = '';
+      if (/amount\s+in\s+rs\.?\s*['']?\s*(?:lacs?|lakhs?)/i.test(text) || /all\s+amounts.*rounded\s+off\s+to\s+['']?lacs?/i.test(text)) {
+        docUnit = 'Lakhs';
+      } else if (/amount\s+in\s+(?:rs\.?\s*)?crores?/i.test(text)) {
+        docUnit = 'Crores';
+      }
+
+      // Try to find P&L section
+      const plIdx = text.search(/Statement\s+of\s+Profit\s+and\s+Loss|PROFIT\s*&?\s*LOSS\s+(?:FOR|ACCOUNT)|Revenue\s+from\s+[Oo]perations/i);
+      const compIdx = text.search(/Computation\s+of\s+(?:Total\s+)?Income/i);
+
+      if (plIdx >= 0) {
+        // Include P&L section (up to 6K chars) plus start of doc for context (up to 4K)
+        financialText = text.substring(0, 4000) + '\n...\n' + text.substring(plIdx, plIdx + 6000);
+      } else if (compIdx >= 0) {
+        financialText = text.substring(0, 4000) + '\n...\n' + text.substring(compIdx, compIdx + 6000);
+      } else {
+        financialText = text.substring(0, 10000);
+      }
+
+      prompt = `You are a financial document extraction AI. Extract the following financial data from this ITR / Profit & Loss / Computation of Income document.
+
+Extract these fields (values should be plain numbers WITHOUT any currency symbols, commas, or text like "Cr" or "L"):
+1. Turnover / Sales / Revenue from Operations
+2. Gross Profit
+3. Depreciation
+4. Interest on Loans / Finance Cost
+5. Net Profit (before tax)
+6. Assessment Year (e.g., "2024-25")
+
+${docUnit ? `NOTE: This document states amounts are in ${docUnit}. You MUST convert all values to absolute rupees (multiply by ${docUnit === 'Lakhs' ? '100000' : '10000000'}).` : ''}
+
+Document Text:
+${financialText}
+
+${tables.length > 0 ? `\n\nDetected Tables:\n${JSON.stringify(tables.slice(0, 5), null, 2)}` : ''}
+
+IMPORTANT:
+- Convert all amounts to absolute rupees (e.g., "40.34 L" = 4034000, "2.40 Cr" = 24000000, "60,208" = 60208)
+- If the document says "Amount in Rs Lacs" or "Amount in Lakhs", multiply ALL values by 100000
+- If the document says "Amount in Crores", multiply ALL values by 10000000
+- Return null for fields not found
+- For Assessment Year, extract from "Assessment Year" or "A.Y." field
+
+Respond ONLY with valid JSON:
+{
+  "assessmentYear": "2024-25" or null,
+  "turnover": number or null,
+  "grossProfit": number or null,
+  "depreciation": number or null,
+  "interestOnLoans": number or null,
+  "netProfit": number or null
+}`;
     } else if (documentType === 'private-limited') {
       prompt = `You are a document extraction AI. Extract the following from this Private Limited company incorporation document (MOA/AOA/Certificate of Incorporation):
 
@@ -3677,8 +4072,91 @@ Respond ONLY with valid JSON in this exact format:
   "periodFrom": "DD/MM/YYYY" or null,
   "periodTo": "DD/MM/YYYY" or null
 }`;
+    } else if (documentType === 'title-document') {
+      prompt = `You are a legal document extraction AI specializing in Indian property title documents (Sale Deeds, Gift Deeds, Partition Deeds, Release Deeds, etc.).
+
+Extract ALL title documents/deeds mentioned in this text. For EACH document found, extract:
+
+1. Document No. - The registration number, document number, or deed number
+2. Date - The date of execution or registration
+3. Buyer - The purchaser/buyer/donee/transferee name(s)
+4. Seller - The vendor/seller/donor/transferor name(s)
+5. Schedule of the Property - Property description including survey numbers, plot numbers, area, boundaries, village, mandal/taluk, district etc.
+
+Document Text:
+${text.substring(0, 12000)}
+
+${tables.length > 0 ? '\n\nDetected Tables:\n' + JSON.stringify(tables.slice(0, 5), null, 2) : ''}
+
+IMPORTANT INSTRUCTIONS:
+- Extract ALL separate deeds/documents found in the text (there may be multiple title documents)
+- For dates, use DD/MM/YYYY format where possible
+- For property schedule, include survey numbers, plot numbers, area (in sq yards/sq meters/acres), boundaries, village/locality name
+- If a field is not found, return empty string ""
+- Look for keywords like: "Sale Deed", "Gift Deed", "Registered Document", "Document No", "Regd. No", "Book No", "executed on", "vendor", "vendee", "purchaser", "seller", "schedule of property", "property more fully described", "survey no", "plot no"
+
+Respond ONLY with valid JSON in this exact format:
+{
+  "titleDocuments": [
+    {
+      "documentNo": "Document/Registration number",
+      "date": "DD/MM/YYYY",
+      "buyer": "Buyer/Purchaser name(s)",
+      "seller": "Seller/Vendor name(s)",
+      "propertySchedule": "Property description with survey no, area, location"
     }
-    
+  ]
+}`;
+    } else if (documentType === 'other-income') {
+      prompt = `You are a financial document extraction AI. Extract all rental/other income details from this document.
+
+Document Text:
+${text.substring(0, 12000)}
+
+${tables.length > 0 ? `\n\nDetected Tables:\n${JSON.stringify(tables.slice(0, 5), null, 2)}` : ''}
+
+Extract each rental/other income entry as an object with these fields:
+- sNo: serial number
+- ownerName: name of the property owner (the person who owns the property and receives rent)
+- tenant: tenant/lessee name (the person or company paying rent)
+- propertyAddress: full address of the let-out property
+- monthlyRent: monthly rent amount as a plain number (remove commas, convert Indian format)
+- rentPeriod: rent period (e.g., "12 months", "Apr 2024 - Mar 2025")
+- rentStartDate: rent start date in DD-MM-YYYY format if available
+- escalation: rent escalation clause (e.g., "5% annual", "10% every 2 years")
+- tdsDeducted: "Yes" or "No" or null
+- gstApplicable: "Yes" or "No" or null
+
+CRITICAL RULES:
+- DO NOT extract column headers or labels as data. Only extract actual data rows with real names, addresses, and amounts.
+- If the document is a markdown table, skip the header row and separator row - only extract data rows.
+- Parse Indian number format: 10,00,000 = 1000000, 50,000 = 50000
+- Return null for fields not found
+- Include ALL rental/income entries even if some fields are missing
+- If the document is a Rental Agreement / Lease Deed, extract the owner, tenant, property, and rent details from the agreement text.
+- If the document contains multiple properties or tenants, create a separate entry for each.
+- If monthly rent is not stated but annual rent is given, divide by 12 to get monthly rent.
+- Return empty array if no actual rental data can be found (do NOT return header labels as data).
+
+Respond ONLY with valid JSON:
+{
+  "rentals": [
+    {
+      "sNo": 1,
+      "ownerName": "Actual Owner Name",
+      "tenant": "Actual Tenant Name",
+      "propertyAddress": "Actual Property Address",
+      "monthlyRent": 50000,
+      "rentPeriod": "12 months",
+      "rentStartDate": "01-04-2024",
+      "escalation": "5% annual",
+      "tdsDeducted": "Yes",
+      "gstApplicable": "No"
+    }
+  ]
+}`;
+    }
+
     // Retry logic for rate limiting
     let retries = 3;
     let delay = 10000; // Start with 10 second delay for rate limits
@@ -3690,7 +4168,7 @@ Respond ONLY with valid JSON in this exact format:
         const response = await axios.post(
           OPENROUTER_API_URL,
           {
-            model: 'openai/gpt-4o', // GPT-4o for best quality document analysis
+            model: 'google/gemini-2.0-flash-001',
             messages: [
               {
                 role: 'user',
@@ -3698,7 +4176,7 @@ Respond ONLY with valid JSON in this exact format:
               }
             ],
             temperature: 0.1, // Low temperature for consistent extraction
-            max_tokens: 1000
+            max_tokens: (documentType === 'title-document' || documentType === 'other-income') ? 4000 : 1000
           },
           {
             headers: {
@@ -3707,7 +4185,7 @@ Respond ONLY with valid JSON in this exact format:
               'HTTP-Referer': 'http://localhost:3000',
               'X-Title': 'Customer Profiling App'
             },
-            timeout: 30000 // 30 second timeout for GPT-4o
+            timeout: documentType === 'title-document' ? 60000 : 30000
           }
         );
         
@@ -3717,14 +4195,46 @@ Respond ONLY with valid JSON in this exact format:
         // Parse JSON response
         const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-          const extracted = JSON.parse(jsonMatch[0]);
-          return {
-            success: true,
-            data: extracted,
-            method: 'openrouter-document-ai'
-          };
+          try {
+            const extracted = JSON.parse(jsonMatch[0]);
+            return {
+              success: true,
+              data: extracted,
+              method: 'openrouter-document-ai'
+            };
+          } catch (parseErr) {
+            // Attempt to recover truncated JSON for title documents (array of objects)
+            if (documentType === 'title-document') {
+              console.log('⚠ JSON truncated, attempting to recover partial title documents...');
+              const arrayMatch = content.match(/\"titleDocuments\"\s*:\s*\[([\s\S]*)/);
+              if (arrayMatch) {
+                const partialArray = arrayMatch[1];
+                // Extract all complete objects from the truncated array
+                const recovered = [];
+                const objRegex = /\{[^{}]*\}/g;
+                let m;
+                while ((m = objRegex.exec(partialArray)) !== null) {
+                  try {
+                    const obj = JSON.parse(m[0]);
+                    if (obj.documentNo || obj.buyer || obj.seller) {
+                      recovered.push(obj);
+                    }
+                  } catch (e) { /* skip malformed objects */ }
+                }
+                if (recovered.length > 0) {
+                  console.log(`✓ Recovered ${recovered.length} title document(s) from truncated response`);
+                  return {
+                    success: true,
+                    data: { titleDocuments: recovered },
+                    method: 'openrouter-document-ai-recovered'
+                  };
+                }
+              }
+            }
+            throw parseErr;
+          }
         }
-        
+
         return { success: false, error: 'No JSON found in response' };
       } catch (error) {
         if (error.response && error.response.status === 429 && attempt < retries) {
@@ -3794,33 +4304,46 @@ function normalizeDeedDate(dateStr) {
 }
 
 // ============================================
-// IMAGE OCR SERVICE (Google Gemini Vision API)
+// IMAGE OCR SERVICE (OpenRouter Vision API)
 // ============================================
 
 /**
- * Call Gemini Vision API with image(s) and a prompt. Shared helper for all OCR functions.
+ * Call OpenRouter Vision API with image(s) and a prompt. Shared helper for all OCR functions.
+ * Uses google/gemini-2.0-flash-001 via OpenRouter (supports vision/multimodal).
  */
 async function callGeminiVision(imagePartsArray, promptText, timeoutMs = 60000) {
+  // Convert Gemini-format image parts to OpenRouter/OpenAI-compatible content parts
+  const contentParts = [{ type: 'text', text: promptText }];
+  for (const part of imagePartsArray) {
+    if (part.inline_data) {
+      contentParts.push({
+        type: 'image_url',
+        image_url: {
+          url: `data:${part.inline_data.mime_type};base64,${part.inline_data.data}`
+        }
+      });
+    }
+  }
+
   const response = await axios.post(
-    `${GEMINI_API_URL}?key=${GEMINI_API_KEY}`,
+    OPENROUTER_API_URL,
     {
-      contents: [{
-        parts: [
-          { text: promptText },
-          ...imagePartsArray
-        ]
-      }],
-      generationConfig: {
-        temperature: 0.1,
-        maxOutputTokens: 4000
-      }
+      model: 'google/gemini-2.0-flash-001',
+      messages: [{ role: 'user', content: contentParts }],
+      temperature: 0.1,
+      max_tokens: 4000
     },
     {
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'http://localhost:3000',
+        'X-Title': 'Customer Profiling App'
+      },
       timeout: timeoutMs
     }
   );
-  const text = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const text = response.data.choices?.[0]?.message?.content || '';
   return text;
 }
 
@@ -4319,7 +4842,7 @@ function extractPrivateLimitedDetails(fullText, tables = []) {
 
   // Check if this is a directors/shareholders list document
   const hasDirectorsList = fullText.includes('LIST OF DIRECTORS') || fullText.includes('Name of the Director');
-  const hasShareholdersList = fullText.includes('SHAREHOLDING PATTERN') || fullText.includes('Name of the Shareholder');
+  const hasShareholdersList = fullText.includes('SHAREHOLDING PATTERN') || fullText.includes('Name of the Shareholder') || /LIST OF SHAREHOLDERS/i.test(fullText);
 
   if (hasDirectorsList || hasShareholdersList) {
     console.log('Detected structured Directors/Shareholders list format');
@@ -4359,17 +4882,22 @@ function extractPrivateLimitedDetails(fullText, tables = []) {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
-      // Check if this line is exactly an 8-digit DIN (on its own line)
-      if (/^\d{8}$/.test(line)) {
-        const din = line;
+      // Check if this line contains a DIN (8-digit number, standalone or prefixed with "DIN:")
+      const dinMatch = line.match(/^(\d{8})$/) || line.match(/^DIN[\s:]+(\d{8})$/i);
+      if (dinMatch) {
+        const din = dinMatch[1];
         let name = null;
         let designation = 'Director';
 
         // Look backwards for the name - must be a valid full name
-        for (let j = i - 1; j >= Math.max(0, i - 3); j--) {
+        for (let j = i - 1; j >= Math.max(0, i - 5); j--) {
           if (isValidDirectorName(lines[j])) {
             name = lines[j];
             break;
+          }
+          // Also check for designation between name and DIN (e.g., "Director" line before DIN)
+          if (/^(chairman|managing\s*director|director|whole\s*time|executive|non-executive|independent|additional|nominee)/i.test(lines[j])) {
+            designation = lines[j].trim();
           }
         }
 
@@ -4378,7 +4906,7 @@ function extractPrivateLimitedDetails(fullText, tables = []) {
         for (let j = i + 1; j < Math.min(lines.length, i + 5); j++) {
           const nextLine = lines[j];
           // Stop if we hit another DIN, serial number starting a new row, or shareholder section
-          if (/^\d{8}$/.test(nextLine) || /SHAREHOLDING|Name of the Shareholder/i.test(nextLine)) break;
+          if (/^\d{8}$/.test(nextLine) || /^DIN[\s:]+\d{8}$/i.test(nextLine) || /SHAREHOLDING|Name of the Shareholder|LIST OF SHAREHOLDERS/i.test(nextLine)) break;
           if (/^\d{1,2}$/.test(nextLine) && j > i + 1) break; // New row serial number
 
           if (/chairman|managing|director|whole\s*time|executive|non-executive|independent|additional|nominee/i.test(nextLine)) {
@@ -4419,18 +4947,18 @@ function extractPrivateLimitedDetails(fullText, tables = []) {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
-      if (/SHAREHOLDING PATTERN|Name of the Shareholder/i.test(line)) {
+      if (/SHAREHOLDING PATTERN|Name of the Shareholder|LIST OF SHAREHOLDERS/i.test(line)) {
         inShareholderSection = true;
         continue;
       }
 
       // Stop at TOTAL row or end of section
-      if (inShareholderSection && /^TOTAL$/i.test(line)) {
+      if (inShareholderSection && /^TOTAL/i.test(line)) {
         break;
       }
 
       if (inShareholderSection) {
-        // Detect row start: a single or double digit serial number (1, 2, 3, etc.)
+        // Detect row start: a single or double digit serial number (standalone or starting a line)
         if (/^[1-9]\d?$/.test(line)) {
           // Process previous row if we have one started
           if (currentRowStart >= 0) {
@@ -4507,6 +5035,110 @@ function extractPrivateLimitedDetails(fullText, tables = []) {
             percentage: percentage
           });
           console.log(`Found shareholder: ${name} (${shares} shares, ${percentage}%)`);
+        }
+      }
+    }
+
+    // FLEXIBLE LINE-BASED EXTRACTION: Handle garbled OCR where data is on mixed lines
+    // Look for lines containing percentage patterns (e.g., "50%", "50.00%") near names
+    if (details.shareholders.length === 0) {
+      console.log('Row-based parsing found no shareholders, trying flexible line-based extraction...');
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        // Match lines with percentage like "2 Rekha Dannapaneni ... 5,000 50%"
+        const pctMatch = line.match(/(\d+(?:\.\d+)?)\s*%/);
+        if (!pctMatch) continue;
+
+        const pct = parseFloat(pctMatch[1]);
+        if (pct <= 0 || pct > 100) continue;
+        // Skip total/header lines
+        if (/^total/i.test(line.trim())) continue;
+
+        // Extract shares: look for number with commas before the percentage
+        let shares = null;
+        const sharesMatch = line.match(/(\d{1,3}(?:,\d{3})+|\d+)\s+(?:\d+(?:\.\d+)?\s*%)/);
+        if (sharesMatch) {
+          shares = sharesMatch[1].replace(/,/g, '');
+        }
+
+        // Try to find name on this line or nearby lines
+        let name = null;
+
+        // Pattern: "S.No Name Address... shares percentage" on one line
+        // Look for 2+ consecutive capitalized words (person name), stop before city/address words
+        const cityWords = /^(Hyderabad|Mumbai|Delhi|Chennai|Bangalore|Kolkata|Pune|Ahmedabad|Telangana|Maharashtra|Karnataka|India|Road|Colony|Nagar|Township|Village|Town|District|Phase|Sector)/i;
+        const nameOnLine = line.match(/(?:^\d+\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4})/);
+        if (nameOnLine && looksLikeName(nameOnLine[1])) {
+          // Trim city/address words from end of matched name
+          let nameWords = nameOnLine[1].trim().split(/\s+/);
+          while (nameWords.length > 2 && cityWords.test(nameWords[nameWords.length - 1])) {
+            nameWords.pop();
+          }
+          name = nameWords.join(' ');
+        }
+
+        // If no name found on this line, look backwards for name
+        if (!name) {
+          for (let j = i - 1; j >= Math.max(0, i - 5); j--) {
+            // Skip address-like lines, numbers, and header lines
+            if (/^\d+$/.test(lines[j]) || /Hyderabad|Telangana|India|Road|Colony|Phase|Villa|Fortune|Township/i.test(lines[j])) continue;
+            if (/SHAREHOLDING|Name of|shares of|value Rs/i.test(lines[j])) continue;
+
+            // Look for a person name pattern within the line
+            const backMatch = lines[j].match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4})/);
+            if (backMatch && looksLikeName(backMatch[1])) {
+              name = backMatch[1].trim();
+              break;
+            }
+          }
+        }
+
+        if (name) {
+          const exists = details.shareholders.some(s => s.name.toLowerCase() === name.toLowerCase());
+          if (!exists) {
+            details.shareholders.push({
+              name: name,
+              shares: shares || null,
+              percentage: String(pct)
+            });
+            console.log(`Found shareholder (flexible): ${name} (${shares || '?'} shares, ${pct}%)`);
+          }
+        }
+      }
+
+      // If we found some shareholders but not all, try to infer remaining from total
+      // e.g., if total is 100% and we have one at 50%, look for other names
+      if (details.shareholders.length > 0) {
+        const totalPct = details.shareholders.reduce((sum, s) => sum + (parseFloat(s.percentage) || 0), 0);
+        const totalSharesLine = lines.find(l => /^total/i.test(l.trim()));
+
+        if (totalPct < 100 && totalSharesLine) {
+          const totalSharesMatch = totalSharesLine.match(/(\d{1,3}(?:,\d{3})+|\d+)/);
+          const totalShares = totalSharesMatch ? parseInt(totalSharesMatch[1].replace(/,/g, '')) : null;
+          const knownShares = details.shareholders.reduce((sum, s) => sum + (parseInt(s.shares) || 0), 0);
+          const remainingPct = 100 - totalPct;
+          const remainingShares = totalShares ? totalShares - knownShares : null;
+
+          // Look for director names that aren't already shareholders (they're often also shareholders)
+          if (details.directors.length > 0) {
+            for (const director of details.directors) {
+              const exists = details.shareholders.some(s =>
+                s.name.toLowerCase().includes(director.name.toLowerCase().split(' ')[0]) ||
+                director.name.toLowerCase().includes(s.name.toLowerCase().split(' ')[0])
+              );
+              if (!exists) {
+                details.shareholders.push({
+                  name: director.name,
+                  shares: remainingShares ? String(remainingShares) : null,
+                  percentage: String(remainingPct)
+                });
+                console.log(`Inferred shareholder from director: ${director.name} (${remainingShares || '?'} shares, ${remainingPct}%)`);
+                break;
+              }
+            }
+          }
         }
       }
     }
@@ -4830,14 +5462,14 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
         const isEmptyText = !fullText || fullText.trim().length === 0;
         const isShortFinancialText = fileDetail.category === 'financials' && fullText && fullText.trim().length > 0 && fullText.trim().length < 2000 && pageCount > 1;
         if (isEmptyText || isShortFinancialText) {
-          const ocrCategories = ['personalId', 'creditReports', 'financials'];
+          const ocrCategories = ['personalId', 'creditReports', 'financials', 'incorporation'];
           if (ocrCategories.includes(fileDetail.category)) {
             console.log(`⚠ ${isShortFinancialText ? 'Short text (' + fullText.trim().length + ' chars) for multi-page' : 'Empty text for'} ${fileDetail.category} PDF, trying Vision OCR fallback...`);
             try {
-              // Use multi-page OCR for financials (ITRs have P&L, Balance Sheet on later pages)
+              // Use multi-page OCR for financials and incorporation docs (may span multiple pages)
               // Use single-page OCR for personalId/creditReports
               let ocrResult;
-              if (fileDetail.category === 'financials') {
+              if (fileDetail.category === 'financials' || fileDetail.category === 'incorporation') {
                 ocrResult = await extractAllPagesWithVisionOCR(file.path);
               } else {
                 ocrResult = await extractTextFromScannedPDF(file.path);
@@ -4860,9 +5492,10 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
         }
       }
       // Process images (JPG/PNG) with Vision OCR
-      else if (file.mimetype && (file.mimetype.startsWith('image/jpeg') || 
+      else if ((file.mimetype && (file.mimetype.startsWith('image/jpeg') ||
                                    file.mimetype.startsWith('image/png') ||
-                                   file.mimetype === 'image/jpg')) {
+                                   file.mimetype === 'image/jpg')) ||
+               /\.(jpe?g|png)$/i.test(file.originalname || file.filename || '')) {
         try {
           console.log(`🖼️ Processing image: ${file.originalname}`);
           const ocrResult = await extractTextFromImage(file.path);
@@ -4879,6 +5512,49 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
         }
       }
       
+      // Process Excel files (extract text and auto-extract debt profile)
+      const fileExt = path.extname(file.originalname).toLowerCase();
+      if (fileExt === '.xlsx' || fileExt === '.xls') {
+        try {
+          console.log(`📊 Processing Excel: ${file.originalname}`);
+          const workbook = xlsx.readFile(file.path);
+          const sheetName = workbook.SheetNames[0];
+          const sheet = workbook.Sheets[sheetName];
+          // Convert to text for storage
+          const rawData = xlsx.utils.sheet_to_json(sheet, { defval: '', header: 1 });
+          fullText = rawData.map(row => row.join('\t')).join('\n');
+          extractedText = fullText.substring(0, 500);
+          console.log(`✓ Excel extracted ${rawData.length} rows from ${file.originalname}`);
+
+          // Auto-extract debt profile if category is debtProfile
+          if (fileDetail.category === 'debtProfile') {
+            try {
+              const data = findHeaderRowAndParseExcel(sheet);
+              if (data.length > 0) {
+                const mappedData = processDebtProfileData(data, proposalId);
+                if (mappedData.length > 0) {
+                  await DebtProfile.deleteMany({ proposalId: proposalId });
+                  await DebtProfile.insertMany(mappedData);
+                  console.log(`✓ Auto-extracted ${mappedData.length} debt profile entries`);
+                }
+              }
+            } catch (debtErr) {
+              console.error('Debt profile auto-extraction error:', debtErr.message);
+            }
+          }
+        } catch (xlsErr) {
+          console.error('Excel processing error:', xlsErr.message);
+        }
+      }
+
+      // Re-read current category from saved proposal (user may have manually re-categorized)
+      const latestProposal = getProposalById(proposalId);
+      const latestDoc = latestProposal ? latestProposal.documents.find(d => d.filename === fileDetail.filename) : null;
+      if (latestDoc && latestDoc.manualCategory) {
+        fileDetail.category = latestDoc.category;
+        console.log(`📌 Using manual category "${latestDoc.category}" for ${file.originalname}`);
+      }
+
       // Extract specific details for incorporation documents (partnership deeds)
       if (fileDetail.category === 'incorporation' && fullText) {
         console.log('Processing incorporation document:', file.originalname);
@@ -5005,6 +5681,13 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
             /Year\s*of\s*Birth[:\s]*(\d{4})/i
           ];
 
+          // PAN cards often have standalone dates without labels
+          if (isPAN) {
+            dobPatterns.push(
+              /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/  // Any date in DD/MM/YYYY format
+            );
+          }
+
           // Aadhaar-specific patterns (DOB or Year of Birth)
           if (isAadhaar) {
             dobPatterns.push(
@@ -5056,15 +5739,22 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
         }
       }
 
-      // Auto-classify the document to a specific document type
+      // Note: Title document extraction from collateral docs is done via "Extract from Documents" button
+      // after user has classified documents as "Title Documents". See /reprocess-collateral route.
+
+      // Run auto-classification (may involve API call which takes time)
       let autoClassification = '';
-      if (fileDetail.category) {
+      const preClassifyProposal = getProposalById(proposalId);
+      const preClassifyDoc = preClassifyProposal?.documents?.find(d => d.filename === fileDetail.filename);
+      const effectiveCategory = (preClassifyDoc && preClassifyDoc.manualCategory) ? preClassifyDoc.category : fileDetail.category;
+
+      if (effectiveCategory && !(preClassifyDoc && preClassifyDoc.manualClassification)) {
         try {
           autoClassification = await autoClassifyDocument(
-            file.originalname, 
-            fullText, 
-            fileDetail.category, 
-            proposal
+            file.originalname,
+            fullText,
+            effectiveCategory,
+            preClassifyProposal
           );
           if (autoClassification) {
             console.log(`📋 Auto-classified "${file.originalname}" as: ${autoClassification}`);
@@ -5073,27 +5763,42 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
           console.error('Auto-classification error:', classErr.message);
         }
       }
-      
-      // Find and update the document in the proposal
-      const docIndex = proposal.documents.findIndex(d => d.filename === fileDetail.filename);
-      if (docIndex !== -1) {
-        proposal.documents[docIndex].pages = pageCount;
-        // Store full text for financial, turnover, and banking documents
-        // For financials: detect all components (ITR, Computation, Balance Sheet, P&L)
-        // For turnover: extract GST outward supplies and tax values from GSTR-3B
-        // For banking: full text needed for EMI verification
-        // For other documents, store truncated text to save space
-        if (fileDetail.category === 'financials' || fileDetail.category === 'turnover' || fileDetail.category === 'banking') {
-          proposal.documents[docIndex].extractedText = fullText; // Full text for financials, turnover, and banking
-        } else {
-          proposal.documents[docIndex].extractedText = extractedText; // Truncated for others
+
+      // Atomic update: re-read proposal, update ONLY this document, save immediately
+      // This prevents overwriting manual changes made to OTHER documents during processing
+      const saveProposal = getProposalById(proposalId);
+      if (saveProposal && saveProposal.documents) {
+        const docIndex = saveProposal.documents.findIndex(d => d.filename === fileDetail.filename);
+        if (docIndex !== -1) {
+          const currentDoc = saveProposal.documents[docIndex];
+
+          // Always update extracted data (pages, text, details)
+          currentDoc.pages = pageCount;
+          const currentCategory = currentDoc.category || fileDetail.category;
+          const fullTextCategories = ['financials', 'turnover', 'banking', 'collateral', 'otherIncome', 'otherDocuments'];
+          if (fullTextCategories.includes(currentCategory)) {
+            currentDoc.extractedText = fullText;
+          } else {
+            currentDoc.extractedText = extractedText;
+          }
+          currentDoc.extractedDetails = extractedDetails;
+
+          // Only set auto-classification if user hasn't manually classified
+          if (!currentDoc.manualClassification) {
+            currentDoc.classification = autoClassification;
+          } else {
+            console.log(`⏭️ Keeping manual classification "${currentDoc.classification}" for "${file.originalname}"`);
+          }
+
+          // Only set auto-category if user hasn't manually categorized
+          if (currentDoc.manualCategory) {
+            console.log(`⏭️ Keeping manual category "${currentDoc.category}" for "${file.originalname}"`);
+          }
+
+          saveProposal.documents[docIndex] = currentDoc;
+          updateProposal(proposalId, { documents: saveProposal.documents });
+          console.log(`✓ Updated document: ${file.originalname}`);
         }
-        proposal.documents[docIndex].extractedDetails = extractedDetails;
-        proposal.documents[docIndex].classification = autoClassification;
-        
-        // Save the updated proposal
-        updateProposal(proposalId, { documents: proposal.documents });
-        console.log(`✓ Updated document: ${file.originalname}`);
       }
     } catch (error) {
       console.error(`Error processing file ${file.originalname}:`, error);
@@ -5250,7 +5955,7 @@ app.get('/stage2/:proposalId', async (req, res) => {
 });
 
 app.post('/stage2/:proposalId/upload', (req, res) => {
-  upload.array('documents', 10)(req, res, async (err) => {
+  upload.array('documents', 50)(req, res, async (err) => {
     if (err) {
       console.error('Multer error:', err);
       return res.status(400).json({ success: false, error: err.message || 'Upload error' });
@@ -5279,19 +5984,19 @@ app.post('/stage2/:proposalId/upload', (req, res) => {
         try {
           const zip = new AdmZip(file.path);
           const zipEntries = zip.getEntries();
-          
+
           zipEntries.forEach(entry => {
             if (!entry.isDirectory && !entry.entryName.startsWith('__MACOSX') && !entry.name.startsWith('.')) {
               // Extract file
               const extractedFileName = `${Date.now()}-${entry.name}`;
               const extractedPath = path.join(proposalDir, extractedFileName);
-              
+
               // Write extracted file
               fs.writeFileSync(extractedPath, entry.getData());
-              
+
               // Get file stats
               const stats = fs.statSync(extractedPath);
-              
+
               allFiles.push({
                 filename: extractedFileName,
                 originalname: entry.name,
@@ -5301,12 +6006,41 @@ app.post('/stage2/:proposalId/upload', (req, res) => {
               });
             }
           });
-          
+
           // Delete the zip file after extraction
           fs.unlinkSync(file.path);
         } catch (err) {
           console.error('Zip extraction error:', err);
           // If extraction fails, keep the zip file as is
+          allFiles.push(file);
+        }
+      } else if (fileExt === '.rar') {
+        // Extract rar file
+        try {
+          const rarData = fs.readFileSync(file.path);
+          const extractor = await createExtractorFromData({ data: rarData });
+          const extracted = extractor.extract();
+          for (const entry of extracted.files) {
+            if (!entry.fileHeader.flags.directory) {
+              const entryName = path.basename(entry.fileHeader.name);
+              if (entryName.startsWith('.') || entry.fileHeader.name.startsWith('__MACOSX')) continue;
+              const extractedFileName = `${Date.now()}-${entryName}`;
+              const extractedPath = path.join(proposalDir, extractedFileName);
+              fs.writeFileSync(extractedPath, Buffer.from(entry.extraction));
+              const stats = fs.statSync(extractedPath);
+              allFiles.push({
+                filename: extractedFileName,
+                originalname: entryName,
+                path: extractedPath,
+                size: stats.size,
+                mimetype: entryName.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream'
+              });
+            }
+          }
+          // Delete the rar file after extraction
+          fs.unlinkSync(file.path);
+        } catch (err) {
+          console.error('RAR extraction error:', err);
           allFiles.push(file);
         }
       } else {
@@ -5668,8 +6402,10 @@ app.post('/stage2/:proposalId/categorize', (req, res) => {
     const fileIndex = proposal.documents.findIndex(doc => doc.id === fileId || doc.filename === fileId);
     if (fileIndex !== -1) {
       proposal.documents[fileIndex].category = category;
+      proposal.documents[fileIndex].manualCategory = true;
       // Clear classification if category changes
       proposal.documents[fileIndex].classification = '';
+      proposal.documents[fileIndex].manualClassification = false;
       updateProposal(proposalId, { documents: proposal.documents });
       res.json({ success: true });
     } else {
@@ -5700,6 +6436,7 @@ app.post('/stage2/:proposalId/classify', (req, res) => {
     const fileIndex = proposal.documents.findIndex(doc => doc.id === fileId || doc.filename === fileId);
     if (fileIndex !== -1) {
       proposal.documents[fileIndex].classification = classification;
+      proposal.documents[fileIndex].manualClassification = true;
       updateProposal(proposalId, { documents: proposal.documents });
       res.json({ success: true });
     } else {
@@ -5781,7 +6518,23 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
           try {
             // Use table-aware extraction for reprocessing
             const pdfResult = await extractPDFWithTableDetection(filePath);
-            const fullText = pdfResult.text;
+            let fullText = pdfResult.text;
+
+            // Vision OCR fallback for scanned/image PDFs (empty or very short text)
+            if (!fullText || fullText.trim().length < 20) {
+              console.log(`⚠ Empty/short text (${fullText ? fullText.trim().length : 0} chars) for incorporation doc, trying Vision OCR...`);
+              try {
+                const ocrResult = await extractAllPagesWithVisionOCR(filePath);
+                if (ocrResult.success && ocrResult.text && ocrResult.text.trim().length > 20) {
+                  fullText = ocrResult.text;
+                  pdfResult.method = 'gemini-vision-ocr';
+                  if (ocrResult.numPages) pdfResult.numPages = ocrResult.numPages;
+                  console.log(`✓ Vision OCR extracted ${fullText.length} characters from scanned incorporation PDF`);
+                }
+              } catch (ocrErr) {
+                console.error('Vision OCR fallback error for incorporation doc:', ocrErr.message);
+              }
+            }
 
             console.log('\n========================================');
             console.log('📄 EXTRACTING:', doc.originalName);
@@ -5927,6 +6680,144 @@ app.post('/stage2/:proposalId/dismiss-pending', (req, res) => {
     res.json({ success: true, message: 'Pending item dismissed' });
   } catch (error) {
     console.error('Error dismissing pending item:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Save title documents for collateral
+app.post('/stage2/:proposalId/title-documents', (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const { titleDocuments } = req.body;
+
+    const proposal = getProposalById(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ success: false, error: 'Proposal not found' });
+    }
+
+    updateProposal(proposalId, { titleDocuments: titleDocuments || [] });
+
+    res.json({ success: true, message: 'Title documents saved' });
+  } catch (error) {
+    console.error('Error saving title documents:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Reprocess collateral documents to extract title document details
+app.post('/stage2/:proposalId/reprocess-collateral', async (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const proposal = getProposalById(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ success: false, error: 'Proposal not found' });
+    }
+
+    const titleClassifications = ['title documents', 'title documents - unregistered'];
+    const collateralDocs = (proposal.documents || []).filter(d =>
+      d.category === 'collateral' &&
+      d.classification &&
+      titleClassifications.includes(d.classification.toLowerCase())
+    );
+    if (collateralDocs.length === 0) {
+      return res.json({ success: false, error: 'No documents classified as "Title Documents" found. Please upload collateral documents and classify them as "Title Documents" first.' });
+    }
+
+    console.log(`\n📜 Reprocessing ${collateralDocs.length} collateral document(s) for proposal ${proposalId}`);
+    let extractedTitleDocs = [];
+    let processedCount = 0;
+
+    for (const doc of collateralDocs) {
+      try {
+        const filePath = path.join(UPLOADS_DIR, proposalId, doc.filename);
+        if (!fs.existsSync(filePath)) {
+          console.log(`⚠ File not found: ${doc.filename}`);
+          continue;
+        }
+
+        // Extract text from PDF
+        let fullText = doc.extractedText || '';
+        let tables = [];
+        if (doc.filename.endsWith('.pdf')) {
+          const pdfResult = await extractPDFWithTableDetection(filePath);
+          fullText = pdfResult.text;
+          tables = pdfResult.tables || [];
+
+          // Vision OCR fallback for scanned PDFs
+          if (!fullText || fullText.trim().length < 500) {
+            console.log(`⚠ Short text (${fullText.length} chars) for collateral doc, trying Vision OCR...`);
+            try {
+              const ocrResult = await extractAllPagesWithVisionOCR(filePath);
+              if (ocrResult.success && ocrResult.text && ocrResult.text.length > fullText.length) {
+                fullText = ocrResult.text;
+                console.log(`✓ Vision OCR improved text: ${fullText.length} chars`);
+              }
+            } catch (ocrErr) {
+              console.error('Vision OCR error:', ocrErr.message);
+            }
+          }
+
+          // Update stored text
+          const docIdx = proposal.documents.findIndex(d => d.filename === doc.filename);
+          if (docIdx !== -1) {
+            proposal.documents[docIdx].extractedText = fullText;
+          }
+        }
+
+        if (!fullText || fullText.trim().length < 50) {
+          console.log(`⚠ Insufficient text for ${doc.originalName}, skipping`);
+          continue;
+        }
+
+        // AI extraction
+        const aiResult = await extractWithDocumentAI(fullText, 'title-document', tables);
+        if (aiResult.success && aiResult.data && aiResult.data.titleDocuments && aiResult.data.titleDocuments.length > 0) {
+          console.log(`✓ Extracted ${aiResult.data.titleDocuments.length} title doc(s) from ${doc.originalName}`);
+          extractedTitleDocs.push(...aiResult.data.titleDocuments);
+
+          // Update extractedDetails on the document
+          const docIdx = proposal.documents.findIndex(d => d.filename === doc.filename);
+          if (docIdx !== -1) {
+            proposal.documents[docIdx].extractedDetails = {
+              ...(proposal.documents[docIdx].extractedDetails || {}),
+              titleDocuments: aiResult.data.titleDocuments,
+              documentType: 'Title Document'
+            };
+          }
+          processedCount++;
+        } else {
+          console.log(`⚠ No title documents extracted from ${doc.originalName}`);
+        }
+      } catch (docErr) {
+        console.error(`Error processing ${doc.originalName}:`, docErr.message);
+      }
+    }
+
+    // Merge into proposal.titleDocuments (deduplicate by documentNo)
+    if (!proposal.titleDocuments) proposal.titleDocuments = [];
+    extractedTitleDocs.forEach(td => {
+      const exists = proposal.titleDocuments.some(existing =>
+        existing.documentNo && td.documentNo &&
+        existing.documentNo.trim().toLowerCase() === td.documentNo.trim().toLowerCase()
+      );
+      if (!exists) {
+        proposal.titleDocuments.push(td);
+      }
+    });
+
+    updateProposal(proposalId, {
+      documents: proposal.documents,
+      titleDocuments: proposal.titleDocuments
+    });
+
+    console.log(`✅ Collateral reprocessing complete: ${processedCount} doc(s) processed, ${proposal.titleDocuments.length} total title entries`);
+    res.json({
+      success: true,
+      message: `Extracted from ${processedCount} document(s). ${extractedTitleDocs.length} title document(s) found.`,
+      titleDocuments: proposal.titleDocuments
+    });
+  } catch (error) {
+    console.error('Reprocess collateral error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -6255,7 +7146,8 @@ app.post('/stage2/:proposalId/reprocess-personal-docs', async (req, res) => {
     const targetCategories = ['personalId', 'creditReports'];
     const docsToProcess = (proposal.documents || []).filter(d =>
       targetCategories.includes(d.category) &&
-      (!d.extractedText || d.extractedText.trim().length === 0 || !d.extractedDetails)
+      (!d.extractedText || d.extractedText.trim().length === 0 || !d.extractedDetails ||
+       (d.category === 'personalId' && d.extractedDetails && !d.extractedDetails.dateOfBirth))
     );
 
     console.log(`Reprocessing ${docsToProcess.length} personal/credit docs for proposal ${proposalId}`);
@@ -6272,23 +7164,33 @@ app.post('/stage2/:proposalId/reprocess-personal-docs', async (req, res) => {
 
       try {
         let fullText = '';
+        const isImage = /\.(jpe?g|png)$/i.test(doc.originalName || doc.filename || '');
 
-        // Try standard PDF extraction first
-        try {
-          const pdfResult = await extractPDFWithTableDetection(filePath);
-          fullText = pdfResult.text || '';
-          if (pdfResult.numPages) doc.pages = pdfResult.numPages;
-        } catch (e) {
-          console.log('Standard extraction failed for', doc.originalName);
-        }
-
-        // If empty, try Vision OCR for scanned PDFs
-        if (!fullText || fullText.trim().length === 0) {
-          console.log(`Using Vision OCR for scanned PDF: ${doc.originalName}`);
-          const ocrResult = await extractTextFromScannedPDF(filePath);
+        if (isImage) {
+          // Image file — use Vision OCR directly
+          console.log(`Using Vision OCR for image: ${doc.originalName}`);
+          const ocrResult = await extractTextFromImage(filePath);
           if (ocrResult.success && ocrResult.text) {
             fullText = ocrResult.text;
-            if (ocrResult.numPages) doc.pages = ocrResult.numPages;
+          }
+        } else {
+          // Try standard PDF extraction first
+          try {
+            const pdfResult = await extractPDFWithTableDetection(filePath);
+            fullText = pdfResult.text || '';
+            if (pdfResult.numPages) doc.pages = pdfResult.numPages;
+          } catch (e) {
+            console.log('Standard extraction failed for', doc.originalName);
+          }
+
+          // If empty, try Vision OCR for scanned PDFs
+          if (!fullText || fullText.trim().length === 0) {
+            console.log(`Using Vision OCR for scanned PDF: ${doc.originalName}`);
+            const ocrResult = await extractTextFromScannedPDF(filePath);
+            if (ocrResult.success && ocrResult.text) {
+              fullText = ocrResult.text;
+              if (ocrResult.numPages) doc.pages = ocrResult.numPages;
+            }
           }
         }
 
@@ -6319,6 +7221,12 @@ app.post('/stage2/:proposalId/reprocess-personal-docs', async (req, res) => {
               /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})\s*date\s*of\s*birth/i,
               /DOB\s*[:\-]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/
             ];
+
+            if (isPAN) {
+              dobPatterns.push(
+                /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/  // Any date in DD/MM/YYYY
+              );
+            }
 
             if (isAadhaar) {
               dobPatterns.push(
@@ -6814,6 +7722,46 @@ app.get('/stage3/:proposalId', async (req, res) => {
   res.render('stage3-cam', { proposal, debtProfiles });
 });
 
+// Stage 3: Download entire proposal as ZIP with categorized folders
+app.get('/stage3/:proposalId/download-zip', (req, res) => {
+  const proposal = getProposalById(req.params.proposalId);
+  if (!proposal) return res.status(404).send('Proposal not found');
+
+  const docs = proposal.documents || [];
+  if (docs.length === 0) return res.status(400).send('No documents to download');
+
+  const categoryLabels = {
+    personalId: 'Personal ID',
+    businessId: 'Business ID',
+    incorporation: 'Incorporation',
+    creditReports: 'Credit Reports',
+    financials: 'Financials',
+    banking: 'Banking',
+    turnover: 'Turnover',
+    debtProfile: 'Debt Profile',
+    otherIncome: 'Other Income',
+    collateral: 'Collateral',
+    otherDocuments: 'Other Documents'
+  };
+
+  const zip = new AdmZip();
+
+  docs.forEach(doc => {
+    const filePath = path.join(UPLOADS_DIR, req.params.proposalId, doc.filename);
+    if (!fs.existsSync(filePath)) return;
+    const folder = categoryLabels[doc.category] || 'Other';
+    const fileName = doc.originalName || doc.filename;
+    zip.addFile(folder + '/' + fileName, fs.readFileSync(filePath));
+  });
+
+  const applicant = (proposal.applicantName || proposal.customerName || 'proposal').replace(/[^a-zA-Z0-9 ]/g, '').trim().replace(/\s+/g, '_');
+  const zipName = `${applicant}_${req.params.proposalId}.zip`;
+
+  res.set('Content-Type', 'application/zip');
+  res.set('Content-Disposition', `attachment; filename="${zipName}"`);
+  res.send(zip.toBuffer());
+});
+
 // Stage 3: Re-extract financial documents (ITR / P&L / Balance Sheet)
 app.post('/stage3/:proposalId/reextract-financials', async (req, res) => {
   try {
@@ -6877,6 +7825,26 @@ app.post('/stage3/:proposalId/reextract-financials', async (req, res) => {
 
         console.log('Text length:', fullText.length, 'Pages:', pdfResult.numPages);
         console.log('Components: ITR=' + hasITR, 'Comp=' + hasComp, 'BS=' + hasBS, 'PL=' + hasPL);
+
+        // AI-based financial extraction
+        try {
+          console.log('🤖 Attempting AI financial extraction for:', doc.originalName);
+          const aiResult = await extractWithDocumentAI(fullText, 'financial-itr', pdfResult.tables || []);
+          if (aiResult.success && aiResult.data) {
+            const ai = aiResult.data;
+            if (!proposal.documents[i].extractedDetails) proposal.documents[i].extractedDetails = {};
+            if (ai.turnover) proposal.documents[i].extractedDetails.turnover = ai.turnover;
+            if (ai.grossProfit) proposal.documents[i].extractedDetails.grossProfit = ai.grossProfit;
+            if (ai.depreciation) proposal.documents[i].extractedDetails.depreciation = ai.depreciation;
+            if (ai.interestOnLoans) proposal.documents[i].extractedDetails.interestOnLoans = ai.interestOnLoans;
+            if (ai.netProfit) proposal.documents[i].extractedDetails.netProfit = ai.netProfit;
+            if (ai.assessmentYear) proposal.documents[i].extractedDetails.assessmentYear = ai.assessmentYear;
+            console.log('✓ AI financial extraction:', JSON.stringify(ai));
+          }
+        } catch (aiErr) {
+          console.error('AI financial extraction error:', aiErr.message);
+        }
+
         processedCount++;
       } catch (err) {
         console.error('Error re-extracting:', doc.originalName, err.message);
@@ -7819,6 +8787,167 @@ app.get('/admin/banks', async (req, res) => {
   } catch (err) {
     console.error('Banks page error:', err);
     res.status(500).send('Error loading banks');
+  }
+});
+
+// Admin: Bank Contacts - extract contacts from WhatsApp chat
+app.get('/admin/bank-contacts', (req, res) => {
+  res.render('admin-bank-contacts');
+});
+
+// Admin: Bank Contacts - fetch saved contacts from DB
+app.get('/admin/bank-contacts/saved', async (req, res) => {
+  try {
+    const contacts = await BankerContact.find({ phone: { $regex: /\d{10,}/ } }).sort({ message_count: -1 }).lean();
+    const mapped = contacts.map(c => ({
+      phone: c.phone,
+      name: c.name || c.phone,
+      messageCount: c.message_count || 0,
+      lastActive: c.last_active ? c.last_active.toISOString().split('T')[0] : '',
+      bank: c.bank || '',
+      bankType: c.bank_type || ''
+    }));
+    res.json({ success: true, contacts: mapped, totalMessages: mapped.reduce((s, c) => s + c.messageCount, 0) });
+  } catch (err) {
+    console.error('Fetch saved contacts error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Admin: Bank Contacts - extract contacts from uploaded/pasted chat
+app.post('/admin/bank-contacts/extract', policyUpload.single('chatFile'), async (req, res) => {
+  try {
+    let chatText = '';
+
+    if (req.file) {
+      chatText = fs.readFileSync(req.file.path, 'utf8');
+    } else if (req.body && req.body.text) {
+      chatText = req.body.text;
+    } else {
+      return res.status(400).json({ success: false, error: 'No file or text provided' });
+    }
+
+    const { messages } = parseWhatsAppChat(chatText);
+    if (!messages || messages.length === 0) {
+      return res.json({ success: true, contacts: [], totalMessages: 0 });
+    }
+
+    // Group by sender
+    const senderMap = {};
+    for (const msg of messages) {
+      if (!msg.sender) continue;
+      const key = msg.sender;
+      if (!senderMap[key]) {
+        senderMap[key] = { sender: key, messages: [], lastDate: null };
+      }
+      senderMap[key].messages.push(msg);
+      if (msg.parsedDate && (!senderMap[key].lastDate || msg.parsedDate > senderMap[key].lastDate)) {
+        senderMap[key].lastDate = msg.parsedDate;
+      }
+    }
+
+    // Build contacts list
+    const contacts = [];
+    const bankKeys = Object.keys(KNOWN_BANKS_MAP).sort((a, b) => b.length - a.length);
+
+    for (const key of Object.keys(senderMap)) {
+      const info = senderMap[key];
+      const phone = extractSenderNumber(info.sender);
+      const isPhoneOnly = /^\+?\d[\d\s-]{8,}$/.test(info.sender.replace(/^~/, '').trim());
+
+      // Determine display name
+      let name = '';
+      if (!isPhoneOnly) {
+        name = info.sender.replace(/^~/, '').trim();
+        // If name contains the phone number, strip it out
+        if (phone && phone !== info.sender) {
+          name = name.replace(/\+?\d[\d\s-]{8,}/, '').replace(/^[\s~]+|[\s~]+$/g, '').trim();
+        }
+      }
+
+      // Scan messages for bank mentions
+      const bankMentions = {};
+      for (const msg of info.messages) {
+        const text = (msg.text || '').toLowerCase();
+        for (const bk of bankKeys) {
+          if (text.includes(bk.toLowerCase())) {
+            bankMentions[bk] = (bankMentions[bk] || 0) + 1;
+          }
+        }
+      }
+      // Pick most-mentioned bank
+      let associatedBank = '';
+      let maxMentions = 0;
+      for (const [bk, count] of Object.entries(bankMentions)) {
+        if (count > maxMentions) { maxMentions = count; associatedBank = bk; }
+      }
+
+      contacts.push({
+        phone: phone,
+        name: name || phone,
+        messageCount: info.messages.length,
+        lastActive: info.lastDate ? info.lastDate.toISOString().split('T')[0] : '',
+        bank: associatedBank,
+        bankType: associatedBank ? (KNOWN_BANKS_MAP[associatedBank] || '') : ''
+      });
+    }
+
+    // Remove contacts without a valid phone number and sort by message count
+    const validContacts = contacts.filter(c => /\d{10,}/.test(c.phone));
+    validContacts.sort((a, b) => b.messageCount - a.messageCount);
+
+    res.json({ success: true, contacts: validContacts, totalMessages: messages.length });
+  } catch (err) {
+    console.error('Bank contacts extract error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Admin: Bank Contacts - save extracted contacts to DB
+app.post('/admin/bank-contacts/save', async (req, res) => {
+  try {
+    const { contacts } = req.body;
+    if (!contacts || !Array.isArray(contacts) || contacts.length === 0) {
+      return res.status(400).json({ success: false, error: 'No contacts to save' });
+    }
+
+    let saved = 0, updated = 0, skipped = 0;
+    for (const c of contacts) {
+      if (!c.phone || !/\d{10,}/.test(c.phone)) { skipped++; continue; }
+      const existing = await BankerContact.findOne({ phone: c.phone });
+      if (existing) {
+        // Update if new data is richer
+        const updates = {};
+        if (c.name && c.name !== c.phone && (!existing.name || existing.name === existing.phone)) updates.name = c.name;
+        if (c.bank && !existing.bank) { updates.bank = c.bank; updates.bank_type = c.bankType || ''; }
+        if (c.messageCount > (existing.message_count || 0)) updates.message_count = c.messageCount;
+        if (c.lastActive) {
+          const newDate = new Date(c.lastActive);
+          if (!existing.last_active || newDate > existing.last_active) updates.last_active = newDate;
+        }
+        if (Object.keys(updates).length > 0) {
+          await BankerContact.updateOne({ _id: existing._id }, { $set: updates });
+          updated++;
+        } else {
+          skipped++;
+        }
+      } else {
+        await BankerContact.create({
+          phone: c.phone,
+          name: c.name || '',
+          bank: c.bank || '',
+          bank_type: c.bankType || '',
+          message_count: c.messageCount || 0,
+          last_active: c.lastActive ? new Date(c.lastActive) : null
+        });
+        saved++;
+      }
+    }
+
+    res.json({ success: true, saved, updated, skipped, total: contacts.length });
+  } catch (err) {
+    console.error('Bank contacts save error:', err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

@@ -181,6 +181,13 @@
             <p class="subtitle">Applicant: <%= proposal.applicantName || proposal.customerName %></p>
         </header>
 
+        <div style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+            <a href="/" class="btn btn-secondary">← Dashboard</a>
+            <a href="/stage3/<%= proposal.id %>/download-zip" class="btn btn-secondary" style="background: #27ae60; color: white; border-color: #27ae60;" title="Download all documents as ZIP">
+                📥 Download ZIP
+            </a>
+        </div>
+
         <!-- Progress Tracker -->
         <div class="progress-tracker">
             <a href="/proposals/<%= proposal.id %>/edit" class="progress-step completed" style="text-decoration:none;">
@@ -302,38 +309,32 @@
                                             // Function to calculate age from date string
                                             function calculateAge(dateStr) {
                                                 if (!dateStr) return null;
-                                                // Try parsing various date formats: DD/MM/YYYY, DD-MM-YYYY, DD Month YYYY
-                                                let dateParts;
+                                                let day, month, year;
                                                 if (dateStr.includes('/')) {
-                                                    dateParts = dateStr.split('/');
-                                                    if (dateParts.length === 3) {
-                                                        const day = parseInt(dateParts[0]);
-                                                        const month = parseInt(dateParts[1]) - 1;
-                                                        const year = parseInt(dateParts[2]);
-                                                        const birthDate = new Date(year, month, day);
-                                                        const today = new Date();
-                                                        let age = today.getFullYear() - birthDate.getFullYear();
-                                                        const m = today.getMonth() - birthDate.getMonth();
-                                                        if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
-                                                            age--;
-                                                        }
-                                                        return age;
+                                                    // DD/MM/YYYY
+                                                    const parts = dateStr.split('/');
+                                                    if (parts.length === 3) {
+                                                        day = parseInt(parts[0]); month = parseInt(parts[1]) - 1; year = parseInt(parts[2]);
                                                     }
                                                 } else if (dateStr.includes('-')) {
-                                                    dateParts = dateStr.split('-');
-                                                    if (dateParts.length === 3) {
-                                                        const day = parseInt(dateParts[0]);
-                                                        const month = parseInt(dateParts[1]) - 1;
-                                                        const year = parseInt(dateParts[2]);
-                                                        const birthDate = new Date(year, month, day);
-                                                        const today = new Date();
-                                                        let age = today.getFullYear() - birthDate.getFullYear();
-                                                        const m = today.getMonth() - birthDate.getMonth();
-                                                        if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
-                                                            age--;
+                                                    const parts = dateStr.split('-');
+                                                    if (parts.length === 3) {
+                                                        if (parts[0].length === 4) {
+                                                            // YYYY-MM-DD (HTML date input)
+                                                            year = parseInt(parts[0]); month = parseInt(parts[1]) - 1; day = parseInt(parts[2]);
+                                                        } else {
+                                                            // DD-MM-YYYY
+                                                            day = parseInt(parts[0]); month = parseInt(parts[1]) - 1; year = parseInt(parts[2]);
                                                         }
-                                                        return age;
                                                     }
+                                                }
+                                                if (day && month !== undefined && year) {
+                                                    const birthDate = new Date(year, month, day);
+                                                    const today = new Date();
+                                                    let age = today.getFullYear() - birthDate.getFullYear();
+                                                    const m = today.getMonth() - birthDate.getMonth();
+                                                    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
+                                                    return age;
                                                 }
                                                 return null;
                                             }
@@ -484,9 +485,13 @@
                                                 <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
                                                     <% proposal.coApplicants.forEach((ca, idx) => { %>
                                                         <%
-                                                            // For co-applicants: Try to get DOB from their PAN card or Aadhaar
-                                                            let coAppAge = ca.age;
-                                                            let coAppDOB = null;
+                                                            // For co-applicants: Use DOB from Stage 1, then try PAN card/Aadhaar
+                                                            let coAppAge = null;
+                                                            let coAppDOB = ca.dob || null;
+                                                            if (coAppDOB) {
+                                                                coAppAge = calculateAge(coAppDOB);
+                                                            }
+                                                            if (!coAppAge) coAppAge = ca.age;
                                                             if (!coAppAge && proposal.documents) {
                                                                 const coAppName = (ca.name || '').toLowerCase();
                                                                 const coAppFirstName = coAppName.split(' ')[0];
@@ -496,7 +501,6 @@
                                                                     if (!doc.extractedDetails || !doc.extractedDetails.dateOfBirth) continue;
                                                                     const docName = (doc.originalName || '').toLowerCase();
                                                                     const docClass = (doc.classification || '').toLowerCase();
-                                                                    // Match by filename, classification, or any name part
                                                                     const matchesName = docName.includes(coAppFirstName) ||
                                                                         docClass.includes(coAppFirstName) ||
                                                                         coAppNameParts.some(part => docClass.includes(part));
@@ -517,7 +521,8 @@
                                                             <td style="padding: 6px 8px; border: 1px solid #bdc3c7;">
                                                                 <strong>Co-Applicant <%= idx + 1 %>:</strong> <%= ca.name || '-' %>
                                                                 <% if (coAppDOB) { %>
-                                                                    <br><small style="color: #7f8c8d;">(DOB: <%= coAppDOB %>)</small>
+                                                                    <% let displayDOB = coAppDOB; if (coAppDOB.match(/^\d{4}-\d{2}-\d{2}$/)) { const dp = coAppDOB.split('-'); displayDOB = dp[2] + '/' + dp[1] + '/' + dp[0]; } %>
+                                                                    <br><small style="color: #7f8c8d;">(DOB: <%= displayDOB %>)</small>
                                                                 <% } %>
                                                             </td>
                                                             <td style="padding: 6px 8px; border: 1px solid #bdc3c7; text-align: center;">
@@ -546,7 +551,7 @@
                                             let hasMissingData = false;
                                             if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                                                 proposal.coApplicants.forEach(ca => {
-                                                    let coAppAge = ca.age;
+                                                    let coAppAge = ca.dob ? calculateAge(ca.dob) : ca.age;
                                                     if (!coAppAge && proposal.documents) {
                                                         const coAppName = (ca.name || '').toLowerCase();
                                                         const personalDocs = proposal.documents.filter(d => d.category === 'personalId');
@@ -649,6 +654,8 @@
                                                 let s = String(str).trim();
                                                 // Handle negative in parentheses: (1,234) → -1,234
                                                 s = s.replace(/\(([^)]+)\)/, '-$1');
+                                                // Fix OCR dot-as-comma: "3,1.2,79,090" → dot not at end as .XX is OCR noise
+                                                s = s.replace(/\.(?!\d{1,2}$)/g, '');
                                                 // Fix OCR comma-as-decimal: "12,62,95,048,00" → "12,62,95,048.00"
                                                 // If string ends with ,XX (2 digits) and has no period, treat last comma as decimal
                                                 if (!s.includes('.') && /,\d{2}$/.test(s)) {
@@ -671,6 +678,16 @@
                                                         const nums = afterText.match(/-?\(?[\d][0-9,.]*\)?/g);
                                                         if (nums) {
                                                             for (const numStr of nums) {
+                                                                // Skip schedule note references (bare 1-2 digit integers like "19", "20")
+                                                                if (/^\d{1,2}$/.test(numStr.trim()) && parseInt(numStr) <= 50) continue;
+                                                                // Skip enumeration markers like "(1)", "(2)", "(3)"
+                                                                if (/^\(\d{1,2}\)$/.test(numStr.trim())) continue;
+                                                                // Skip section references like "U/S 288A" OCR'd as "U/S 2884"
+                                                                const numIdx = afterText.indexOf(numStr);
+                                                                if (numIdx >= 2) {
+                                                                    const before = afterText.substring(Math.max(0, numIdx - 6), numIdx);
+                                                                    if (/[Uu]\/\s*[Ss]?\s*$/.test(before)) continue;
+                                                                }
                                                                 const v = parseCurrencyVal(numStr);
                                                                 if (v !== null && Math.abs(v) >= minVal) return v;
                                                             }
@@ -749,6 +766,25 @@
                                                     fyData[fyNorm] = { turnover: null, grossProfit: null, depreciation: null, interestOnLoans: null, netProfit: null };
                                                 }
 
+                                                // Detect if amounts are in Lakhs/Lacs or Crores for this document
+                                                let docUnitMultiplier = 1;
+                                                if (/\(?\s*amount\s+in\s+rs\.?\s*['']?\s*(?:lacs?|lakhs?)\s*\)?/i.test(text) ||
+                                                    /all\s+amounts.*rounded\s+off\s+to\s+['']?lacs?['']?/i.test(text) ||
+                                                    /\(?\s*(?:rs\.?\s+)?in\s+(?:lacs?|lakhs?)\s*\)?/i.test(text) ||
+                                                    /\(?\s*₹?\s*in\s+(?:lacs?|lakhs?)\s*\)?/i.test(text)) {
+                                                    docUnitMultiplier = 100000;
+                                                } else if (/\(?\s*amount\s+in\s+(?:rs\.?\s*)?crores?\s*\)?/i.test(text) ||
+                                                           /\(?\s*(?:rs\.?\s+)?in\s+crores?\s*\)?/i.test(text) ||
+                                                           /\(?\s*₹?\s*in\s+crores?\s*\)?/i.test(text)) {
+                                                    docUnitMultiplier = 10000000;
+                                                }
+
+                                                // Snapshot existing values before extraction so we only multiply newly extracted ones
+                                                const preFySnapshot = JSON.parse(JSON.stringify(fyData[fyNorm]));
+
+                                                // Helper to adjust minVal thresholds when amounts are in Lakhs/Crores
+                                                const adjMin = (val) => docUnitMultiplier > 1 ? Math.max(1, Math.round(val / docUnitMultiplier)) : val;
+
                                                 const hasPL = /STATEMENT\s+OF\s+PROFIT|PROFIT\s*&?\s*LOSS\s+(?:FOR|ACCOUNT)/i.test(text) ||
                                                               /Trading\s+and\s+Profit\s*&?\s*Loss/i.test(text);
 
@@ -826,7 +862,7 @@
                                                             // Sum up finance-related items from P&L
                                                             let totalInterest = 0;
                                                             const intPatterns = [
-                                                                /(?:Bank\s+interest|Interest\s+on\s+(?:car\s+)?loan|Interest\s+on\s+borrowing|Finance\s+charges?)[\s:]*\n?\s*([\d,]+(?:\.\d+)?)/gi
+                                                                /(?:Bank\s+interest|Interest\s+on\s+(?:car\s+)?loan|Interest\s+on\s+borrowing|Finance\s+charges?|To\s+Interest\b)[\s:]*\n?\s*([\d,]+(?:\.\d+)?)/gi
                                                             ];
                                                             intPatterns.forEach(pat => {
                                                                 let m;
@@ -842,7 +878,8 @@
                                                                 'Total\\s+Finance\\s+Cost',
                                                                 'Finance\\s+Cost(?!\\s*\\d)',
                                                                 'Interest\\s+on\\s+Loans',
-                                                                'Interest\\s+to\\s+Partners'
+                                                                'Interest\\s+to\\s+Partners',
+                                                                'To\\s+Interest\\b'
                                                             ], 100);
                                                             if (fc && fc > 0) fyData[fyNorm].interestOnLoans = fc;
                                                         }
@@ -856,7 +893,7 @@
                                                             'Sales\\s+Accounts',
                                                             'Iron\\s+Scrap\\s+Sales',
                                                             'Net\\s+Sales'
-                                                        ], 100000);
+                                                        ], adjMin(100000));
                                                         if (rev && rev > 0) fyData[fyNorm].turnover = rev;
 
                                                         const gp = extractFinValue(text, [
@@ -864,30 +901,104 @@
                                                             'Gross\\s+Profit\\s+C\\/d',
                                                             'Gross\\s+profit\\s+[CB]\\/d',
                                                             'Gross\\s+Profit(?!\\s*/)'
-                                                        ], 1000);
+                                                        ], adjMin(1000));
                                                         if (gp !== null) fyData[fyNorm].grossProfit = gp;
 
-                                                        const dep = extractFinValue(text, [
-                                                            'Depreciation\\s+and\\s+amortization',
-                                                            'Depreciation\\s+(?:debited|expense)',
-                                                            'Depreciation\\s+debited\\s+to\\s+P',
-                                                            'Depreciation(?=\\s+[\\d,])'
-                                                        ], 1000);
+                                                        // Try positional extraction first: when OCR stacks labels then amounts
+                                                        // e.g. "Operating...\nEmployee...\nFinance costs\nDepreciation...\nOther expenses\n\n4345\n2696\n84\n280\n530"
+                                                        // The amounts block lists ALL expense items in order. Depreciation is
+                                                        // at index (totalAmountsInBlock - remainingLabelsAfterDep - 1)
+                                                        let dep = null;
+                                                        const depPLMatch = text.match(/Depreciation\s+and\s+amortization\s+expense/i);
+                                                        if (depPLMatch) {
+                                                            const afterDep = text.substring(depPLMatch.index + depPLMatch[0].length, depPLMatch.index + depPLMatch[0].length + 400);
+                                                            // Check if next non-blank content is more labels (not a number) — stacked layout
+                                                            const firstContent = afterDep.match(/\n\s*(\S+)/);
+                                                            if (firstContent && /^[A-Za-z]/.test(firstContent[1])) {
+                                                                // Count how many label lines remain after depreciation before the amounts block
+                                                                const labelsThenNums = afterDep.match(/^([\s\S]*?)\n\s*(-?\(?[\d][\d,.]*\)?)/);
+                                                                if (labelsThenNums) {
+                                                                    const labelBlock = labelsThenNums[1];
+                                                                    const remainingLabels = labelBlock.split('\n').filter(l => l.trim().length > 0).length;
+                                                                    // Extract contiguous single-amount-per-line block (stop at blank line or multi-amount line)
+                                                                    const amtsStart = depPLMatch.index + depPLMatch[0].length + labelsThenNums[0].length - labelsThenNums[2].length;
+                                                                    const amtsText = text.substring(amtsStart, amtsStart + 400);
+                                                                    const amtLines = amtsText.split('\n');
+                                                                    const singleAmounts = [];
+                                                                    for (const line of amtLines) {
+                                                                        const trimmed = line.trim();
+                                                                        if (!trimmed) { if (singleAmounts.length > 0) break; continue; }
+                                                                        const lineNums = trimmed.match(/-?\(?[\d][\d,.]*\)?/g);
+                                                                        if (lineNums && lineNums.length === 1 && /^-?\(?[\d][\d,.]*\)?\s*$/.test(trimmed)) {
+                                                                            singleAmounts.push(lineNums[0]);
+                                                                        } else {
+                                                                            if (singleAmounts.length > 0) break;
+                                                                        }
+                                                                    }
+                                                                    // Depreciation position = total amounts - remaining labels after it - 1
+                                                                    const depIdx = singleAmounts.length - remainingLabels - 1;
+                                                                    if (depIdx >= 0 && depIdx < singleAmounts.length) {
+                                                                        const depVal = parseCurrencyVal(singleAmounts[depIdx]);
+                                                                        if (depVal && depVal > 0) dep = depVal;
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        if (!dep) {
+                                                            dep = extractFinValue(text, [
+                                                                'Depreciation\\s+and\\s+amortization',
+                                                                'Depreciation\\s+(?:debited|expense)',
+                                                                'Depreciation\\s+debited\\s+to\\s+P',
+                                                                'Depreciation(?=\\s+[\\d,])'
+                                                            ], adjMin(1000));
+                                                        }
                                                         if (dep && dep > 0) fyData[fyNorm].depreciation = dep;
 
-                                                        let fc = extractFinValue(text, ['Interest\\s+on\\s+Loans'], 1000);
-                                                        if (!fc) fc = extractFinValue(text, ['Total\\s+Finance\\s+Cost', 'Finance\\s+Cost(?!\\s*\\d)'], 1000);
-                                                        if (!fc) fc = extractFinValue(text, ['Interest\\s+to\\s+Partners'], 1000);
+                                                        // Try positional extraction for Finance costs in stacked layout
+                                                        let fc = null;
+                                                        const fcMatch = text.match(/Finance\s+costs?\s*\n/i);
+                                                        if (fcMatch) {
+                                                            const afterFC = text.substring(fcMatch.index + fcMatch[0].length, fcMatch.index + fcMatch[0].length + 400);
+                                                            const fcFirst = afterFC.match(/^\s*(\S+)/);
+                                                            if (fcFirst && /^[A-Za-z]/.test(fcFirst[1])) {
+                                                                // Stacked layout: count remaining labels before amounts
+                                                                const fcLabelsThenNums = afterFC.match(/^([\s\S]*?)\n\s*(-?\(?[\d][\d,.]*\)?)/);
+                                                                if (fcLabelsThenNums) {
+                                                                    const fcLabelBlock = fcLabelsThenNums[1];
+                                                                    const fcRemaining = fcLabelBlock.split('\n').filter(l => l.trim().length > 0).length;
+                                                                    const fcAmtsStart = fcMatch.index + fcMatch[0].length + fcLabelsThenNums[0].length - fcLabelsThenNums[2].length;
+                                                                    const fcAmtsText = text.substring(fcAmtsStart, fcAmtsStart + 400);
+                                                                    const fcAmtLines = fcAmtsText.split('\n');
+                                                                    const fcSingleAmounts = [];
+                                                                    for (const line of fcAmtLines) {
+                                                                        const trimmed = line.trim();
+                                                                        if (!trimmed) { if (fcSingleAmounts.length > 0) break; continue; }
+                                                                        const lineNums = trimmed.match(/-?\(?[\d][\d,.]*\)?/g);
+                                                                        if (lineNums && lineNums.length === 1 && /^-?\(?[\d][\d,.]*\)?\s*$/.test(trimmed)) {
+                                                                            fcSingleAmounts.push(lineNums[0]);
+                                                                        } else {
+                                                                            if (fcSingleAmounts.length > 0) break;
+                                                                        }
+                                                                    }
+                                                                    const fcIdx = fcSingleAmounts.length - fcRemaining - 1;
+                                                                    if (fcIdx >= 0 && fcIdx < fcSingleAmounts.length) {
+                                                                        const fcVal = parseCurrencyVal(fcSingleAmounts[fcIdx]);
+                                                                        if (fcVal && fcVal > 0) fc = fcVal;
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        if (!fc) fc = extractFinValue(text, ['Interest\\s+on\\s+Loans'], adjMin(1000));
+                                                        if (!fc) fc = extractFinValue(text, ['Total\\s+Finance\\s+Cost', 'Finance\\s+Cost(?!\\s*\\d)'], adjMin(1000));
+                                                        if (!fc) fc = extractFinValue(text, ['Interest\\s+to\\s+Partners'], adjMin(1000));
                                                         if (fc && fc > 0) fyData[fyNorm].interestOnLoans = fc;
 
                                                         const np = extractFinValue(text, [
-                                                            'Profit\\s+before\\s+tax',
-                                                            'PROFIT\\s+BEFORE\\s+TAX\\s+AS\\s+PER',
+                                                            'Profit\\s+before\\s+tax(?!\\s+AS\\s+PER)',
                                                             'Profit\\s+before\\s+(?:exceptional|extra)',
-                                                            'Net\\s+Profit\\s+before\\s+[Tt]ax',
-                                                            'Net\\s+Profit\\s+Before\\s+Tax\\s+as\\s+per\\s+P',
+                                                            'Net\\s+Profit\\s+before\\s+[Tt]ax(?!\\s+as\\s+per)',
                                                             'Net\\s+Profit(?!\\s+Before)(?!\\s*/)'
-                                                        ], 100);
+                                                        ], adjMin(100));
                                                         if (np !== null) fyData[fyNorm].netProfit = np;
 
                                                         // Extract previous year data from second column
@@ -899,19 +1010,19 @@
                                                                 fyData[prevFYNorm] = { turnover: null, grossProfit: null, depreciation: null, interestOnLoans: null, netProfit: null };
                                                             }
 
-                                                            const pr = extractPrevYearVal(text, ['Revenue\\s+from\\s+Operations'], 10000);
+                                                            const pr = extractPrevYearVal(text, ['Revenue\\s+from\\s+Operations'], adjMin(10000));
                                                             if (pr && !fyData[prevFYNorm].turnover) fyData[prevFYNorm].turnover = pr;
 
-                                                            const pd = extractPrevYearVal(text, ['Depreciation\\s+and\\s+amortization', 'Depreciation\\s+(?:debited|expense)'], 1000);
+                                                            const pd = extractPrevYearVal(text, ['Depreciation\\s+and\\s+amortization', 'Depreciation\\s+(?:debited|expense)'], adjMin(1000));
                                                             if (pd && pd > 0 && !fyData[prevFYNorm].depreciation) fyData[prevFYNorm].depreciation = pd;
 
-                                                            const pnp = extractPrevYearVal(text, ['Profit\\s+before\\s+tax'], 100);
+                                                            const pnp = extractPrevYearVal(text, ['Profit\\s+before\\s+tax'], adjMin(100));
                                                             if (pnp !== null && !fyData[prevFYNorm].netProfit) fyData[prevFYNorm].netProfit = pnp;
                                                         }
                                                     }
                                                 }
 
-                                                // === ITR Ack / Computation fallback ===
+                                                // === ITR Ack / Computation fallback (values in Lakhs — will be unit-converted) ===
                                                 if (!hasPL || !fyData[fyNorm].netProfit) {
                                                     // Book Profit from ITR ack: "Book Profit...\n{field_num}\n{amount}"
                                                     const bpMatch = text.match(/Book\s+Profit[^\n]*\n\s*\d+\n\s*([\d,.]+)/i);
@@ -919,11 +1030,13 @@
                                                         const bp = parseCurrencyVal(bpMatch[1]);
                                                         if (bp !== null && Math.abs(bp) >= 100 && !fyData[fyNorm].netProfit) fyData[fyNorm].netProfit = bp;
                                                     }
-                                                    // Net Profit Before Tax as per P&L a/c (value on same or next line)
-                                                    const npPL = text.match(/Net\s+Profit\s+Before\s+Tax\s+as\s+per\s+P\s*&?\s*L\s*[aA]?\/?\.?[cC]?\s*\n?\s*([\d,.]+)/i);
-                                                    if (npPL) {
-                                                        const npVal = parseCurrencyVal(npPL[1]);
-                                                        if (npVal !== null && Math.abs(npVal) >= 100) fyData[fyNorm].netProfit = npVal;
+                                                    // Taxable income from "RS. X @ Y%" in ITR computation section
+                                                    if (!fyData[fyNorm].netProfit) {
+                                                        const taxBase = text.match(/RS\.?\s*([\d,]+)\s*@\s*\d+\s*%/i);
+                                                        if (taxBase) {
+                                                            const tb = parseCurrencyVal(taxBase[1]);
+                                                            if (tb !== null && tb >= 100) fyData[fyNorm].netProfit = tb;
+                                                        }
                                                     }
                                                 }
 
@@ -932,7 +1045,7 @@
                                                     const saleMatch = text.match(/(?:By\s+Sales(?:\s+Accounts)?|Sales\s+Accounts|SALES)\s+(?:SALE\s+)?([\d,]+(?:\.\d{2})?)/i);
                                                     if (saleMatch) {
                                                         const sv = parseCurrencyVal(saleMatch[1]);
-                                                        if (sv && sv > 100000) fyData[fyNorm].turnover = sv;
+                                                        if (sv && sv > adjMin(100000)) fyData[fyNorm].turnover = sv;
                                                     }
                                                 }
 
@@ -949,14 +1062,27 @@
                                                 }
 
                                                 // === Depreciation fallback from ITR computation ===
+                                                // Amounts-block first: positive number before negative in computation section
+                                                // (DEP DISALLOWED amount is always followed by negative ALLOWED DEPRECIATION)
                                                 if (!fyData[fyNorm].depreciation) {
-                                                    // Try "debited to P" FIRST (gives actual dep amount),
-                                                    // "as per IT Act" SECOND (often followed by schedule number, not amount)
+                                                    const compIdx = text.search(/COMPUTATION\s+OF\s+TOTAL/i);
+                                                    if (compIdx >= 0) {
+                                                        const compText = text.substring(compIdx, compIdx + 1500);
+                                                        if (/DEPRECIATION\s+DISALLOWED/i.test(compText)) {
+                                                            const depBlock = compText.match(/\n\s*(\d[\d,]*)\s*\n\s*-(\d[\d,]*)/);
+                                                            if (depBlock) {
+                                                                const dd = parseCurrencyVal(depBlock[1]);
+                                                                if (dd && dd >= 1000) fyData[fyNorm].depreciation = dd;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                if (!fyData[fyNorm].depreciation) {
                                                     const depIT = extractFinValue(text, [
                                                         'Depreciation\\s+debited\\s+to\\s+P',
                                                         'DEPRECIATION\\s+DISALLOWED',
                                                         'Depreciation(?=\\s+[\\d,])'
-                                                    ], 1000);
+                                                    ], adjMin(1000));
                                                     if (depIT && depIT > 0) fyData[fyNorm].depreciation = depIT;
                                                 }
 
@@ -965,7 +1091,15 @@
                                                     const gstTurnover = text.match(/Amount\s+of\s+turnover\/?\s*Gross\s+receipt\s+as\s+per\s+the\s+GST\s+return[^\n]*?\s+([\d,]+)/i);
                                                     if (gstTurnover) {
                                                         const gtv = parseCurrencyVal(gstTurnover[1]);
-                                                        if (gtv && gtv > 100000) fyData[fyNorm].turnover = gtv;
+                                                        if (gtv && gtv > adjMin(100000)) fyData[fyNorm].turnover = gtv;
+                                                    }
+                                                }
+                                                // Lenient GST turnover: OCR may corrupt "Amount of turnover" label
+                                                if (!fyData[fyNorm].turnover) {
+                                                    const gstFiled = text.match(/GST\s+return\s+filed\s*\n?\s*([\d,]+)/i);
+                                                    if (gstFiled) {
+                                                        const gtv = parseCurrencyVal(gstFiled[1]);
+                                                        if (gtv && gtv > adjMin(100000)) fyData[fyNorm].turnover = gtv;
                                                     }
                                                 }
 
@@ -976,8 +1110,68 @@
                                                         'Total\\s+Finance\\s+Cost',
                                                         'Finance\\s+[Cc]harges?',
                                                         'Bank\\s+interest'
-                                                    ], 100);
+                                                    ], adjMin(100));
                                                     if (fcFb && fcFb > 0) fyData[fyNorm].interestOnLoans = fcFb;
+                                                }
+
+                                                // Apply unit multiplier (Lakhs/Crores) to newly extracted values
+                                                if (docUnitMultiplier > 1) {
+                                                    ['turnover', 'grossProfit', 'depreciation', 'interestOnLoans', 'netProfit'].forEach(key => {
+                                                        if (fyData[fyNorm][key] !== null && fyData[fyNorm][key] !== preFySnapshot[key]) {
+                                                            fyData[fyNorm][key] = Math.round(fyData[fyNorm][key] * docUnitMultiplier);
+                                                        }
+                                                    });
+                                                    // Also apply to previous year data if we extracted it
+                                                    const prevYearMatch = text.match(/31-03-(\d{4})\s+31-03-(\d{4})/);
+                                                    if (prevYearMatch) {
+                                                        const prevYear = parseInt(prevYearMatch[2]);
+                                                        const prevFYNorm = `${prevYear - 1}-${String(prevYear).slice(-2)}`;
+                                                        if (fyData[prevFYNorm]) {
+                                                            ['turnover', 'depreciation', 'netProfit'].forEach(key => {
+                                                                if (fyData[prevFYNorm][key] !== null) {
+                                                                    fyData[prevFYNorm][key] = Math.round(fyData[prevFYNorm][key] * docUnitMultiplier);
+                                                                }
+                                                            });
+                                                        }
+                                                    }
+                                                }
+
+                                                // === Depreciation from ITR "Depreciation as per profit and loss statement" ===
+                                                // This value is already in absolute rupees — placed AFTER unit conversion
+                                                if (!fyData[fyNorm].depreciation) {
+                                                    const depPLStmt = text.match(/Depreciation\s+as\s+per\s+profit\s+and\s+loss\s+statement\s+([\d,]+(?:\.\d+)?)/i);
+                                                    if (depPLStmt) {
+                                                        const dv = parseCurrencyVal(depPLStmt[1]);
+                                                        if (dv && dv >= 1000) fyData[fyNorm].depreciation = dv;
+                                                    }
+                                                }
+
+                                                // === Net Profit from ITR computation (absolute rupees — AFTER unit conversion) ===
+                                                // These ITR patterns explicitly reference the P&L profit and are most reliable.
+                                                // They ALWAYS override any earlier extraction since P&L stacked layouts often grab wrong values.
+                                                {
+                                                    // "Profit/(loss) before tax as per profit and loss statement 6,03,21,250"
+                                                    const pbtPL = text.match(/Profit\s*\/?\s*\(?loss\)?\s+before\s+tax\s+as\s+per\s+profit\s+and\s+loss\s+statement\s+([\d,]+(?:\.\d+)?)/i);
+                                                    if (pbtPL) {
+                                                        const pv = parseCurrencyVal(pbtPL[1]);
+                                                        if (pv !== null && Math.abs(pv) >= 100) fyData[fyNorm].netProfit = pv;
+                                                    }
+                                                }
+                                                {
+                                                    // "PROFIT BEFORE TAX AS PER PROFIT AND LOSS ACCOUNT\n4,06,06,269"
+                                                    const pbtComp = text.match(/PROFIT\s+BEFORE\s+TAX\s+AS\s+PER\s+PROFIT\s+AND\s+LOSS[\s\S]{0,60}?(\d[\d,]*)/i);
+                                                    if (pbtComp) {
+                                                        const pbt = parseCurrencyVal(pbtComp[1]);
+                                                        if (pbt !== null && Math.abs(pbt) >= 100) fyData[fyNorm].netProfit = pbt;
+                                                    }
+                                                }
+                                                if (!fyData[fyNorm].netProfit) {
+                                                    // "Net Profit Before Tax as per P&L a/c"
+                                                    const npPL = text.match(/Net\s+Profit\s+Before\s+Tax\s+as\s+per\s+P\s*&?\s*L\s*[aA]?\/?\.?[cC]?\s*\n?\s*([\d,.]+)/i);
+                                                    if (npPL) {
+                                                        const npVal = parseCurrencyVal(npPL[1]);
+                                                        if (npVal !== null && Math.abs(npVal) >= 100) fyData[fyNorm].netProfit = npVal;
+                                                    }
                                                 }
 
                                                 // financialData fallback
@@ -988,6 +1182,16 @@
                                                     if (fd.grossProfit && !fyData[fyNorm].grossProfit) fyData[fyNorm].grossProfit = fd.grossProfit;
                                                     if (fd.depreciation && !fyData[fyNorm].depreciation) fyData[fyNorm].depreciation = fd.depreciation;
                                                     if (fd.netProfit && !fyData[fyNorm].netProfit) fyData[fyNorm].netProfit = fd.netProfit;
+                                                }
+
+                                                // AI extractedDetails fallback
+                                                if (doc.extractedDetails) {
+                                                    const ed = doc.extractedDetails;
+                                                    if (ed.turnover && !fyData[fyNorm].turnover) fyData[fyNorm].turnover = ed.turnover;
+                                                    if (ed.grossProfit && !fyData[fyNorm].grossProfit) fyData[fyNorm].grossProfit = ed.grossProfit;
+                                                    if (ed.depreciation && !fyData[fyNorm].depreciation) fyData[fyNorm].depreciation = ed.depreciation;
+                                                    if (ed.interestOnLoans && !fyData[fyNorm].interestOnLoans) fyData[fyNorm].interestOnLoans = ed.interestOnLoans;
+                                                    if (ed.netProfit && !fyData[fyNorm].netProfit) fyData[fyNorm].netProfit = ed.netProfit;
                                                 }
                                             });
 
@@ -1155,29 +1359,48 @@
                                                 }
                                             });
                                             // Also check partnership deed for partners
+                                            // Pick the deed with the latest deedDate
                                             if (memoShareholders.length === 0 && memoDirectors.length === 0) {
-                                                camIncorpDocs.forEach(doc => {
-                                                    if (doc.extractedDetails && doc.extractedDetails.partners && doc.extractedDetails.partners.length > 0) {
-                                                        doc.extractedDetails.partners.forEach(p => {
-                                                            memoShareholders.push({ name: p.name || p, shares: '-', percentage: p.sharePercentage || '-' });
-                                                        });
-                                                    }
+                                                const deedsWithPartners = camIncorpDocs.filter(doc =>
+                                                    doc.extractedDetails && doc.extractedDetails.partners && doc.extractedDetails.partners.length > 0);
+                                                // Sort by deedDate descending (latest first)
+                                                deedsWithPartners.sort((a, b) => {
+                                                    const da = a.extractedDetails.deedDate ? new Date(a.extractedDetails.deedDate) : new Date(0);
+                                                    const db = b.extractedDetails.deedDate ? new Date(b.extractedDetails.deedDate) : new Date(0);
+                                                    return db - da;
                                                 });
+                                                const latestDeed = deedsWithPartners[0];
+                                                if (latestDeed) {
+                                                    latestDeed.extractedDetails.partners.forEach(p => {
+                                                        memoShareholders.push({ name: p.name || p, shares: '-', percentage: p.profitPercent || p.sharePercentage || '-' });
+                                                    });
+                                                }
                                             }
-                                            // Deduplicate
-                                            memoShareholders = [...new Map(memoShareholders.map(s => [s.name, s])).values()];
-                                            memoDirectors = [...new Map(memoDirectors.map(d => [d.name, d])).values()];
+                                            // Normalize name for dedup: strip Mr/Mrs/Ms/Dr prefixes, trim, uppercase
+                                            function normName(n) {
+                                                return (n || '').replace(/^(mr\.?|mrs\.?|ms\.?|dr\.?|shri\.?|smt\.?)\s+/i, '').trim().toUpperCase();
+                                            }
+                                            // Deduplicate by normalized name, keep the entry with more data
+                                            memoShareholders = [...new Map(memoShareholders.map(s => [normName(s.name), s])).values()];
+                                            memoDirectors = [...new Map(memoDirectors.map(d => [normName(d.name), d])).values()];
+                                        %>
+                                        <%
+                                            const isPartnershipType = proposal.applicantType === 'Partnership';
+                                            const memoListTitle = isPartnershipType ? 'List of Partners' : 'List of Shareholders';
+                                            const memoPctLabel = isPartnershipType ? 'Profit %' : 'Share %';
                                         %>
                                         <% if (memoShareholders.length > 0) { %>
                                         <div style="margin-bottom: 10px;">
-                                            <strong style="color: #1565c0; font-size: 0.9em;">List of Shareholders</strong>
+                                            <strong style="color: #1565c0; font-size: 0.9em;"><%= memoListTitle %></strong>
                                             <table style="width: 100%; border-collapse: collapse; margin-top: 5px; font-size: 0.85em;">
                                                 <thead>
                                                     <tr style="background: #e3f2fd;">
                                                         <th style="padding: 5px 8px; border: 1px solid #bbdefb; text-align: left;">S.No</th>
                                                         <th style="padding: 5px 8px; border: 1px solid #bbdefb; text-align: left;">Name</th>
+                                                        <% if (!isPartnershipType) { %>
                                                         <th style="padding: 5px 8px; border: 1px solid #bbdefb; text-align: center;">No. of Shares</th>
-                                                        <th style="padding: 5px 8px; border: 1px solid #bbdefb; text-align: center;">Share %</th>
+                                                        <% } %>
+                                                        <th style="padding: 5px 8px; border: 1px solid #bbdefb; text-align: center;"><%= memoPctLabel %></th>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
@@ -1185,7 +1408,9 @@
                                                     <tr style="background: <%= si % 2 === 0 ? '#fff' : '#f5f9ff' %>;">
                                                         <td style="padding: 4px 8px; border: 1px solid #e0e0e0; text-align: center;"><%= si + 1 %></td>
                                                         <td style="padding: 4px 8px; border: 1px solid #e0e0e0; font-weight: 500;"><%= sh.name %></td>
+                                                        <% if (!isPartnershipType) { %>
                                                         <td style="padding: 4px 8px; border: 1px solid #e0e0e0; text-align: center;"><%= sh.shares ? (typeof sh.shares === 'number' ? parseInt(sh.shares).toLocaleString('en-IN') : sh.shares) : '-' %></td>
+                                                        <% } %>
                                                         <td style="padding: 4px 8px; border: 1px solid #e0e0e0; text-align: center; color: #2e7d32; font-weight: 600;"><%= sh.percentage ? sh.percentage + (String(sh.percentage).includes('%') ? '' : '%') : '-' %></td>
                                                     </tr>
                                                     <% }); %>
@@ -1220,6 +1445,61 @@
                                         <% } %>
                                         <% if (memoShareholders.length === 0 && memoDirectors.length === 0) { %>
                                             <div style="color: #999; font-style: italic; font-size: 0.85em;">No shareholders/directors data extracted yet.</div>
+                                        <% } %>
+                                        <%
+                                            // Check for pending incorporation documents
+                                            const camClassifiedDocs = (proposal.documents || [])
+                                                .filter(f => f.classification && f.classification.trim() !== '')
+                                                .map(f => f.classification.toLowerCase());
+                                            function isCamDocClassified(docName) {
+                                                const dn = docName.toLowerCase();
+                                                if (camClassifiedDocs.includes(dn)) return true;
+                                                const prefixes = ['partnership deed', 'reconstituted partnership deed',
+                                                    'certificate of incorporation', 'memorandum of association', 'articles of association',
+                                                    'list of shareholders of', 'list of directors of'];
+                                                for (const prefix of prefixes) {
+                                                    if (dn.startsWith(prefix)) {
+                                                        if (camClassifiedDocs.some(cd => cd.startsWith(prefix))) return true;
+                                                    }
+                                                }
+                                                return false;
+                                            }
+                                            const camPendingIncorp = [];
+                                            if (proposal.applicantType === 'Partnership') {
+                                                const pd = 'Partnership deed - Date of deed, Profit & Loss share of partners';
+                                                const rd = 'Reconstituted partnership deed - Date of deed, Profit & Loss share of partners';
+                                                if (!isCamDocClassified(pd)) camPendingIncorp.push(pd);
+                                                if (!isCamDocClassified(rd)) camPendingIncorp.push(rd);
+                                            } else if (proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') {
+                                                const incDocs = [
+                                                    'Certificate of Incorporation',
+                                                    'Memorandum of Association',
+                                                    'Articles of Association',
+                                                    'List of Shareholders of ' + proposal.applicantName,
+                                                    'List of Directors of ' + proposal.applicantName
+                                                ];
+                                                incDocs.forEach(d => { if (!isCamDocClassified(d)) camPendingIncorp.push(d); });
+                                                if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                                                    proposal.coApplicants.forEach((co, idx) => {
+                                                        if (co.type !== 'Individual') {
+                                                            const csh = 'List of Shareholders of ' + (co.name || 'CoApplicant ' + (idx + 1));
+                                                            const cdr = 'List of Directors of ' + (co.name || 'CoApplicant ' + (idx + 1));
+                                                            if (!isCamDocClassified(csh)) camPendingIncorp.push(csh);
+                                                            if (!isCamDocClassified(cdr)) camPendingIncorp.push(cdr);
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        %>
+                                        <% if (camPendingIncorp.length > 0) { %>
+                                        <div style="margin-top: 8px; padding: 8px 10px; background: #fff3e0; border: 1px solid #ffe0b2; border-radius: 5px;">
+                                            <strong style="color: #e65100; font-size: 0.85em;">Pending Documents (<%= camPendingIncorp.length %>)</strong>
+                                            <ul style="margin: 5px 0 0 0; padding-left: 18px; font-size: 0.82em; color: #bf360c;">
+                                                <% camPendingIncorp.forEach(pd => { %>
+                                                <li style="margin-bottom: 3px;"><%= pd %></li>
+                                                <% }); %>
+                                            </ul>
+                                        </div>
                                         <% } %>
                                         <div class="memo-content"><%= proposal.camMemo?.incorporation || '' %></div>
                                     </td>
@@ -1258,21 +1538,54 @@
                                                               cls.includes('llp') || cls.includes('pragati') || cls.includes('pragathi');
                                             if (docFY && isBizITR) {
                                                 let salesAmt = 0, prevSalesAmt = 0;
+                                                // Detect if amounts are in Lakhs/Lacs or Crores
+                                                let memoUnitMul = 1;
+                                                if (/\(?\s*amount\s+in\s+rs\.?\s*['']?\s*(?:lacs?|lakhs?)\s*\)?/i.test(txt) ||
+                                                    /all\s+amounts.*rounded\s+off\s+to\s+['']?lacs?['']?/i.test(txt) ||
+                                                    /\(?\s*(?:rs\.?\s+)?in\s+(?:lacs?|lakhs?)\s*\)?/i.test(txt) ||
+                                                    /\(?\s*₹?\s*in\s+(?:lacs?|lakhs?)\s*\)?/i.test(txt)) {
+                                                    memoUnitMul = 100000;
+                                                } else if (/\(?\s*amount\s+in\s+(?:rs\.?\s*)?crores?\s*\)?/i.test(txt) ||
+                                                           /\(?\s*(?:rs\.?\s+)?in\s+crores?\s*\)?/i.test(txt) ||
+                                                           /\(?\s*₹?\s*in\s+crores?\s*\)?/i.test(txt)) {
+                                                    memoUnitMul = 10000000;
+                                                }
                                                 // Pattern 1: Trading Account - "SALES A/C" or "BY SALES"
-                                                const salesMatch = txt.match(/(?:BY\s+)?SALES(?:\s+A\/C)?\s*(?:\n?\d+\s*\n)?\s*([\d,]+(?:\.\d+)?)/i);
-                                                if (salesMatch) salesAmt = parseFloat(salesMatch[1].replace(/,/g, ''));
-                                                // Pattern 2: P&L - "Revenue from Operations 15 40,017,881.84 33,238,881.55"
+                                                const mSalesMatch = txt.match(/(?:BY\s+)?SALES(?:\s+A\/C)?\s*(?:\n?\d+\s*\n)?\s*([\d,]+(?:\.\d+)?)/i);
+                                                if (mSalesMatch) { const sv = parseFloat(mSalesMatch[1].replace(/,/g, '')); if (sv > 10000) salesAmt = sv; }
+                                                // Pattern 1b: Trading P&L "Iron Scrap Sales" or named sales
                                                 if (!salesAmt) {
-                                                    const revMatch = txt.match(/Revenue\s+from\s+Operations\s*(?:\d+\s*)?\s*([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)?/i);
+                                                    const mTradMatch = txt.match(/(?:Iron\s+Scrap\s+Sales|By\s+Sales[\s\S]{0,60}?(?:Scrap\s+Sales|Sales\s+Accounts?))\s*[\s\S]{0,100}?([\d,]{5,}(?:\.\d+)?)/i);
+                                                    if (mTradMatch) { const sv = parseFloat(mTradMatch[1].replace(/,/g, '')); if (sv > 100000) salesAmt = sv; }
+                                                }
+                                                // Pattern 1c: "Sales Accounts" followed by amount
+                                                if (!salesAmt) {
+                                                    const mSaMatch = txt.match(/Sales\s+Accounts\s*\n?\s*([\d,]{5,}(?:\.\d+)?)/i);
+                                                    if (mSaMatch) { const sv = parseFloat(mSaMatch[1].replace(/,/g, '')); if (sv > 100000) salesAmt = sv; }
+                                                }
+                                                // Pattern 2: P&L - "Revenue from Operations"
+                                                // Note: (?:\d{1,3}\s+)? matches note ref numbers only, not amount digits
+                                                if (!salesAmt) {
+                                                    const revMatch = txt.match(/Revenue\s+from\s+Operations\s*(?:\d{1,3}\s+)?([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)?/i);
                                                     if (revMatch) {
                                                         salesAmt = parseFloat(revMatch[1].replace(/,/g, ''));
                                                         if (revMatch[2]) prevSalesAmt = parseFloat(revMatch[2].replace(/,/g, ''));
                                                     }
                                                 }
-                                                // Pattern 3: Total Income or Gross Turnover
+                                                // Pattern 3: GST turnover disclosure in ITR
                                                 if (!salesAmt) {
-                                                    const toMatch = txt.match(/(?:Gross\s+)?(?:Turnover|Total\s+Income)\s*[:\s]*\s*([\d,]+(?:\.\d+)?)/i);
-                                                    if (toMatch) salesAmt = parseFloat(toMatch[1].replace(/,/g, ''));
+                                                    const mGstMatch = txt.match(/Amount\s+of\s+turnover\/?\s*Gross\s+receipt\s+as\s+per\s+the\s+GST\s+return[^\n]*?\s+([\d,]+(?:\.\d+)?)/i);
+                                                    if (mGstMatch) { const sv = parseFloat(mGstMatch[1].replace(/,/g, '')); if (sv > 100000) salesAmt = sv; }
+                                                }
+                                                // Pattern 4: Gross Turnover (with threshold)
+                                                if (!salesAmt) {
+                                                    const toMatch = txt.match(/(?:Gross\s+)?(?:Turnover)\s*[:\s]*\s*([\d,]+(?:\.\d+)?)/i);
+                                                    if (toMatch) { const sv = parseFloat(toMatch[1].replace(/,/g, '')); if (sv > 100000) salesAmt = sv; }
+                                                }
+                                                // Apply unit multiplier
+                                                if (memoUnitMul > 1) {
+                                                    if (salesAmt > 0) salesAmt = Math.round(salesAmt * memoUnitMul);
+                                                    if (prevSalesAmt > 0) prevSalesAmt = Math.round(prevSalesAmt * memoUnitMul);
                                                 }
                                                 if (salesAmt > 0) {
                                                     if (docFY === '2024-25' && salesAmt > memoSales2425) memoSales2425 = salesAmt;
@@ -1601,14 +1914,43 @@
                                             if (!emiAmount || !docs) return emiDates;
                                             const emiVariants = camGetAmountVariants(Math.round(emiAmount), 2);
                                             const bankNameParts = (bankName || '').toLowerCase().split(/[\s\-]+/).filter(p => p.length > 2);
-                                            const emiKeywords = ['ach d-', 'ach-d', 'nach', 'ecs', 'emi', 'loan', 'auto debit', 'cms/', 'adibi', 'trf/', 'fin ltd', 'capital', 'finance', 'birla', 'clix', 'icici', 'unity'];
-                                            const dateRegexNum = /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/g;
-                                            const dateRegexNamed = /(\d{1,2})[\/\-](\w{3})[\/\-](\d{4})/gi;
+                                            const emiKeywords = ['ach d-', 'ach-d', 'ach/', 'nach', 'ecs', 'emi', 'loan', 'auto debit', 'cms/', 'cmp', 'mandate', 'adibi', 'trf/', 'fin ltd', 'capital', 'finance', 'birla', 'clix', 'icici', 'unity'];
+                                            const dateRegexNum = /(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/g;
+                                            const dateRegexNamed = /(\d{1,2})[\/\-\.](\w{3})[\/\-\.](\d{4})/gi;
                                             const camMonthMap = {jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11};
+                                            const roundedEmi = Math.round(emiAmount);
+                                            const wideTolerance = Math.round(roundedEmi * 0.015); // 1.5% for rate revisions
+
+                                            // Helper: extract date from context text
+                                            const extractDateFromContext = (contextBefore) => {
+                                                const allDates = [];
+                                                let m;
+                                                const regNum = new RegExp(dateRegexNum.source, 'g');
+                                                while ((m = regNum.exec(contextBefore)) !== null) {
+                                                    allDates.push({day: parseInt(m[1]), month: parseInt(m[2]) - 1, year: parseInt(m[3]), pos: m.index});
+                                                }
+                                                const regNamed = new RegExp(dateRegexNamed.source, 'gi');
+                                                while ((m = regNamed.exec(contextBefore)) !== null) {
+                                                    const mi = camMonthMap[m[2].toLowerCase()];
+                                                    if (mi !== undefined && !allDates.some(d => Math.abs(d.pos - m.index) < 5)) {
+                                                        allDates.push({day: parseInt(m[1]), month: mi, year: parseInt(m[3]), pos: m.index});
+                                                    }
+                                                }
+                                                allDates.sort((a, b) => a.pos - b.pos);
+                                                if (allDates.length > 0) {
+                                                    const last = allDates[allDates.length - 1];
+                                                    if (last.day >= 1 && last.day <= 31 && last.month >= 0 && last.month <= 11 && last.year >= 2024 && last.year <= 2026) {
+                                                        return last;
+                                                    }
+                                                }
+                                                return null;
+                                            };
 
                                             docs.forEach(doc => {
                                                 if (!doc.extractedText) return;
                                                 const text = camCleanBankText(doc.extractedText).toLowerCase();
+
+                                                // Pass 1: Exact amount match (±2)
                                                 emiVariants.forEach(variant => {
                                                     let idx = text.indexOf(variant.toLowerCase());
                                                     while (idx !== -1) {
@@ -1616,35 +1958,35 @@
                                                         const hasKeyword = emiKeywords.some(kw => contextBefore.includes(kw)) ||
                                                                            bankNameParts.some(part => contextBefore.includes(part));
                                                         if (hasKeyword) {
-                                                            const allDates = [];
-                                                            let m;
-                                                            // Numeric dates: dd/mm/yyyy or dd-mm-yyyy
-                                                            const regNum = new RegExp(dateRegexNum.source, 'g');
-                                                            while ((m = regNum.exec(contextBefore)) !== null) {
-                                                                allDates.push({day: parseInt(m[1]), month: parseInt(m[2]) - 1, year: parseInt(m[3]), pos: m.index});
-                                                            }
-                                                            // Named month dates: dd-Mon-yyyy or dd/Mon/yyyy
-                                                            const regNamed = new RegExp(dateRegexNamed.source, 'gi');
-                                                            while ((m = regNamed.exec(contextBefore)) !== null) {
-                                                                const mi = camMonthMap[m[2].toLowerCase()];
-                                                                if (mi !== undefined && !allDates.some(d => Math.abs(d.pos - m.index) < 5)) {
-                                                                    allDates.push({day: parseInt(m[1]), month: mi, year: parseInt(m[3]), pos: m.index});
-                                                                }
-                                                            }
-                                                            allDates.sort((a, b) => a.pos - b.pos);
-                                                            if (allDates.length > 0) {
-                                                                const last = allDates[allDates.length - 1];
-                                                                const day = last.day, month = last.month, year = last.year;
-                                                                if (day >= 1 && day <= 31 && month >= 0 && month <= 11 && year >= 2024 && year <= 2026) {
-                                                                    if (!emiDates.some(d => d.day === day && d.month === month && d.year === year)) {
-                                                                        emiDates.push({day, month, year});
-                                                                    }
-                                                                }
+                                                            const dt = extractDateFromContext(contextBefore);
+                                                            if (dt && !emiDates.some(d => d.day === dt.day && d.month === dt.month && d.year === dt.year)) {
+                                                                emiDates.push({day: dt.day, month: dt.month, year: dt.year});
                                                             }
                                                         }
                                                         idx = text.indexOf(variant.toLowerCase(), idx + 1);
                                                     }
                                                 });
+
+                                                // Pass 2: Wider numeric scan for rate revisions (1.5% tolerance)
+                                                if (roundedEmi > 50000) {
+                                                    const numRegex = /(\d[\d,]*\d)\.(\d{2})\b/g;
+                                                    let numMatch;
+                                                    while ((numMatch = numRegex.exec(text)) !== null) {
+                                                        const numVal = parseInt(numMatch[1].replace(/,/g, ''));
+                                                        const diff = Math.abs(numVal - roundedEmi);
+                                                        if (diff > 2 && diff <= wideTolerance) {
+                                                            const contextBefore = text.substring(Math.max(0, numMatch.index - 200), numMatch.index);
+                                                            const hasKeyword = emiKeywords.some(kw => contextBefore.includes(kw)) ||
+                                                                               bankNameParts.some(part => contextBefore.includes(part));
+                                                            if (hasKeyword) {
+                                                                const dt = extractDateFromContext(contextBefore);
+                                                                if (dt && !emiDates.some(d => d.day === dt.day && d.month === dt.month && d.year === dt.year)) {
+                                                                    emiDates.push({day: dt.day, month: dt.month, year: dt.year});
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
                                             });
                                             return emiDates;
                                         };
@@ -2008,9 +2350,10 @@
                                 }
                             });
 
-                            // Remove duplicates
-                            camShareholders = [...new Map(camShareholders.map(s => [s.name, s])).values()];
-                            camDirectors = [...new Map(camDirectors.map(d => [d.name, d])).values()];
+                            // Remove duplicates (normalize: strip Mr/Mrs/Ms prefixes, uppercase)
+                            function normN(n) { return (n || '').replace(/^(mr\.?|mrs\.?|ms\.?|dr\.?|shri\.?|smt\.?)\s+/i, '').trim().toUpperCase(); }
+                            camShareholders = [...new Map(camShareholders.map(s => [normN(s.name), s])).values()];
+                            camDirectors = [...new Map(camDirectors.map(d => [normN(d.name), d])).values()];
                         %>
 
                         <div style="padding: 15px; background: #e3f2fd; border-radius: 8px; border-left: 4px solid #1976d2;">
@@ -2088,10 +2431,60 @@
                                 <% } %>
                             </div>
                         </div>
+                    <% } else if (proposal.applicantType === 'Partnership') { %>
+                        <%
+                            const partnerDocs = (proposal.documents || []).filter(f => f.category === 'incorporation');
+                            const deedsForAnalysis = partnerDocs.filter(doc =>
+                                doc.extractedDetails && doc.extractedDetails.partners && doc.extractedDetails.partners.length > 0);
+                            deedsForAnalysis.sort((a, b) => {
+                                const da = a.extractedDetails.deedDate ? new Date(a.extractedDetails.deedDate) : new Date(0);
+                                const db = b.extractedDetails.deedDate ? new Date(b.extractedDetails.deedDate) : new Date(0);
+                                return db - da;
+                            });
+                            const latestPartnerDeed = deedsForAnalysis[0];
+                        %>
+                        <% if (latestPartnerDeed) { %>
+                        <div style="padding: 15px; background: #e8f5e9; border-radius: 8px; border-left: 4px solid #4caf50;">
+                            <h4 style="margin: 0 0 5px 0; color: #2e7d32;"><%= proposal.applicantName %></h4>
+                            <div style="margin-bottom: 12px; font-size: 0.9em; color: #555;">
+                                <strong>Latest Deed:</strong> <%= latestPartnerDeed.originalName %>
+                                <% if (latestPartnerDeed.extractedDetails.deedDate) { %>
+                                    &nbsp;|&nbsp; <strong>Date of Execution:</strong> <span style="color: #2e7d32;"><%= latestPartnerDeed.extractedDetails.deedDate %></span>
+                                <% } %>
+                            </div>
+                            <div style="padding: 15px; background: white; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                                <strong style="color: #1976d2; font-size: 1.05em;">Profit & Loss Sharing Ratio</strong>
+                                <table style="width: 100%; border-collapse: collapse; margin-top: 8px; background: #fafafa; border-radius: 4px; overflow: hidden;">
+                                    <thead>
+                                        <tr style="background: #1976d2; color: white;">
+                                            <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">S.No</th>
+                                            <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">Partner</th>
+                                            <th style="padding: 10px; text-align: center; border: 1px solid #ddd;">Profit %</th>
+                                            <th style="padding: 10px; text-align: center; border: 1px solid #ddd;">Loss %</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <% latestPartnerDeed.extractedDetails.partners.forEach((partner, idx) => { %>
+                                        <tr style="<%= idx % 2 === 0 ? 'background: white;' : 'background: #f9f9f9;' %>">
+                                            <td style="padding: 10px; border: 1px solid #ddd; text-align: center;"><%= idx + 1 %></td>
+                                            <td style="padding: 10px; border: 1px solid #ddd; font-weight: 500;"><%= partner.name %></td>
+                                            <td style="padding: 10px; border: 1px solid #ddd; text-align: center; color: #2e7d32; font-weight: 600;"><%= partner.profitPercent %><%= (typeof partner.profitPercent === 'number') ? '%' : '' %></td>
+                                            <td style="padding: 10px; border: 1px solid #ddd; text-align: center; color: #d32f2f; font-weight: 600;"><%= partner.lossPercent %><%= (typeof partner.lossPercent === 'number') ? '%' : '' %></td>
+                                        </tr>
+                                        <% }); %>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <% } else { %>
+                        <div style="padding: 15px; background: #fff3e0; border-radius: 8px; border-left: 4px solid #ff9800;">
+                            <p style="margin: 0; color: #e65100;">No partnership deed data extracted yet. Please extract from Stage 2 - Documents.</p>
+                        </div>
+                        <% } %>
                     <% } else { %>
                         <div class="placeholder-content">
                             <div class="icon">📜</div>
-                            <p>Incorporation details are applicable for Private/Public Limited companies only.</p>
+                            <p>Incorporation details are applicable for Partnership/Private/Public Limited companies only.</p>
                         </div>
                     <% } %>
                 </div>
@@ -3283,7 +3676,19 @@
                                     </table>
                                 </div>
                                 
-                                <!-- Average Banking Analysis -->
+                                <!-- Average Banking Analysis (skip if overall average is negative) -->
+                                <%
+                                let totalAvgBalance = 0;
+                                let avgMonthCount = 0;
+                                account.sortedMonths.forEach(monthKey => {
+                                    const avgBalance = account.monthlyAvgBalances[monthKey] || 0;
+                                    if (avgBalance > 0) {
+                                        totalAvgBalance += avgBalance;
+                                        avgMonthCount++;
+                                    }
+                                });
+                                const overallAvgBalance = avgMonthCount > 0 ? totalAvgBalance / avgMonthCount : 0;
+                                if (overallAvgBalance > 0) { %>
                                 <div style="margin-bottom: 25px;">
                                     <h5 style="background: #f1c40f; color: #000; padding: 8px 12px; margin: 0 0 10px 0; border-radius: 4px;">Average Banking Analysis</h5>
                                     <p style="font-size: 0.85em; color: #666; margin: 0 0 10px 0;">Average of day closing balances per month</p>
@@ -3295,18 +3700,11 @@
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            <% 
-                                            let totalAvgBalance = 0;
-                                            let avgMonthCount = 0;
-                                            account.sortedMonths.forEach(monthKey => { 
+                                            <% account.sortedMonths.forEach(monthKey => {
                                                 const [m, y] = monthKey.split('-');
                                                 const monthNames = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
                                                 const monthLabel = monthNames[parseInt(m)] + '-' + y.slice(-2);
                                                 const avgBalance = account.monthlyAvgBalances[monthKey] || 0;
-                                                if (avgBalance > 0) {
-                                                    totalAvgBalance += avgBalance;
-                                                    avgMonthCount++;
-                                                }
                                             %>
                                                 <tr>
                                                     <td style="padding: 8px 10px; text-align: right; border: 1px solid #ddd;"><%= monthLabel %></td>
@@ -3315,11 +3713,12 @@
                                             <% }); %>
                                             <tr style="background: #e8e8e8; font-weight: bold;">
                                                 <td style="padding: 8px 10px; text-align: left; border: 1px solid #ddd;">Overall Average</td>
-                                                <td style="padding: 8px 10px; text-align: right; border: 1px solid #ddd;">₹ <%= avgMonthCount > 0 ? (totalAvgBalance / avgMonthCount).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '0.00' %></td>
+                                                <td style="padding: 8px 10px; text-align: right; border: 1px solid #ddd;">₹ <%= overallAvgBalance.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
                                             </tr>
                                         </tbody>
                                     </table>
                                 </div>
+                                <% } %>
                                 
                                 <!-- Adverse Observations -->
                                 <div style="margin-bottom: 15px;">
@@ -3621,16 +4020,50 @@
                         if (docFY && isBusinessITR) {
                             let salesAmount = 0;
                             let prevYearSalesAmount = 0;
-                            
+
+                            // Detect if amounts are in Lakhs/Lacs or Crores
+                            const textLower = text.toLowerCase();
+                            let unitMultiplier = 1;
+                            if (/\(?\s*amount\s+in\s+rs\.?\s*['']?\s*(?:lacs?|lakhs?)\s*\)?/i.test(text) ||
+                                /all\s+amounts.*rounded\s+off\s+to\s+['']?lacs?['']?/i.test(text) ||
+                                /\(?\s*(?:rs\.?\s+)?in\s+(?:lacs?|lakhs?)\s*\)?/i.test(text) ||
+                                /\(?\s*₹?\s*in\s+(?:lacs?|lakhs?)\s*\)?/i.test(text)) {
+                                unitMultiplier = 100000;
+                            } else if (/\(?\s*amount\s+in\s+(?:rs\.?\s*)?crores?\s*\)?/i.test(text) ||
+                                       /\(?\s*(?:rs\.?\s+)?in\s+crores?\s*\)?/i.test(text) ||
+                                       /\(?\s*₹?\s*in\s+crores?\s*\)?/i.test(text)) {
+                                unitMultiplier = 10000000;
+                            }
+
                             // Pattern 1: Trading Account format - "SALES \n7,69,93,805" or "BY SALES A/C \n12 \n7,63,04,012"
                             const salesMatch = text.match(/(?:BY\s+)?SALES(?:\s+A\/C)?\s*(?:\n?\d+\s*\n)?\s*([\d,]+(?:\.\d+)?)/i);
                             if (salesMatch) {
-                                salesAmount = parseFloat(salesMatch[1].replace(/,/g, ''));
+                                const sv = parseFloat(salesMatch[1].replace(/,/g, ''));
+                                if (sv > 10000) salesAmount = sv;
                             }
-                            
-                            // Pattern 2: P&L format - "Revenue from Operations 15 40,017,881.84 33,238,881.55" (current year, previous year)
+
+                            // Pattern 1b: Trading P&L "Iron Scrap Sales" or named sales with amount on nearby lines
                             if (!salesAmount) {
-                                const revenueMatch = text.match(/Revenue\s+from\s+Operations\s*(?:\d+\s*)?\s*([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)?/i);
+                                const tradSalesMatch = text.match(/(?:Iron\s+Scrap\s+Sales|By\s+Sales[\s\S]{0,60}?(?:Scrap\s+Sales|Sales\s+Accounts?))\s*[\s\S]{0,100}?([\d,]{5,}(?:\.\d+)?)/i);
+                                if (tradSalesMatch) {
+                                    const sv = parseFloat(tradSalesMatch[1].replace(/,/g, ''));
+                                    if (sv > 100000) salesAmount = sv;
+                                }
+                            }
+
+                            // Pattern 1c: "Sales Accounts" followed by amount (ITR computation P&L)
+                            if (!salesAmount) {
+                                const saMatch = text.match(/Sales\s+Accounts\s*\n?\s*([\d,]{5,}(?:\.\d+)?)/i);
+                                if (saMatch) {
+                                    const sv = parseFloat(saMatch[1].replace(/,/g, ''));
+                                    if (sv > 100000) salesAmount = sv;
+                                }
+                            }
+
+                            // Pattern 2: P&L format - "Revenue from Operations 15 40,017,881.84 33,238,881.55" (current year, previous year)
+                            // Note: (?:\d{1,3}\s+)? matches note reference numbers (1-3 digits followed by space), not amount digits
+                            if (!salesAmount) {
+                                const revenueMatch = text.match(/Revenue\s+from\s+Operations\s*(?:\d{1,3}\s+)?([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)?/i);
                                 if (revenueMatch) {
                                     salesAmount = parseFloat(revenueMatch[1].replace(/,/g, ''));
                                     if (revenueMatch[2]) {
@@ -3638,22 +4071,38 @@
                                     }
                                 }
                             }
-                            
-                            // Pattern 3: Total Income or Gross Turnover
+
+                            // Pattern 3: GST turnover disclosure in ITR
                             if (!salesAmount) {
-                                const turnoverMatch = text.match(/(?:Gross\s+)?(?:Turnover|Total\s+Income)\s*[:\s]*\s*([\d,]+(?:\.\d+)?)/i);
-                                if (turnoverMatch) {
-                                    salesAmount = parseFloat(turnoverMatch[1].replace(/,/g, ''));
+                                const gstTurnMatch = text.match(/Amount\s+of\s+turnover\/?\s*Gross\s+receipt\s+as\s+per\s+the\s+GST\s+return[^\n]*?\s+([\d,]+(?:\.\d+)?)/i);
+                                if (gstTurnMatch) {
+                                    const sv = parseFloat(gstTurnMatch[1].replace(/,/g, ''));
+                                    if (sv > 100000) salesAmount = sv;
                                 }
                             }
-                            
+
+                            // Pattern 4: Total Income or Gross Turnover (with minimum threshold to avoid field numbers)
+                            if (!salesAmount) {
+                                const turnoverMatch = text.match(/(?:Gross\s+)?(?:Turnover)\s*[:\s]*\s*([\d,]+(?:\.\d+)?)/i);
+                                if (turnoverMatch) {
+                                    const sv = parseFloat(turnoverMatch[1].replace(/,/g, ''));
+                                    if (sv > 100000) salesAmount = sv;
+                                }
+                            }
+
+                            // Apply unit multiplier (Lakhs/Crores) if detected
+                            if (unitMultiplier > 1) {
+                                if (salesAmount > 0) salesAmount = Math.round(salesAmount * unitMultiplier);
+                                if (prevYearSalesAmount > 0) prevYearSalesAmount = Math.round(prevYearSalesAmount * unitMultiplier);
+                            }
+
                             // Current year extraction
                             if (salesAmount > 0) {
                                 if (docFY === '2024-25' && salesAmount > extractedSales2425) extractedSales2425 = salesAmount;
                                 else if (docFY === '2023-24' && salesAmount > extractedSales2324) extractedSales2324 = salesAmount;
                                 else if (docFY === '2022-23' && salesAmount > extractedSales2223) extractedSales2223 = salesAmount;
                             }
-                            
+
                             // Previous year extraction from same document (P&L often has comparative columns)
                             if (prevYearSalesAmount > 0) {
                                 if (docFY === '2024-25' && prevYearSalesAmount > extractedSales2324) extractedSales2324 = prevYearSalesAmount;
@@ -4252,12 +4701,12 @@
                         const bankNameParts = bankNameLower.split(/[\s\-]+/).filter(p => p.length > 2);
                         
                         // EMI keywords (expanded list)
-                        const emiKeywords = ['ach d-', 'ach-d', 'nach', 'ecs', 'emi', 'loan', 'auto debit', 'instalment', 'installment', 'equated monthly', 'cms/', 'adibi', 'trf/', 'fin ltd', 'capital', 'finance', 'birla', 'clix', 'icici', 'unity'];
+                        const emiKeywords = ['ach d-', 'ach-d', 'ach/', 'nach', 'ecs', 'emi', 'loan', 'auto debit', 'instalment', 'installment', 'equated monthly', 'cms/', 'cmp', 'mandate', 'adibi', 'trf/', 'fin ltd', 'capital', 'finance', 'birla', 'clix', 'icici', 'unity'];
                         
-                        // Date patterns: dd/mm/yyyy and dd-Mon-yyyy
-                        const dateRegexNumeric = /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/g;
+                        // Date patterns: dd/mm/yyyy, dd-mm-yyyy, dd.mm.yyyy and dd-Mon-yyyy
+                        const dateRegexNumeric = /(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/g;
                         const monthNamesMapEmi = {jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11};
-                        const dateRegexNamed = /(\d{1,2})[\/\-](\w{3})[\/\-](\d{4})/gi;
+                        const dateRegexNamed = /(\d{1,2})[\/\-\.](\w{3})[\/\-\.](\d{4})/gi;
 
                         bankingDocs.forEach(doc => {
                             if (!doc.extractedText) return;
@@ -4274,75 +4723,65 @@
                                 }
                             });
 
-                            if (emiPositions.length === 0) return;
+                            // Helper: extract last date from context
+                            const extractClosestDate = (contextBefore) => {
+                                const allDates = [];
+                                let dateMatch;
+                                const regexNum = new RegExp(dateRegexNumeric.source, 'g');
+                                while ((dateMatch = regexNum.exec(contextBefore)) !== null) {
+                                    allDates.push({ day: parseInt(dateMatch[1]), month: parseInt(dateMatch[2]) - 1, year: parseInt(dateMatch[3]), pos: dateMatch.index, dateStr: dateMatch[0] });
+                                }
+                                const regexNamed = new RegExp(dateRegexNamed.source, 'gi');
+                                while ((dateMatch = regexNamed.exec(contextBefore)) !== null) {
+                                    const monthIdx = monthNamesMapEmi[dateMatch[2].toLowerCase()];
+                                    if (monthIdx !== undefined && !allDates.some(d => Math.abs(d.pos - dateMatch.index) < 5)) {
+                                        allDates.push({ day: parseInt(dateMatch[1]), month: monthIdx, year: parseInt(dateMatch[3]), pos: dateMatch.index, dateStr: dateMatch[0] });
+                                    }
+                                }
+                                allDates.sort((a, b) => a.pos - b.pos);
+                                if (allDates.length > 0) {
+                                    const last = allDates[allDates.length - 1];
+                                    if (last.day >= 1 && last.day <= 31 && last.month >= 0 && last.month <= 11 && last.year >= 2024 && last.year <= 2026) return last;
+                                }
+                                return null;
+                            };
 
-                            // For each EMI position, find the CLOSEST date before it (within 200 chars)
+                            // Pass 1: Exact amount match (±2)
                             emiPositions.forEach(({pos: emiPos}) => {
-                                // Look for context just before the amount (where transaction date usually is)
                                 const contextStart = Math.max(0, emiPos - 200);
                                 const contextBefore = text.substring(contextStart, emiPos);
-
-                                // Check if context has EMI keyword or bank name
                                 const hasEmiKeyword = emiKeywords.some(kw => contextBefore.includes(kw));
                                 const hasBankName = bankNameParts.length > 0 && bankNameParts.some(part => contextBefore.includes(part));
-
                                 if (hasEmiKeyword || hasBankName) {
-                                    // Find ALL dates in this context (both numeric and named month formats)
-                                    const allDates = [];
-                                    let dateMatch;
-                                    // Numeric: dd/mm/yyyy or dd-mm-yyyy
-                                    const regexNum = new RegExp(dateRegexNumeric.source, 'g');
-                                    while ((dateMatch = regexNum.exec(contextBefore)) !== null) {
-                                        allDates.push({
-                                            day: parseInt(dateMatch[1]),
-                                            month: parseInt(dateMatch[2]) - 1,
-                                            year: parseInt(dateMatch[3]),
-                                            pos: dateMatch.index,
-                                            dateStr: dateMatch[0]
-                                        });
+                                    const dt = extractClosestDate(contextBefore);
+                                    if (dt && !emiDates.some(ed => ed.day === dt.day && ed.month === dt.month && ed.year === dt.year)) {
+                                        emiDates.push({ day: dt.day, month: dt.month, year: dt.year, dateStr: dt.dateStr });
                                     }
-                                    // Named month: dd-Mon-yyyy or dd/Mon/yyyy
-                                    const regexNamed = new RegExp(dateRegexNamed.source, 'gi');
-                                    while ((dateMatch = regexNamed.exec(contextBefore)) !== null) {
-                                        const monthIdx = monthNamesMapEmi[dateMatch[2].toLowerCase()];
-                                        if (monthIdx !== undefined) {
-                                            // Avoid duplicates from numeric regex
-                                            const alreadyFound = allDates.some(d => Math.abs(d.pos - dateMatch.index) < 5);
-                                            if (!alreadyFound) {
-                                                allDates.push({
-                                                    day: parseInt(dateMatch[1]),
-                                                    month: monthIdx,
-                                                    year: parseInt(dateMatch[3]),
-                                                    pos: dateMatch.index,
-                                                    dateStr: dateMatch[0]
-                                                });
-                                            }
-                                        }
-                                    }
-                                    allDates.sort((a, b) => a.pos - b.pos);
+                                }
+                            });
 
-                                    // Take only the LAST date (closest to EMI amount)
-                                    if (allDates.length > 0) {
-                                        const closestDate = allDates[allDates.length - 1];
-                                        let day = closestDate.day;
-                                        let month = closestDate.month;
-                                        let year = closestDate.year;
-
-                                        // Validate date range (2024-2026)
-                                        if (day >= 1 && day <= 31 && month >= 0 && month <= 11 && year >= 2024 && year <= 2026) {
-                                            const exists = emiDates.some(ed => ed.day === day && ed.month === month && ed.year === year);
-                                            if (!exists) {
-                                                emiDates.push({
-                                                    day: day,
-                                                    month: month,
-                                                    year: year,
-                                                    dateStr: closestDate.dateStr
-                                                });
+                            // Pass 2: Wider numeric scan for rate revisions (1.5% tolerance)
+                            const roundedEmi = Math.round(emiAmount);
+                            if (roundedEmi > 50000) {
+                                const wideTolerance = Math.round(roundedEmi * 0.015);
+                                const numRegex = /(\d[\d,]*\d)\.(\d{2})\b/g;
+                                let numMatch;
+                                while ((numMatch = numRegex.exec(text)) !== null) {
+                                    const numVal = parseInt(numMatch[1].replace(/,/g, ''));
+                                    const diff = Math.abs(numVal - roundedEmi);
+                                    if (diff > 2 && diff <= wideTolerance) {
+                                        const contextBefore = text.substring(Math.max(0, numMatch.index - 200), numMatch.index);
+                                        const hasKw = emiKeywords.some(kw => contextBefore.includes(kw)) ||
+                                                      (bankNameParts.length > 0 && bankNameParts.some(part => contextBefore.includes(part)));
+                                        if (hasKw) {
+                                            const dt = extractClosestDate(contextBefore);
+                                            if (dt && !emiDates.some(ed => ed.day === dt.day && ed.month === dt.month && ed.year === dt.year)) {
+                                                emiDates.push({ day: dt.day, month: dt.month, year: dt.year, dateStr: dt.dateStr });
                                             }
                                         }
                                     }
                                 }
-                            });
+                            }
                         });
                         
                         return emiDates;
@@ -4895,27 +5334,32 @@
                     html += `</tr></tbody></table></div>`;
                 }
 
-                // 2. Average Daily Balances (4th table)
+                // 2. Average Daily Balances (4th table) — skip if overall average is negative
                 if (tables.length >= 4) {
                     const avgRows = getTableData(tables[3]);
-                    html += `<div style="margin-bottom: 10px;">`;
-                    html += sectionHead('Average Daily Balance');
-                    html += `<table style="width: 100%; border-collapse: collapse; margin-top: 5px;">`;
-                    html += `<thead><tr style="background: #e3f2fd;">`;
-                    html += `<th style="${thStyle}">Month</th>`;
-                    html += `<th style="${thRightStyle}">Avg. Balance (Rs.)</th>`;
-                    html += `</tr></thead><tbody>`;
+                    // Check if the Overall Average row has a positive value
+                    const overallRow = avgRows.find(r => r[0] === 'Overall Average');
+                    const overallVal = overallRow ? parseFloat((overallRow[1] || '0').replace(/[₹,\s]/g, '')) : 0;
+                    if (overallVal > 0) {
+                        html += `<div style="margin-bottom: 10px;">`;
+                        html += sectionHead('Average Daily Balance');
+                        html += `<table style="width: 100%; border-collapse: collapse; margin-top: 5px;">`;
+                        html += `<thead><tr style="background: #e3f2fd;">`;
+                        html += `<th style="${thStyle}">Month</th>`;
+                        html += `<th style="${thRightStyle}">Avg. Balance (Rs.)</th>`;
+                        html += `</tr></thead><tbody>`;
 
-                    avgRows.forEach((r, i) => {
-                        if (r.length < 2) return;
-                        const isTotal = r[0] === 'Overall Average';
-                        const style = isTotal ? totalTdStyle : tdStyle;
-                        const styleR = isTotal ? totalTdRightStyle : tdRightStyle;
-                        const bg = isTotal ? '' : (i % 2 === 0 ? ' background: #fff;' : ' background: #f5f9ff;');
-                        html += `<tr style="${bg}"><td style="${style}">${r[0]}</td><td style="${styleR}">${r[1]}</td></tr>`;
-                    });
+                        avgRows.forEach((r, i) => {
+                            if (r.length < 2) return;
+                            const isTotal = r[0] === 'Overall Average';
+                            const style = isTotal ? totalTdStyle : tdStyle;
+                            const styleR = isTotal ? totalTdRightStyle : tdRightStyle;
+                            const bg = isTotal ? '' : (i % 2 === 0 ? ' background: #fff;' : ' background: #f5f9ff;');
+                            html += `<tr style="${bg}"><td style="${style}">${r[0]}</td><td style="${styleR}">${r[1]}</td></tr>`;
+                        });
 
-                    html += `</tbody></table></div>`;
+                        html += `</tbody></table></div>`;
+                    }
                 }
 
                 // 3. Adverse Observations (5th table)

@@ -173,13 +173,14 @@
         .col-collateral { min-width: 200px; }
 
         .raw-text-cell { position: relative; text-align: center; }
+        .raw-text-wrap { display: inline-block; position: relative; }
         .raw-text-icon {
             cursor: pointer;
             font-size: 15px;
             opacity: 0.5;
             transition: opacity 0.15s;
         }
-        .raw-text-icon:hover { opacity: 1; }
+        .raw-text-wrap:hover .raw-text-icon { opacity: 1; }
         .raw-text-popup {
             display: none;
             position: fixed;
@@ -197,9 +198,9 @@
             overflow-y: auto;
             box-shadow: 0 6px 24px rgba(0,0,0,0.35);
             pointer-events: none;
+            user-select: text;
         }
-        .raw-text-icon:hover + .raw-text-popup,
-        .raw-text-popup:hover { display: block; pointer-events: auto; }
+        .raw-text-wrap:hover .raw-text-popup { display: block; pointer-events: auto; }
 
         .bulk-bar {
             display: none;
@@ -354,8 +355,10 @@
                             <td><input type="checkbox" class="policy-cb" value="<%= p._id %>" onchange="updateSelection()"></td>
                             <td class="raw-text-cell">
                                 <% if (p.raw_message_text) { %>
-                                    <span class="raw-text-icon" onmouseenter="positionPopup(event, this)">&#128203;</span>
-                                    <div class="raw-text-popup"><%- (p.raw_message_text || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') %></div>
+                                    <div class="raw-text-wrap" onmouseenter="positionPopup(event, this.querySelector('.raw-text-icon'))">
+                                        <span class="raw-text-icon">&#128203;</span>
+                                        <div class="raw-text-popup"><%- (p.raw_message_text || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') %></div>
+                                    </div>
                                 <% } %>
                             </td>
                             <td><strong><%= p.bank_name %></strong></td>
@@ -413,7 +416,7 @@
                             </td>
                             <td style="font-size:12px; color:#555; max-width:150px;"><%= p.other_remarks || '-' %></td>
                             <td style="font-size:13px;"><%= p.banker_name || '-' %></td>
-                            <td style="font-size:13px; white-space:nowrap;"><% if (p.banker_contact) { %><a href="#" onclick="sendWhatsApp('<%= p.banker_contact %>'); return false;" style="color:#2980b9; cursor:pointer;"><%= p.banker_contact %></a><% } else { %>-<% } %></td>
+                            <td style="font-size:13px; white-space:nowrap;"><% if (p.banker_contact) { %><a href="tel:<%= p.banker_contact %>" style="color:#2980b9;"><%= p.banker_contact %></a><% } else { %>-<% } %></td>
                             <td style="white-space:nowrap;">
                                 <button class="btn-edit-sm" onclick="editPolicy('<%= p._id %>')">Edit</button>
                                 <button class="btn-delete-sm" onclick="deletePolicy('<%= p._id %>')">Del</button>
