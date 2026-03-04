@@ -15,6 +15,7 @@ const ChatMessage = require('./models/ChatMessage');
 const Bank = require('./models/Bank');
 const SurrogateProgram = require('./models/SurrogateProgram');
 const BankerContact = require('./models/BankerContact');
+const Proposal = require('./models/Proposal');
 const crypto = require('crypto');
 let ejs = require('ejs');
 const fs = require('fs');
@@ -62,7 +63,7 @@ app.post('/api/claude', (req, res) => {
   python.stdin.end();
 });
 // Connect to MongoDB
-mongoose.connect('mongodb://localhost:27017/haikusdb')
+mongoose.connect(process.env.MONGODB_URL || 'mongodb://localhost:27017/haikusdb')
   .then(() => console.log('MongoDB connected'))
   .catch(err => console.error('MongoDB connection error:', err));
 // Multer storage for Excel uploads
@@ -310,7 +311,7 @@ function findHeaderRowAndParseExcel(sheet) {
 app.post('/stage2/:proposalId/extract-debt-profile', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
-    const proposal = getProposalById(proposalId);
+    const proposal = await getProposalById(proposalId);
 
     if (!proposal) {
       return res.status(404).json({ success: false, message: 'Proposal not found' });
@@ -467,7 +468,7 @@ app.post('/stage2/:proposalId/extract-debt-profile', async (req, res) => {
 app.post('/stage2/:proposalId/extract-other-income', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
-    const proposal = getProposalById(proposalId);
+    const proposal = await getProposalById(proposalId);
 
     if (!proposal) {
       return res.status(404).json({ success: false, message: 'Proposal not found' });
@@ -508,11 +509,11 @@ app.post('/stage2/:proposalId/extract-other-income', async (req, res) => {
             fullText = ocrResult.text;
             console.log(`✓ OCR extracted ${ocrResult.charCount} characters`);
             // Update stored text with full version
-            const latestProposal = getProposalById(proposalId);
+            const latestProposal = await getProposalById(proposalId);
             const docIdx = latestProposal.documents.findIndex(d => d.filename === doc.filename);
             if (docIdx !== -1) {
               latestProposal.documents[docIdx].extractedText = fullText;
-              updateProposal(proposalId, { documents: latestProposal.documents });
+              await updateProposal(proposalId, { documents: latestProposal.documents });
             }
           } else {
             console.log('OCR failed for:', doc.originalName, ocrResult.error);
@@ -545,11 +546,11 @@ app.post('/stage2/:proposalId/extract-other-income', async (req, res) => {
           }
 
           // Update stored text with full version
-          const latestProposal = getProposalById(proposalId);
+          const latestProposal = await getProposalById(proposalId);
           const docIdx = latestProposal.documents.findIndex(d => d.filename === doc.filename);
           if (docIdx !== -1) {
             latestProposal.documents[docIdx].extractedText = fullText;
-            updateProposal(proposalId, { documents: latestProposal.documents });
+            await updateProposal(proposalId, { documents: latestProposal.documents });
           }
         }
         // Use stored text as fallback
@@ -597,7 +598,7 @@ app.post('/stage2/:proposalId/extract-other-income', async (req, res) => {
 
     // Save to proposal
     const totalMonthlyRent = allRentals.reduce((sum, r) => sum + (r.monthlyRent || 0), 0);
-    updateProposal(proposalId, {
+    await updateProposal(proposalId, {
       otherIncomeDetails: {
         rentals: allRentals,
         totalMonthlyRent: totalMonthlyRent,
@@ -617,7 +618,7 @@ app.post('/stage2/:proposalId/extract-other-income', async (req, res) => {
 app.post('/stage2/:proposalId/extract-turnover', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
-    const proposal = getProposalById(proposalId);
+    const proposal = await getProposalById(proposalId);
 
     if (!proposal) {
       return res.status(404).json({ success: false, message: 'Proposal not found' });
@@ -654,7 +655,7 @@ app.post('/stage2/:proposalId/extract-turnover', async (req, res) => {
     }
 
     if (extractedCount > 0) {
-      updateProposal(proposalId, { documents: proposal.documents });
+      await updateProposal(proposalId, { documents: proposal.documents });
     }
 
     res.json({ success: true, message: `Re-extracted ${extractedCount} turnover documents`, count: extractedCount });
@@ -759,7 +760,7 @@ const PDF_SERVICE_URL = 'http://localhost:5001';
 const PDF_SERVICE_TIMEOUT = 30000; // 30 seconds
 
 // OpenRouter API Configuration for Document AI
-const OPENROUTER_API_KEY = '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';
+const OPENROUTER_API_KEY = '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';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const GEMINI_API_KEY = 'AIzaSyARiov95XN7RdyNWoOebWCVeWN6uGB3e6g';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent';
@@ -807,7 +808,6 @@ const upload = multer({
 
 // Data storage paths
 const DATA_DIR = path.join(__dirname, 'data');
-const PROPOSALS_FILE = path.join(DATA_DIR, 'proposals.json');
 const BANKERS_FILE = path.join(DATA_DIR, 'bankers.json');
 
 // Ensure data directory exists
@@ -816,57 +816,36 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 
 // Initialize data files if they don't exist
-if (!fs.existsSync(PROPOSALS_FILE)) {
-  fs.writeFileSync(PROPOSALS_FILE, JSON.stringify([], null, 2));
-}
 if (!fs.existsSync(BANKERS_FILE)) {
   fs.writeFileSync(BANKERS_FILE, JSON.stringify([], null, 2));
 }
 
-// Helper functions to read/write data
-function getProposals() {
-  return JSON.parse(fs.readFileSync(PROPOSALS_FILE, 'utf8'));
+// Helper functions to read/write data (MongoDB-backed)
+async function getProposals() {
+  return await Proposal.find({}).lean();
 }
 
-function getProposalById(proposalId) {
-  const proposals = getProposals();
-  return proposals.find(p => p.id === proposalId);
+async function getProposalById(proposalId) {
+  return await Proposal.findOne({ id: proposalId }).lean();
 }
 
-function saveProposal(proposal) {
-  const proposals = getProposals();
+async function saveProposal(proposal) {
   proposal.id = Date.now().toString();
   proposal.createdAt = new Date().toISOString();
   proposal.status = 'Stage 1 - Proposal Submitted';
   proposal.currentStage = 1;
-  proposals.push(proposal);
-  fs.writeFileSync(PROPOSALS_FILE, JSON.stringify(proposals, null, 2));
-  return proposal;
+  const doc = new Proposal(proposal);
+  await doc.save();
+  return doc.toObject();
 }
 
-function updateProposal(proposalId, updates) {
-  // Retry on file write conflicts (concurrent access)
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const proposals = getProposals();
-      const index = proposals.findIndex(p => p.id === proposalId);
-      if (index !== -1) {
-        proposals[index] = { ...proposals[index], ...updates };
-        fs.writeFileSync(PROPOSALS_FILE, JSON.stringify(proposals, null, 2));
-        return proposals[index];
-      }
-      return null;
-    } catch (err) {
-      if (attempt < 2) {
-        // Small delay before retry
-        const delay = 100 * (attempt + 1);
-        const start = Date.now();
-        while (Date.now() - start < delay) { /* busy wait */ }
-        continue;
-      }
-      throw err;
-    }
-  }
+async function updateProposal(proposalId, updates) {
+  const updated = await Proposal.findOneAndUpdate(
+    { id: proposalId },
+    { $set: updates },
+    { new: true }
+  ).lean();
+  return updated;
 }
 
 // ========== STAGE 4: WhatsApp Chat Parser + Banker Matching ==========
@@ -2996,6 +2975,17 @@ function autoCategorizeDocument(filename, extractedText = '') {
     return 'creditReports';
   }
   
+  // Salary Documents keywords
+  if (lowerName.includes('payslip') || lowerName.includes('pay slip') || lowerName.includes('salary slip')) {
+    return 'salaryDocuments';
+  }
+  if (lowerName.includes('form 16') || lowerName.includes('form16')) {
+    return 'salaryDocuments';
+  }
+  if (lowerName.includes('offer letter') || lowerName.includes('offerletter') || lowerName.includes('appointment letter')) {
+    return 'salaryDocuments';
+  }
+
   // Financials keywords
   if (lowerName.includes('itr') || lowerName.includes('income') && lowerName.includes('tax')) {
     return 'financials';
@@ -3112,14 +3102,14 @@ function getDocumentTypesForCategory(category, proposal) {
   
   switch (category) {
     case 'personalId':
-      if (proposal.applicantType === 'Individual') {
+      if (proposal.applicantType === 'Individual' || proposal.applicantType === 'Individual Salaried') {
         docTypes.push(`PAN Card of ${applicantName}`);
         docTypes.push(`Aadhar Card of ${applicantName}`);
         docTypes.push(`Passport Photo of ${applicantName}`);
       }
       if (proposal.coApplicants && proposal.coApplicants.length > 0) {
         proposal.coApplicants.forEach(co => {
-          if (co.type === 'Individual' && co.name) {
+          if ((co.type === 'Individual' || co.type === 'Individual Salaried') && co.name) {
             docTypes.push(`PAN Card of ${co.name}`);
             docTypes.push(`Aadhar Card of ${co.name}`);
             docTypes.push(`Passport Photo of ${co.name}`);
@@ -3127,9 +3117,26 @@ function getDocumentTypesForCategory(category, proposal) {
         });
       }
       break;
-      
+
+    case 'salaryDocuments':
+      if (proposal.applicantType === 'Individual Salaried') {
+        docTypes.push(`3 Months Payslips of ${applicantName}`);
+        docTypes.push(`2 Years Form 16 of ${applicantName}`);
+        docTypes.push(`Offer Letter of ${applicantName}`);
+      }
+      if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+        proposal.coApplicants.forEach(co => {
+          if (co.type === 'Individual Salaried' && co.name) {
+            docTypes.push(`3 Months Payslips of ${co.name}`);
+            docTypes.push(`2 Years Form 16 of ${co.name}`);
+            docTypes.push(`Offer Letter of ${co.name}`);
+          }
+        });
+      }
+      break;
+
     case 'businessId':
-      if (proposal.applicantType !== 'Individual') {
+      if (proposal.applicantType !== 'Individual' && proposal.applicantType !== 'Individual Salaried') {
         docTypes.push(`PAN Card of ${applicantName} (Non Individual)`);
         docTypes.push(`GST Certificate of ${applicantName}`);
         docTypes.push(`Labour License of ${applicantName}`);
@@ -3151,12 +3158,12 @@ function getDocumentTypesForCategory(category, proposal) {
     case 'creditReports':
       if (proposal.coApplicants && proposal.coApplicants.length > 0) {
         proposal.coApplicants.forEach(co => {
-          if (co.type === 'Individual' && co.name) {
+          if ((co.type === 'Individual' || co.type === 'Individual Salaried') && co.name) {
             docTypes.push(`Personal Credit Report of ${co.name}`);
           }
         });
       }
-      if (proposal.applicantType !== 'Individual') {
+      if (proposal.applicantType !== 'Individual' && proposal.applicantType !== 'Individual Salaried') {
         docTypes.push(`Business Credit Report of ${applicantName}`);
       }
       break;
@@ -3167,7 +3174,7 @@ function getDocumentTypesForCategory(category, proposal) {
       docTypes.push(`ITR of Preceding previous year of ${applicantName}`);
       if (proposal.coApplicants && proposal.coApplicants.length > 0) {
         proposal.coApplicants.forEach(co => {
-          if (co.type === 'Individual' && co.name) {
+          if ((co.type === 'Individual' || co.type === 'Individual Salaried') && co.name) {
             docTypes.push(`ITR of Current Year of ${co.name}`);
             docTypes.push(`ITR of Previous Year of ${co.name}`);
             docTypes.push(`ITR of Preceding previous year of ${co.name}`);
@@ -3175,13 +3182,13 @@ function getDocumentTypesForCategory(category, proposal) {
         });
       }
       break;
-      
+
     case 'banking':
       docTypes.push(`Bank Statement of ${applicantName}`);
       docTypes.push(`Overdraft Bank Statement of ${applicantName}`);
       if (proposal.coApplicants && proposal.coApplicants.length > 0) {
         proposal.coApplicants.forEach(co => {
-          if (co.type === 'Individual' && co.name) {
+          if ((co.type === 'Individual' || co.type === 'Individual Salaried') && co.name) {
             docTypes.push(`Bank Statement of ${co.name}`);
           }
         });
@@ -3254,6 +3261,18 @@ function ruleBasedClassification(lowerName, lowerText, category, docTypes) {
       }
       break;
       
+    case 'salaryDocuments':
+      if (lowerName.includes('payslip') || lowerName.includes('pay slip') || lowerName.includes('salary slip')) {
+        return docTypes.find(d => d.includes('Payslips')) || '';
+      }
+      if (lowerName.includes('form 16') || lowerName.includes('form16')) {
+        return docTypes.find(d => d.includes('Form 16')) || '';
+      }
+      if (lowerName.includes('offer letter') || lowerName.includes('offerletter') || lowerName.includes('appointment')) {
+        return docTypes.find(d => d.includes('Offer Letter')) || '';
+      }
+      break;
+
     case 'businessId':
       if (lowerName.includes('pan') || lowerText.includes('permanent account number')) {
         return docTypes.find(d => d.includes('PAN Card')) || '';
@@ -4054,10 +4073,12 @@ Respond ONLY with valid JSON in this exact format:
     } else if (documentType === 'bank-statement') {
       prompt = `You are a document extraction AI. Extract the following from this bank statement:
 
-1. Bank Name
-2. Account Holder Name
-3. Account Number
+1. Bank Name - The issuing bank (from letterhead, IFSC code prefix, or header). Common IFSC prefixes: UTIB=Axis Bank, HDFC=HDFC Bank, ICIC=ICICI Bank, SBIN=SBI, KKBK=Kotak, PUNB=PNB, CNRB=Canara Bank, BARB=Bank of Baroda, IOBA=IOB, FDRL=Federal Bank, BDBL=Bandhan Bank, INDB=IndusInd Bank, YESB=Yes Bank.
+2. Account Holder Name - Found ONLY in the HEADER section (top of statement), typically the very first name shown, or after labels like "Account Holder", "Customer Name", "Name", "Welcome". NEVER extract names from transaction descriptions (UPI/NEFT/IMPS/RTGS entries).
+3. Account Number - The statement account number
 4. Statement Period (from date to date)
+
+CRITICAL: The account holder is the person/entity whose statement this is. Their name appears at the TOP of the document in the header/letterhead area, NOT in the transaction list below.
 
 Document Text:
 ${text.substring(0, 4000)}
@@ -5419,7 +5440,7 @@ function extractPrivateLimitedDetails(fullText, tables = []) {
 async function processFilesInBackground(files, proposalId, fileDetails) {
   console.log(`🔄 Starting background processing for ${files.length} files...`);
   
-  const proposal = getProposalById(proposalId);
+  const proposal = await getProposalById(proposalId);
   if (!proposal || !proposal.documents) {
     console.error('Proposal not found for background processing');
     return;
@@ -5548,7 +5569,7 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
       }
 
       // Re-read current category from saved proposal (user may have manually re-categorized)
-      const latestProposal = getProposalById(proposalId);
+      const latestProposal = await getProposalById(proposalId);
       const latestDoc = latestProposal ? latestProposal.documents.find(d => d.filename === fileDetail.filename) : null;
       if (latestDoc && latestDoc.manualCategory) {
         fileDetail.category = latestDoc.category;
@@ -5744,7 +5765,7 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
 
       // Run auto-classification (may involve API call which takes time)
       let autoClassification = '';
-      const preClassifyProposal = getProposalById(proposalId);
+      const preClassifyProposal = await getProposalById(proposalId);
       const preClassifyDoc = preClassifyProposal?.documents?.find(d => d.filename === fileDetail.filename);
       const effectiveCategory = (preClassifyDoc && preClassifyDoc.manualCategory) ? preClassifyDoc.category : fileDetail.category;
 
@@ -5766,7 +5787,7 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
 
       // Atomic update: re-read proposal, update ONLY this document, save immediately
       // This prevents overwriting manual changes made to OTHER documents during processing
-      const saveProposal = getProposalById(proposalId);
+      const saveProposal = await getProposalById(proposalId);
       if (saveProposal && saveProposal.documents) {
         const docIndex = saveProposal.documents.findIndex(d => d.filename === fileDetail.filename);
         if (docIndex !== -1) {
@@ -5796,7 +5817,7 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
           }
 
           saveProposal.documents[docIndex] = currentDoc;
-          updateProposal(proposalId, { documents: saveProposal.documents });
+          await updateProposal(proposalId, { documents: saveProposal.documents });
           console.log(`✓ Updated document: ${file.originalname}`);
         }
       }
@@ -5818,9 +5839,9 @@ app.get('/stage1/new', (req, res) => {
   res.render('stage1-proposal');
 });
 
-app.post('/stage1/submit', (req, res) => {
+app.post('/stage1/submit', async (req, res) => {
   try {
-    const proposal = saveProposal(req.body);
+    const proposal = await saveProposal(req.body);
     res.json({ success: true, proposalId: proposal.id });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -5828,25 +5849,33 @@ app.post('/stage1/submit', (req, res) => {
 });
 
 // View all proposals
-app.get('/proposals', (req, res) => {
-  const proposals = getProposals();
-  res.render('proposals-list', { proposals });
+app.get('/proposals', async (req, res) => {
+  try {
+    const proposals = await getProposals();
+    res.render('proposals-list', { proposals });
+  } catch (error) {
+    res.status(500).send('Error loading proposals: ' + error.message);
+  }
 });
 
 // Edit proposal
-app.get('/proposals/:proposalId/edit', (req, res) => {
-  const proposal = getProposalById(req.params.proposalId);
-  if (!proposal) {
-    return res.status(404).send('Proposal not found');
+app.get('/proposals/:proposalId/edit', async (req, res) => {
+  try {
+    const proposal = await getProposalById(req.params.proposalId);
+    if (!proposal) {
+      return res.status(404).send('Proposal not found');
+    }
+    res.render('edit-proposal', { proposal });
+  } catch (error) {
+    res.status(500).send('Error loading proposal: ' + error.message);
   }
-  res.render('edit-proposal', { proposal });
 });
 
-app.post('/proposals/:proposalId/update', (req, res) => {
+app.post('/proposals/:proposalId/update', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
     const updates = req.body;
-    const updatedProposal = updateProposal(proposalId, updates);
+    const updatedProposal = await updateProposal(proposalId, updates);
     
     if (updatedProposal) {
       res.json({ success: true, proposal: updatedProposal });
@@ -5859,22 +5888,18 @@ app.post('/proposals/:proposalId/update', (req, res) => {
 });
 
 // Delete proposal
-app.post('/proposals/:proposalId/delete', (req, res) => {
+app.post('/proposals/:proposalId/delete', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
-    const proposals = getProposals();
-    const index = proposals.findIndex(p => p.id === proposalId);
-    
-    if (index !== -1) {
-      proposals.splice(index, 1);
-      fs.writeFileSync(PROPOSALS_FILE, JSON.stringify(proposals, null, 2));
-      
+    const result = await Proposal.deleteOne({ id: proposalId });
+
+    if (result.deletedCount > 0) {
       // Delete uploaded files for this proposal
       const proposalDir = path.join(UPLOADS_DIR, proposalId);
       if (fs.existsSync(proposalDir)) {
         fs.rmSync(proposalDir, { recursive: true, force: true });
       }
-      
+
       res.json({ success: true, message: 'Proposal deleted successfully' });
     } else {
       res.status(404).json({ success: false, error: 'Proposal not found' });
@@ -5886,7 +5911,7 @@ app.post('/proposals/:proposalId/delete', (req, res) => {
 
 // Stage 2: Document Upload & Proposal Perfection
 app.get('/stage2/:proposalId', async (req, res) => {
-  const proposal = getProposalById(req.params.proposalId);
+  const proposal = await getProposalById(req.params.proposalId);
   if (!proposal) {
     return res.status(404).send('Proposal not found');
   }
@@ -5969,7 +5994,7 @@ app.post('/stage2/:proposalId/upload', (req, res) => {
     }
     
     // Get existing proposal documents to check for duplicates
-    const proposal = getProposalById(proposalId);
+    const proposal = await getProposalById(proposalId);
     const existingDocuments = proposal.documents || [];
     
     // Process files - extract zip files if any
@@ -6100,7 +6125,7 @@ app.post('/stage2/:proposalId/upload', (req, res) => {
       proposal.documents = [];
     }
     proposal.documents.push(...fileDetails);
-    updateProposal(proposalId, { documents: proposal.documents });
+    await updateProposal(proposalId, { documents: proposal.documents });
     
     // Send immediate response
     res.json({ success: true, files: fileDetails, message: 'Files uploaded successfully. Processing in background...' });
@@ -6117,7 +6142,7 @@ app.post('/stage2/:proposalId/upload', (req, res) => {
 });
 
 // Delete multiple documents endpoint
-app.post('/stage2/:proposalId/delete-multiple-documents', (req, res) => {
+app.post('/stage2/:proposalId/delete-multiple-documents', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
     const { fileIds } = req.body;
@@ -6127,7 +6152,7 @@ app.post('/stage2/:proposalId/delete-multiple-documents', (req, res) => {
     }
     
     // Get proposal
-    const proposal = getProposalById(proposalId);
+    const proposal = await getProposalById(proposalId);
     if (!proposal) {
       return res.status(404).json({ success: false, error: 'Proposal not found' });
     }
@@ -6166,7 +6191,7 @@ app.post('/stage2/:proposalId/delete-multiple-documents', (req, res) => {
     });
     
     // Update proposal
-    updateProposal(proposalId, { documents: proposal.documents });
+    await updateProposal(proposalId, { documents: proposal.documents });
     
     if (errors.length > 0) {
       return res.json({ 
@@ -6185,7 +6210,7 @@ app.post('/stage2/:proposalId/delete-multiple-documents', (req, res) => {
 });
 
 // Delete multiple documents endpoint
-app.post('/stage2/:proposalId/delete-multiple-documents', (req, res) => {
+app.post('/stage2/:proposalId/delete-multiple-documents', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
     const { fileIds } = req.body;
@@ -6195,7 +6220,7 @@ app.post('/stage2/:proposalId/delete-multiple-documents', (req, res) => {
     }
     
     // Get proposal
-    const proposal = getProposalById(proposalId);
+    const proposal = await getProposalById(proposalId);
     if (!proposal) {
       return res.status(404).json({ success: false, error: 'Proposal not found' });
     }
@@ -6234,7 +6259,7 @@ app.post('/stage2/:proposalId/delete-multiple-documents', (req, res) => {
     });
     
     // Update proposal
-    updateProposal(proposalId, { documents: proposal.documents });
+    await updateProposal(proposalId, { documents: proposal.documents });
     
     if (errors.length > 0) {
       return res.json({ 
@@ -6253,7 +6278,7 @@ app.post('/stage2/:proposalId/delete-multiple-documents', (req, res) => {
 });
 
 // Delete document endpoint
-app.post('/stage2/:proposalId/delete-document', (req, res) => {
+app.post('/stage2/:proposalId/delete-document', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
     const { fileId } = req.body;
@@ -6265,7 +6290,7 @@ app.post('/stage2/:proposalId/delete-document', (req, res) => {
     }
     
     // Get proposal
-    const proposal = getProposalById(proposalId);
+    const proposal = await getProposalById(proposalId);
     if (!proposal) {
       return res.status(404).json({ success: false, error: 'Proposal not found' });
     }
@@ -6301,7 +6326,7 @@ app.post('/stage2/:proposalId/delete-document', (req, res) => {
     
     // Remove from proposal documents array
     proposal.documents.splice(docIndex, 1);
-    updateProposal(proposalId, { documents: proposal.documents });
+    await updateProposal(proposalId, { documents: proposal.documents });
     
     console.log('Document removed from proposal. Remaining:', proposal.documents.length);
     
@@ -6384,12 +6409,12 @@ app.post('/api/decrypt-pdf', async (req, res) => {
   }
 });
 
-app.post('/stage2/:proposalId/categorize', (req, res) => {
+app.post('/stage2/:proposalId/categorize', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
     const { fileId, category } = req.body;
     
-    const proposal = getProposalById(proposalId);
+    const proposal = await getProposalById(proposalId);
     if (!proposal) {
       return res.status(404).json({ success: false, error: 'Proposal not found' });
     }
@@ -6406,7 +6431,7 @@ app.post('/stage2/:proposalId/categorize', (req, res) => {
       // Clear classification if category changes
       proposal.documents[fileIndex].classification = '';
       proposal.documents[fileIndex].manualClassification = false;
-      updateProposal(proposalId, { documents: proposal.documents });
+      await updateProposal(proposalId, { documents: proposal.documents });
       res.json({ success: true });
     } else {
       res.status(404).json({ success: false, error: 'File not found' });
@@ -6418,12 +6443,12 @@ app.post('/stage2/:proposalId/categorize', (req, res) => {
 });
 
 // Update document classification (specific document type within a category)
-app.post('/stage2/:proposalId/classify', (req, res) => {
+app.post('/stage2/:proposalId/classify', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
     const { fileId, classification } = req.body;
     
-    const proposal = getProposalById(proposalId);
+    const proposal = await getProposalById(proposalId);
     if (!proposal) {
       return res.status(404).json({ success: false, error: 'Proposal not found' });
     }
@@ -6437,7 +6462,7 @@ app.post('/stage2/:proposalId/classify', (req, res) => {
     if (fileIndex !== -1) {
       proposal.documents[fileIndex].classification = classification;
       proposal.documents[fileIndex].manualClassification = true;
-      updateProposal(proposalId, { documents: proposal.documents });
+      await updateProposal(proposalId, { documents: proposal.documents });
       res.json({ success: true });
     } else {
       res.status(404).json({ success: false, error: 'File not found' });
@@ -6453,7 +6478,7 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
     
-    const proposal = getProposalById(proposalId);
+    const proposal = await getProposalById(proposalId);
     if (!proposal) {
       return res.status(404).json({ success: false, error: 'Proposal not found' });
     }
@@ -6636,7 +6661,7 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
     }
     
     if (processedCount > 0) {
-      updateProposal(proposalId, { documents: proposal.documents });
+      await updateProposal(proposalId, { documents: proposal.documents });
     }
     
     res.json({ 
@@ -6652,12 +6677,12 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
 });
 
 // Dismiss a pending document item (mark as not required)
-app.post('/stage2/:proposalId/dismiss-pending', (req, res) => {
+app.post('/stage2/:proposalId/dismiss-pending', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
     const { category, pendingText } = req.body;
 
-    const proposal = getProposalById(proposalId);
+    const proposal = await getProposalById(proposalId);
     if (!proposal) {
       return res.status(404).json({ success: false, error: 'Proposal not found' });
     }
@@ -6675,7 +6700,7 @@ app.post('/stage2/:proposalId/dismiss-pending', (req, res) => {
     });
 
     // Save proposal
-    updateProposal(proposalId, { dismissedPendingDocs: proposal.dismissedPendingDocs });
+    await updateProposal(proposalId, { dismissedPendingDocs: proposal.dismissedPendingDocs });
 
     res.json({ success: true, message: 'Pending item dismissed' });
   } catch (error) {
@@ -6685,17 +6710,17 @@ app.post('/stage2/:proposalId/dismiss-pending', (req, res) => {
 });
 
 // Save title documents for collateral
-app.post('/stage2/:proposalId/title-documents', (req, res) => {
+app.post('/stage2/:proposalId/title-documents', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
     const { titleDocuments } = req.body;
 
-    const proposal = getProposalById(proposalId);
+    const proposal = await getProposalById(proposalId);
     if (!proposal) {
       return res.status(404).json({ success: false, error: 'Proposal not found' });
     }
 
-    updateProposal(proposalId, { titleDocuments: titleDocuments || [] });
+    await updateProposal(proposalId, { titleDocuments: titleDocuments || [] });
 
     res.json({ success: true, message: 'Title documents saved' });
   } catch (error) {
@@ -6708,7 +6733,7 @@ app.post('/stage2/:proposalId/title-documents', (req, res) => {
 app.post('/stage2/:proposalId/reprocess-collateral', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
-    const proposal = getProposalById(proposalId);
+    const proposal = await getProposalById(proposalId);
     if (!proposal) {
       return res.status(404).json({ success: false, error: 'Proposal not found' });
     }
@@ -6805,7 +6830,7 @@ app.post('/stage2/:proposalId/reprocess-collateral', async (req, res) => {
       }
     });
 
-    updateProposal(proposalId, {
+    await updateProposal(proposalId, {
       documents: proposal.documents,
       titleDocuments: proposal.titleDocuments
     });
@@ -6827,7 +6852,7 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
     
-    const proposal = getProposalById(proposalId);
+    const proposal = await getProposalById(proposalId);
     if (!proposal) {
       return res.status(404).json({ success: false, error: 'Proposal not found' });
     }
@@ -6870,21 +6895,35 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
             if (aiResult.success && aiResult.data) {
               console.log('✓ Document AI extraction successful for:', doc.originalName);
               console.log('AI Extracted Data:', JSON.stringify(aiResult.data, null, 2));
-              
+
+              // Validate AI-extracted account holder against actual text (prevent hallucination)
+              let aiAccountHolder = aiResult.data.accountHolder || 'N/A';
+              if (aiAccountHolder && aiAccountHolder !== 'N/A') {
+                const headerText = fullText.substring(0, 1500).toUpperCase();
+                const holderUpper = aiAccountHolder.toUpperCase().trim();
+                if (!headerText.includes(holderUpper)) {
+                  console.log(`⚠ AI account holder "${aiAccountHolder}" NOT found in header text, using fallback extraction`);
+                  // Try fallback extraction for account holder
+                  const fallbackDetails = extractBankStatementDetailsFallback(fullText, doc.originalName);
+                  aiAccountHolder = fallbackDetails.accountHolder || 'N/A';
+                  console.log(`  Fallback account holder: "${aiAccountHolder}"`);
+                }
+              }
+
               // Extract last 4 digits from account number for matching masked accounts
               const acNo = aiResult.data.accountNumber || '';
               const digitsOnly = acNo.replace(/[^0-9]/g, '');
               const last4 = digitsOnly.length >= 4 ? digitsOnly.slice(-4) : (digitsOnly || 'N/A');
-              
+
               bankStatementDetails = {
                 bankName: aiResult.data.bankName || 'N/A',
-                accountHolder: aiResult.data.accountHolder || 'N/A',
+                accountHolder: aiAccountHolder,
                 accountNumber: aiResult.data.accountNumber || 'N/A',
                 last4Digits: last4,
                 periodFrom: aiResult.data.periodFrom || 'N/A',
                 periodTo: aiResult.data.periodTo || 'N/A',
-                period: (aiResult.data.periodFrom && aiResult.data.periodTo) 
-                  ? `${aiResult.data.periodFrom} to ${aiResult.data.periodTo}` 
+                period: (aiResult.data.periodFrom && aiResult.data.periodTo)
+                  ? `${aiResult.data.periodFrom} to ${aiResult.data.periodTo}`
                   : 'N/A'
               };
             } else {
@@ -6954,7 +6993,7 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
     }
     
     if (processedCount > 0) {
-      updateProposal(proposalId, { documents: proposal.documents });
+      await updateProposal(proposalId, { documents: proposal.documents });
     }
     
     res.json({ 
@@ -6969,12 +7008,106 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
   }
 });
 
+// Fallback regex-based financial extraction from ITR / P&L / Balance Sheet text
+function extractFinancialDetailsFallback(text) {
+  const result = { turnover: null, grossProfit: null, netProfit: null, depreciation: null, interestOnLoans: null, assessmentYear: null };
+
+  // Helper: parse Indian currency format - handles OCR artifacts where commas are read as periods
+  // e.g., "1,80,72,865" or "87.75.935" or "26.41,469" or "19010274"
+  const parseCurrency = (str) => {
+    if (!str) return null;
+    // Remove spaces
+    let cleaned = str.replace(/\s/g, '');
+    // If the number has multiple periods (e.g., "87.75.935"), treat ALL periods as thousand separators (OCR artifact)
+    const periodCount = (cleaned.match(/\./g) || []).length;
+    if (periodCount > 1) {
+      cleaned = cleaned.replace(/[.,]/g, '');
+    } else if (periodCount === 1) {
+      // Single period: if it has exactly 2 digits after it and is at the end, it's a decimal point
+      // Otherwise (e.g., "26.41,469"), it's a misread comma
+      if (/\.\d{2}$/.test(cleaned) && !cleaned.includes(',')) {
+        cleaned = cleaned.replace(/,/g, '');
+      } else {
+        cleaned = cleaned.replace(/[.,]/g, '');
+      }
+    } else {
+      cleaned = cleaned.replace(/,/g, '');
+    }
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? null : num;
+  };
+
+  // Regex token for Indian currency amounts (digits with commas or periods as separators)
+  const AMT = '[\\d][\\d,. ]*[\\d]';
+
+  // Assessment Year
+  const ayMatch = text.match(/Assessment\s*Year[:\s]*(\d{4}[-–]\d{2,4})/i);
+  if (ayMatch) result.assessmentYear = ayMatch[1];
+
+  // Turnover / Sales - look in P&L section
+  const turnoverPatterns = [
+    new RegExp(`Total\\s*Turnover\\s*as\\s*per\\s*Form\\s*3CD[:\\s]*[\\d()\\s]*?[:\\s]*(${AMT})`, 'i'),
+    new RegExp(`By\\s+Sales\\s+(${AMT})`, 'i'),
+    new RegExp(`(?:^|\\n)\\s*(?:Total\\s+)?Sales\\s+(${AMT})`, 'im'),
+    new RegExp(`(?:^|\\n)\\s*Total\\s+(?:Revenue|Turnover|Receipts)\\s+(${AMT})`, 'im')
+  ];
+  for (const pattern of turnoverPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      const val = parseCurrency(match[1]);
+      if (val && val > 0) { result.turnover = val; break; }
+    }
+  }
+
+  // Gross Profit
+  const gpRegex = new RegExp(`Gross\\s+Profit\\s+(${AMT})`, 'i');
+  const gpMatch = text.match(gpRegex);
+  if (gpMatch) {
+    const val = parseCurrency(gpMatch[1]);
+    if (val && val > 0) result.grossProfit = val;
+  }
+
+  // Net Profit
+  const npRegex = new RegExp(`Net\\s+Profit\\s+(${AMT})`, 'gi');
+  const npMatches = [...text.matchAll(npRegex)];
+  if (npMatches.length > 0) {
+    const val = parseCurrency(npMatches[0][1]);
+    if (val && val > 0) result.netProfit = val;
+  }
+
+  // Depreciation (note: often misspelled as "Deprecation" in Indian ITRs)
+  const depRegex = new RegExp(`Deprec[ia]a?tion\\s*["']?\\s*(${AMT})`, 'i');
+  const depMatch = text.match(depRegex);
+  if (depMatch) {
+    const val = parseCurrency(depMatch[1]);
+    if (val && val > 0) result.depreciation = val;
+  }
+
+  // Interest on Loans - sum all loan interest lines from P&L
+  // Find the P&L section (between "Gross Profit" and "Net Profit")
+  let totalInterest = 0;
+  const plSection = text.match(/Gross\s+Profit[\s\S]*?Net\s+Profit/i);
+  if (plSection) {
+    const plText = plSection[0];
+    const intRegex = new RegExp(`(?:Business\\s+Loan|Vehicle\\s+Loan|Car\\s+Loan|Bank\\s+(?:Interst|Interest)|Loan\\s+(?:Interst|Interest)|Finance\\s+(?:Loan\\s+)?(?:Interst|Interest)|OD\\s+(?:Loan\\s+)?(?:Interst|Interest))\\s*(${AMT})`, 'gi');
+    const interestLines = [...plText.matchAll(intRegex)];
+    interestLines.forEach(m => {
+      const val = parseCurrency(m[1]);
+      if (val && val > 0) totalInterest += val;
+    });
+  }
+  if (totalInterest > 0) result.interestOnLoans = totalInterest;
+
+  console.log('Regex financial extraction result:', JSON.stringify(result));
+  return result;
+}
+
 // Reprocess financial documents to extract full text for component detection
 app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
 
-    const proposal = getProposalById(proposalId);
+    const proposal = await getProposalById(proposalId);
     if (!proposal) {
       return res.status(404).json({ success: false, error: 'Proposal not found' });
     }
@@ -7036,6 +7169,8 @@ app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
               // Full balance sheet indicators (has date like "as at" or "as on")
               textLower.includes('balance sheet as at') ||
               textLower.includes('balance sheet as on') ||
+              // OCR-resilient: "alance Sheet as on" (missing "B" from OCR)
+              /alance\s*sheet\s*as\s*(?:on|at)/i.test(fullText) ||
               // ITR-6 specific: Schedule-AL for Assets & Liabilities
               textLower.includes('schedule-al') ||
               textLower.includes('schedule al') ||
@@ -7044,7 +7179,11 @@ app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
                (textLower.includes('fixed assets') || textLower.includes('current assets') ||
                 textLower.includes('total assets') || textLower.includes('capital account') ||
                 textLower.includes('partners capital') || textLower.includes("partner's capital") ||
-                textLower.includes('share capital') || textLower.includes('reserves and surplus')))
+                textLower.includes('share capital') || textLower.includes('reserves and surplus'))) ||
+              // OCR fallback: if text has liabilities + assets + BS indicators without explicit "balance sheet"
+              (textLower.includes('liabilities') && textLower.includes('assets') &&
+               (textLower.includes('sundry debtors') || textLower.includes('sundry creditors') || textLower.includes('capital account')) &&
+               (textLower.includes('fixed assets') || textLower.includes('current assets')))
             ) && !textLower.includes('balance sheet (regular books of account');
 
             // Check for Profit & Loss - must be actual P&L section header
@@ -7078,14 +7217,15 @@ app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
                           (textLower.includes('disallowed expenses') && textLower.includes('tax payable')) ||
                           (textLower.includes('name of the assessee') && textLower.includes('tax payable') && textLower.includes('total income'));
 
-            const components = {
-              // ITR Acknowledgement - exclude Form 26AS
-              itrAck: !isForm26AS && (
-                      textLower.includes('indian income tax return acknowledgement') ||
+            // ITR Acknowledgement indicators (check independently of 26AS)
+            const hasITRAckIndicators = textLower.includes('indian income tax return acknowledgement') ||
                       textLower.includes('itr acknowledgement') ||
                       textLower.includes('itr-6') || textLower.includes('itr-5') || textLower.includes('itr-3') ||
-                      (textLower.includes('acknowledgement number') && textLower.includes('date of filing'))
-                      ),
+                      (textLower.includes('acknowledgement number') && textLower.includes('date of filing'));
+
+            const components = {
+              // ITR Acknowledgement - exclude pure Form 26AS (but allow ITR+26AS combo docs)
+              itrAck: hasITRAckIndicators || (!isForm26AS && false),
               computation: hasComputation,
               balanceSheet: hasBalanceSheet,
               profitLoss: hasProfitLoss
@@ -7119,7 +7259,7 @@ app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
     }
 
     if (processedCount > 0) {
-      updateProposal(proposalId, { documents: proposal.documents });
+      await updateProposal(proposalId, { documents: proposal.documents });
     }
 
     res.json({
@@ -7138,7 +7278,7 @@ app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
 app.post('/stage2/:proposalId/reprocess-personal-docs', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
-    const proposal = getProposalById(proposalId);
+    const proposal = await getProposalById(proposalId);
     if (!proposal) {
       return res.status(404).json({ success: false, error: 'Proposal not found' });
     }
@@ -7353,7 +7493,7 @@ app.post('/stage2/:proposalId/reprocess-personal-docs', async (req, res) => {
     }
 
     // Save updated proposal
-    updateProposal(proposalId, { documents: proposal.documents });
+    await updateProposal(proposalId, { documents: proposal.documents });
 
     res.json({
       success: true,
@@ -7485,6 +7625,32 @@ function extractBankStatementDetailsFallback(text, filename = '') {
       }
     }
   }
+
+  // If still not found, detect bank from IFSC code prefix (very reliable)
+  if (result.bankName === 'N/A') {
+    const ifscMatch = headerText.match(/IFSC\s*(?:Code)?[:\s]*([A-Z]{4})\d{7}/i);
+    if (ifscMatch) {
+      const ifscPrefix = ifscMatch[1].toUpperCase();
+      const ifscBankMap = {
+        'UTIB': 'AXIS BANK', 'HDFC': 'HDFC BANK', 'ICIC': 'ICICI BANK',
+        'SBIN': 'STATE BANK OF INDIA', 'KKBK': 'KOTAK MAHINDRA BANK',
+        'PUNB': 'PUNJAB NATIONAL BANK', 'CNRB': 'CANARA BANK',
+        'BARB': 'BANK OF BARODA', 'IOBA': 'INDIAN OVERSEAS BANK',
+        'FDRL': 'FEDERAL BANK', 'BDBL': 'BANDHAN BANK',
+        'INDB': 'INDUSIND BANK', 'YESB': 'YES BANK',
+        'RATN': 'RBL BANK', 'IBKL': 'IDBI BANK',
+        'UBIN': 'UNION BANK OF INDIA', 'CBIN': 'CENTRAL BANK OF INDIA',
+        'BKID': 'BANK OF INDIA', 'ALLA': 'INDIAN BANK',
+        'IDIB': 'INDIAN BANK', 'UCBA': 'UCO BANK',
+        'TMBL': 'TAMILNAD MERCANTILE BANK', 'KVBL': 'KARUR VYSYA BANK',
+        'KARB': 'KARNATAKA BANK', 'CIUB': 'CITY UNION BANK',
+        'SIBL': 'SOUTH INDIAN BANK', 'DCBL': 'DCB BANK'
+      };
+      if (ifscBankMap[ifscPrefix]) {
+        result.bankName = ifscBankMap[ifscPrefix];
+      }
+    }
+  }
   
   // Account number patterns - look for full or masked account numbers
   const accountPatterns = [
@@ -7521,17 +7687,32 @@ function extractBankStatementDetailsFallback(text, filename = '') {
   }
   
   // Account holder patterns - limit to avoid capturing address
-  // Added SBI Welcome pattern: "Welcome Mr. NAME" or "Welcome Mrs. NAME"
   const holderPatterns = [
-    /Welcome\s+(?:Mr\.|Mrs\.|Ms\.?|M\/S\.?)\s*([A-Z][A-Za-z\s&.]+?)(?:\s*\.?\s*(?:As\s*on|$|\n))/i,
-    /(?:Account\s*Holder|Customer\s*Name|Name)[:\s]+([A-Z][A-Za-z\s&.]+?)(?:\s+(?:Plot|Door|No\.|House|Flat|Building|Street|Road|Lane|Address|Branch|A\/c|Account|\d|,|\n))/i,
-    /(?:Account\s*Holder|Customer\s*Name|Name)[:\s]+([A-Z][A-Za-z\s&.]{2,50})/i,
-    /(?:Mr\.|Mrs\.|Ms\.|M\/S)[.\s]+([A-Z][A-Za-z\s&.]+?)(?:\s+(?:Plot|Door|No\.|House|Flat|Building|Street|Road|Lane|Address|\d|,|\n))/i,
-    /(?:Mr\.|Mrs\.|Ms\.|M\/S)[.\s]+([A-Z][A-Za-z\s&.]{2,50})/i
+    // SBI format: "Welcome:\nNAME" or "Welcome: NAME" (name on next line after Welcome:)
+    /Welcome[:\s]*\n\s*([A-Z][A-Za-z\s&.]{2,50}?)(?:\s*\n)/i,
+    // SBI format: "Welcome Mr./Mrs./Miss. NAME"
+    /Welcome\s+(?:Mr\.|Mrs\.|Ms\.?|Miss\.?|M\/S\.?)\s*([A-Z][A-Za-z\s&.]+?)(?:\s*\.?\s*(?:As\s*on|$|\n))/i,
+    // Explicit label: "Account Holder: NAME" or "Customer Name: NAME"
+    /(?:Account\s*Holder|Customer\s*Name)[:\s]+([A-Z][A-Za-z\s&.]+?)(?:\s+(?:Plot|Door|No\.|House|Flat|Building|Street|Road|Lane|Address|Branch|A\/c|Account|\d|,|\n))/i,
+    /(?:Account\s*Holder|Customer\s*Name)[:\s]+([A-Z][A-Za-z\s&.]{2,50})/i,
+    // ICICI / generic format: "Name:\nVALUE\n" (label on one line, name on next)
+    /(?:^|\n)\s*Name\s*:\s*\n\s*([A-Z][A-Za-z\s&.]{2,60}?)\s*\n/im,
+    // Generic format: "Name: VALUE" on same line
+    /(?:^|\n)\s*Name\s*:\s*([A-Z][A-Za-z\s&.]{2,60}?)(?:\s*\n)/im,
+    // HDFC Bank format: "MR\nNAME\nADDRESS" or "MS\nNAME\nADDRESS" (salutation on separate line)
+    /(?:^|\n)(?:MR|MRS|MS|M\/S)\s*\n\s*([A-Z][A-Za-z\s&.]+?)\s*\n\s*(?:H[\s-]*NO|Plot|Door|No\.|House|Flat|Building|Street|Road|\d+[\s-]+\d+)/im,
+    // Salutation on same line: "Mr. NAME ADDRESS_BOUNDARY"
+    /(?:Mr\.|Mrs\.|Ms\.|Miss\.|M\/S)[.\s]+([A-Z][A-Za-z\s&.]+?)(?:\s+(?:Plot|Door|No\.|House|Flat|Building|Street|Road|Lane|Address|\d|,|\n))/i,
+    /(?:Mr\.|Mrs\.|Ms\.|Miss\.|M\/S)[.\s]+([A-Z][A-Za-z\s&.]{2,50})/i,
+    // Axis Bank / generic format: Name on the very first non-empty line, followed by "Joint Holder"
+    /^\s*([A-Z][A-Z\s&.]{2,60}?)\s*\n\s*(?:Joint\s*Holder)/im
   ];
 
+  // Only search in the header area (first 1500 chars) to avoid matching names in transactions
+  const holderSearchText = text.substring(0, 1500);
+
   for (const pattern of holderPatterns) {
-    const match = text.match(pattern);
+    const match = holderSearchText.match(pattern);
     if (match) {
       // Clean up the account holder name - remove trailing common words
       let holder = match[1].trim();
@@ -7688,7 +7869,7 @@ function extractBankStatementDetailsFallback(text, filename = '') {
   return result;
 }
 
-app.post('/stage2/:proposalId/complete', (req, res) => {
+app.post('/stage2/:proposalId/complete', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
     const updates = {
@@ -7697,7 +7878,7 @@ app.post('/stage2/:proposalId/complete', (req, res) => {
       stage2CompletedAt: new Date().toISOString()
     };
     
-    updateProposal(proposalId, updates);
+    await updateProposal(proposalId, updates);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -7706,7 +7887,7 @@ app.post('/stage2/:proposalId/complete', (req, res) => {
 
 // Stage 3: CAM (Credit Appraisal Memo)
 app.get('/stage3/:proposalId', async (req, res) => {
-  const proposal = getProposalById(req.params.proposalId);
+  const proposal = await getProposalById(req.params.proposalId);
   if (!proposal) {
     return res.status(404).send('Proposal not found');
   }
@@ -7723,50 +7904,54 @@ app.get('/stage3/:proposalId', async (req, res) => {
 });
 
 // Stage 3: Download entire proposal as ZIP with categorized folders
-app.get('/stage3/:proposalId/download-zip', (req, res) => {
-  const proposal = getProposalById(req.params.proposalId);
-  if (!proposal) return res.status(404).send('Proposal not found');
+app.get('/stage3/:proposalId/download-zip', async (req, res) => {
+  try {
+    const proposal = await getProposalById(req.params.proposalId);
+    if (!proposal) return res.status(404).send('Proposal not found');
 
-  const docs = proposal.documents || [];
-  if (docs.length === 0) return res.status(400).send('No documents to download');
+    const docs = proposal.documents || [];
+    if (docs.length === 0) return res.status(400).send('No documents to download');
 
-  const categoryLabels = {
-    personalId: 'Personal ID',
-    businessId: 'Business ID',
-    incorporation: 'Incorporation',
-    creditReports: 'Credit Reports',
-    financials: 'Financials',
-    banking: 'Banking',
-    turnover: 'Turnover',
-    debtProfile: 'Debt Profile',
-    otherIncome: 'Other Income',
-    collateral: 'Collateral',
-    otherDocuments: 'Other Documents'
-  };
+    const categoryLabels = {
+      personalId: 'Personal ID',
+      businessId: 'Business ID',
+      incorporation: 'Incorporation',
+      creditReports: 'Credit Reports',
+      financials: 'Financials',
+      banking: 'Banking',
+      turnover: 'Turnover',
+      debtProfile: 'Debt Profile',
+      otherIncome: 'Other Income',
+      collateral: 'Collateral',
+      otherDocuments: 'Other Documents'
+    };
 
-  const zip = new AdmZip();
+    const zip = new AdmZip();
 
-  docs.forEach(doc => {
-    const filePath = path.join(UPLOADS_DIR, req.params.proposalId, doc.filename);
-    if (!fs.existsSync(filePath)) return;
-    const folder = categoryLabels[doc.category] || 'Other';
-    const fileName = doc.originalName || doc.filename;
-    zip.addFile(folder + '/' + fileName, fs.readFileSync(filePath));
-  });
+    docs.forEach(doc => {
+      const filePath = path.join(UPLOADS_DIR, req.params.proposalId, doc.filename);
+      if (!fs.existsSync(filePath)) return;
+      const folder = categoryLabels[doc.category] || 'Other';
+      const fileName = doc.originalName || doc.filename;
+      zip.addFile(folder + '/' + fileName, fs.readFileSync(filePath));
+    });
 
-  const applicant = (proposal.applicantName || proposal.customerName || 'proposal').replace(/[^a-zA-Z0-9 ]/g, '').trim().replace(/\s+/g, '_');
-  const zipName = `${applicant}_${req.params.proposalId}.zip`;
+    const applicant = (proposal.applicantName || proposal.customerName || 'proposal').replace(/[^a-zA-Z0-9 ]/g, '').trim().replace(/\s+/g, '_');
+    const zipName = `${applicant}_${req.params.proposalId}.zip`;
 
-  res.set('Content-Type', 'application/zip');
-  res.set('Content-Disposition', `attachment; filename="${zipName}"`);
-  res.send(zip.toBuffer());
+    res.set('Content-Type', 'application/zip');
+    res.set('Content-Disposition', `attachment; filename="${zipName}"`);
+    res.send(zip.toBuffer());
+  } catch (error) {
+    res.status(500).send('Error creating ZIP: ' + error.message);
+  }
 });
 
 // Stage 3: Re-extract financial documents (ITR / P&L / Balance Sheet)
 app.post('/stage3/:proposalId/reextract-financials', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
-    const proposal = getProposalById(proposalId);
+    const proposal = await getProposalById(proposalId);
     if (!proposal) return res.status(404).json({ success: false, error: 'Proposal not found' });
     if (!proposal.documents || proposal.documents.length === 0) {
       return res.status(400).json({ success: false, error: 'No documents found' });
@@ -7815,7 +8000,9 @@ app.post('/stage3/:proposalId/reextract-financials', async (req, res) => {
 
         // Extract financial data from tables
         const textLower = fullText.toLowerCase();
-        const hasBS = textLower.includes('balance sheet');
+        const hasBS = textLower.includes('balance sheet') ||
+          /alance\s*sheet\s*as\s*on/i.test(fullText) ||
+          (textLower.includes('liabilities') && textLower.includes('assets') && (textLower.includes('sundry debtors') || textLower.includes('sundry creditors') || textLower.includes('capital account')));
         const hasPL = textLower.includes('profit') && textLower.includes('loss');
         const hasComp = textLower.includes('computation') && textLower.includes('total income');
         const hasITR = textLower.includes('income tax return') || textLower.includes('acknowledgement number');
@@ -7827,22 +8014,39 @@ app.post('/stage3/:proposalId/reextract-financials', async (req, res) => {
         console.log('Components: ITR=' + hasITR, 'Comp=' + hasComp, 'BS=' + hasBS, 'PL=' + hasPL);
 
         // AI-based financial extraction
+        let aiExtracted = false;
         try {
           console.log('🤖 Attempting AI financial extraction for:', doc.originalName);
           const aiResult = await extractWithDocumentAI(fullText, 'financial-itr', pdfResult.tables || []);
           if (aiResult.success && aiResult.data) {
             const ai = aiResult.data;
             if (!proposal.documents[i].extractedDetails) proposal.documents[i].extractedDetails = {};
-            if (ai.turnover) proposal.documents[i].extractedDetails.turnover = ai.turnover;
-            if (ai.grossProfit) proposal.documents[i].extractedDetails.grossProfit = ai.grossProfit;
-            if (ai.depreciation) proposal.documents[i].extractedDetails.depreciation = ai.depreciation;
-            if (ai.interestOnLoans) proposal.documents[i].extractedDetails.interestOnLoans = ai.interestOnLoans;
-            if (ai.netProfit) proposal.documents[i].extractedDetails.netProfit = ai.netProfit;
-            if (ai.assessmentYear) proposal.documents[i].extractedDetails.assessmentYear = ai.assessmentYear;
+            if (ai.turnover) { proposal.documents[i].extractedDetails.turnover = ai.turnover; aiExtracted = true; }
+            if (ai.grossProfit) { proposal.documents[i].extractedDetails.grossProfit = ai.grossProfit; aiExtracted = true; }
+            if (ai.depreciation) { proposal.documents[i].extractedDetails.depreciation = ai.depreciation; aiExtracted = true; }
+            if (ai.interestOnLoans) { proposal.documents[i].extractedDetails.interestOnLoans = ai.interestOnLoans; aiExtracted = true; }
+            if (ai.netProfit) { proposal.documents[i].extractedDetails.netProfit = ai.netProfit; aiExtracted = true; }
+            if (ai.assessmentYear) { proposal.documents[i].extractedDetails.assessmentYear = ai.assessmentYear; aiExtracted = true; }
             console.log('✓ AI financial extraction:', JSON.stringify(ai));
           }
         } catch (aiErr) {
           console.error('AI financial extraction error:', aiErr.message);
+        }
+
+        // Fallback: regex-based financial extraction if AI failed
+        if (!aiExtracted) {
+          console.log('⚠ AI failed, using regex fallback for financial extraction:', doc.originalName);
+          const fb = extractFinancialDetailsFallback(fullText);
+          if (fb && (fb.turnover || fb.netProfit || fb.depreciation)) {
+            if (!proposal.documents[i].extractedDetails) proposal.documents[i].extractedDetails = {};
+            if (fb.turnover) proposal.documents[i].extractedDetails.turnover = fb.turnover;
+            if (fb.grossProfit) proposal.documents[i].extractedDetails.grossProfit = fb.grossProfit;
+            if (fb.depreciation) proposal.documents[i].extractedDetails.depreciation = fb.depreciation;
+            if (fb.interestOnLoans) proposal.documents[i].extractedDetails.interestOnLoans = fb.interestOnLoans;
+            if (fb.netProfit) proposal.documents[i].extractedDetails.netProfit = fb.netProfit;
+            if (fb.assessmentYear) proposal.documents[i].extractedDetails.assessmentYear = fb.assessmentYear;
+            console.log('✓ Regex fallback extraction:', JSON.stringify(fb));
+          }
         }
 
         processedCount++;
@@ -7852,7 +8056,7 @@ app.post('/stage3/:proposalId/reextract-financials', async (req, res) => {
     }
 
     if (processedCount > 0) {
-      updateProposal(proposalId, { documents: proposal.documents });
+      await updateProposal(proposalId, { documents: proposal.documents });
     }
 
     res.json({ success: true, processedCount });
@@ -7865,7 +8069,7 @@ app.post('/stage3/:proposalId/reextract-financials', async (req, res) => {
 // Fetch website and generate business summary
 app.post('/stage3/:proposalId/fetch-business-summary', async (req, res) => {
   try {
-    const proposal = getProposalById(req.params.proposalId);
+    const proposal = await getProposalById(req.params.proposalId);
     if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
 
     const websiteUrl = proposal.website;
@@ -8016,7 +8220,7 @@ Keep it professional and within 150-200 words. Start directly with the business 
     if (!proposal.camMemo) proposal.camMemo = {};
     proposal.camMemo.businessProcess = summary;
     proposal.businessWebsiteSummary = summary;
-    updateProposal(req.params.proposalId, { camMemo: proposal.camMemo, businessWebsiteSummary: summary });
+    await updateProposal(req.params.proposalId, { camMemo: proposal.camMemo, businessWebsiteSummary: summary });
 
     console.log(`Business summary generated for ${companyName} from ${websiteUrl}`);
     res.json({ success: true, summary });
@@ -8029,7 +8233,7 @@ Keep it professional and within 150-200 words. Start directly with the business 
 // Stage 3: Generate CAM text summary for WhatsApp sharing
 app.get('/stage3/:proposalId/cam-text', async (req, res) => {
   try {
-    const proposal = getProposalById(req.params.proposalId);
+    const proposal = await getProposalById(req.params.proposalId);
     if (!proposal) return res.status(404).json({ success: false, error: 'Proposal not found' });
 
     const debtProfiles = await DebtProfile.find({ proposalId: req.params.proposalId }).sort({ sNo: 1 });
@@ -8174,7 +8378,7 @@ app.get('/stage3/:proposalId/cam-text', async (req, res) => {
   }
 });
 
-app.post('/stage3/:proposalId/submit', (req, res) => {
+app.post('/stage3/:proposalId/submit', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
     const profilingData = req.body;
@@ -8186,7 +8390,7 @@ app.post('/stage3/:proposalId/submit', (req, res) => {
       stage3CompletedAt: new Date().toISOString()
     };
 
-    updateProposal(proposalId, updates);
+    await updateProposal(proposalId, updates);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -8194,12 +8398,12 @@ app.post('/stage3/:proposalId/submit', (req, res) => {
 });
 
 // Save P&L Sales turnover data
-app.post('/stage3/:proposalId/save-turnover-data', (req, res) => {
+app.post('/stage3/:proposalId/save-turnover-data', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
     const { fy2324, fy2425 } = req.body;
 
-    const proposal = getProposal(proposalId);
+    const proposal = await getProposalById(proposalId);
     if (!proposal) {
       return res.status(404).json({ success: false, message: 'Proposal not found' });
     }
@@ -8210,10 +8414,76 @@ app.post('/stage3/:proposalId/save-turnover-data', (req, res) => {
       updatedAt: new Date().toISOString()
     };
 
-    updateProposal(proposalId, { turnoverData });
+    await updateProposal(proposalId, { turnoverData });
     res.json({ success: true, message: 'Turnover data saved successfully' });
   } catch (error) {
     console.error('Save turnover data error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Stage 3: Save eligibility data
+app.post('/stage3/:proposalId/save-eligibility', async (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const proposal = await getProposalById(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ success: false, message: 'Proposal not found' });
+    }
+
+    const eligibilityData = {
+      ...req.body,
+      updatedAt: new Date().toISOString()
+    };
+
+    await updateProposal(proposalId, { eligibilityData });
+    res.json({ success: true, message: 'Eligibility data saved successfully' });
+  } catch (error) {
+    console.error('Save eligibility data error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Stage 3: Save banking eligibility data
+app.post('/stage3/:proposalId/save-banking-eligibility', async (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const proposal = await getProposalById(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ success: false, message: 'Proposal not found' });
+    }
+
+    const bankingEligibilityData = {
+      ...req.body,
+      updatedAt: new Date().toISOString()
+    };
+
+    await updateProposal(proposalId, { bankingEligibilityData });
+    res.json({ success: true, message: 'Banking eligibility data saved successfully' });
+  } catch (error) {
+    console.error('Save banking eligibility data error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Stage 3: Save GST eligibility data
+app.post('/stage3/:proposalId/save-gst-eligibility', async (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const proposal = await getProposalById(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ success: false, message: 'Proposal not found' });
+    }
+
+    const gstEligibilityData = {
+      ...req.body,
+      updatedAt: new Date().toISOString()
+    };
+
+    await updateProposal(proposalId, { gstEligibilityData });
+    res.json({ success: true, message: 'GST eligibility data saved successfully' });
+  } catch (error) {
+    console.error('Save GST eligibility data error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -8617,7 +8887,7 @@ app.post('/admin/policies/:id/update', async (req, res) => {
 // Stage 4: Banker match view
 app.get('/stage4/:proposalId', async (req, res) => {
   try {
-    const proposal = getProposalById(req.params.proposalId);
+    const proposal = await getProposalById(req.params.proposalId);
     if (!proposal) return res.status(404).send('Proposal not found');
 
     // Get or create match record
@@ -8705,7 +8975,7 @@ app.get('/stage4/:proposalId', async (req, res) => {
 // Stage 4: Refresh matches
 app.post('/stage4/:proposalId/refresh-matches', async (req, res) => {
   try {
-    const proposal = getProposalById(req.params.proposalId);
+    const proposal = await getProposalById(req.params.proposalId);
     if (!proposal) return res.status(404).json({ success: false, error: 'Proposal not found' });
 
     const policies = await BankPolicy.find({ is_deleted: false }).lean();
@@ -9027,6 +9297,26 @@ app.get('/admin/surrogates', async (req, res) => {
 });
 
 // ========== END STAGE 4 ROUTES ==========
+
+// One-time migration: import proposals from JSON file into MongoDB
+app.get('/migrate-proposals', async (req, res) => {
+  try {
+    const filePath = path.join(__dirname, 'data', 'proposals.json');
+    if (!fs.existsSync(filePath)) return res.json({ message: 'No proposals.json found' });
+    const proposals = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    let imported = 0;
+    for (const p of proposals) {
+      const exists = await Proposal.findOne({ id: p.id });
+      if (!exists) {
+        await new Proposal(p).save();
+        imported++;
+      }
+    }
+    res.json({ success: true, imported, total: proposals.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.listen(port, '0.0.0.0', () => {
   console.log(`Customer Profiling & Banker Selection App running on port ${port}`);
