@@ -63,6 +63,8 @@ app.post('/api/claude', (req, res) => {
   python.stdin.end();
 });
 // Connect to MongoDB
+mongoose.set('bufferTimeoutMS', 30000);
+console.log('Connecting to MongoDB:', process.env.MONGODB_URL ? 'Using MONGODB_URL env var' : 'Using localhost fallback');
 mongoose.connect(process.env.MONGODB_URL || 'mongodb://localhost:27017/haikusdb', {
   serverSelectionTimeoutMS: 30000,
   socketTimeoutMS: 45000,
@@ -70,6 +72,9 @@ mongoose.connect(process.env.MONGODB_URL || 'mongodb://localhost:27017/haikusdb'
 })
   .then(() => console.log('MongoDB connected'))
   .catch(err => console.error('MongoDB connection error:', err));
+
+mongoose.connection.on('disconnected', () => console.log('MongoDB disconnected'));
+mongoose.connection.on('reconnected', () => console.log('MongoDB reconnected'));
 // Multer storage for Excel uploads
 const debtProfileStorage = multer.diskStorage({
   destination: function (req, file, cb) {
