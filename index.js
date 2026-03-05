@@ -63,9 +63,13 @@ app.post('/api/claude', (req, res) => {
   python.stdin.end();
 });
 // Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URL || 'mongodb://localhost:27017/haikusdb')
+const mongoReady = mongoose.connect(process.env.MONGODB_URL || 'mongodb://localhost:27017/haikusdb', {
+  serverSelectionTimeoutMS: 30000,
+  socketTimeoutMS: 45000,
+  connectTimeoutMS: 30000,
+})
   .then(() => console.log('MongoDB connected'))
-  .catch(err => console.error('MongoDB connection error:', err));
+  .catch(err => { console.error('MongoDB connection error:', err); process.exit(1); });
 // Multer storage for Excel uploads
 const debtProfileStorage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -9318,6 +9322,8 @@ app.get('/migrate-proposals', async (req, res) => {
   }
 });
 
-app.listen(port, '0.0.0.0', () => {
-  console.log(`Customer Profiling & Banker Selection App running on port ${port}`);
+mongoReady.then(() => {
+  app.listen(port, '0.0.0.0', () => {
+    console.log(`Customer Profiling & Banker Selection App running on port ${port}`);
+  });
 });
