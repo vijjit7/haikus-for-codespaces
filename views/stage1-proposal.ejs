@@ -37,11 +37,24 @@
                             <select id="applicantType" name="applicantType" required>
                                 <option value="">Select Type</option>
                                 <option value="Individual">Individual</option>
+                                <option value="Individual Salaried">Individual Salaried</option>
                                 <option value="Proprietorship">Proprietorship</option>
                                 <option value="Partnership">Partnership</option>
                                 <option value="LLP">LLP (Limited Liability Partnership)</option>
                                 <option value="Private Limited">Private Limited</option>
                                 <option value="Public Limited">Public Limited</option>
+                                <option value="Others">Others</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" id="applicantEmploymentGroup" style="display: none;">
+                            <label for="applicantEmployment">Employment Type</label>
+                            <select id="applicantEmployment" name="applicantEmployment">
+                                <option value="">Select Employment</option>
+                                <option value="Salaried Employee">Salaried Employee</option>
+                                <option value="Self Employed">Self Employed</option>
+                                <option value="Business Owner">Business Owner</option>
+                                <option value="Professional">Professional</option>
                                 <option value="Others">Others</option>
                             </select>
                         </div>
@@ -72,11 +85,24 @@
                                     <select id="coApplicantType_0" name="coApplicants[0].type">
                                         <option value="">Select Type</option>
                                         <option value="Individual">Individual</option>
+                                        <option value="Individual Salaried">Individual Salaried</option>
                                         <option value="Proprietorship">Proprietorship</option>
                                         <option value="Partnership">Partnership</option>
                                         <option value="LLP">LLP</option>
                                         <option value="Private Limited">Private Limited</option>
                                         <option value="Public Limited">Public Limited</option>
+                                        <option value="Others">Others</option>
+                                    </select>
+                                </div>
+
+                                <div class="form-group co-applicant-employment" id="coApplicantEmploymentGroup_0" style="display: none;">
+                                    <label for="coApplicantEmployment_0">Employment Type</label>
+                                    <select id="coApplicantEmployment_0" name="coApplicants[0].employment" onchange="">
+                                        <option value="">Select Employment</option>
+                                        <option value="Salaried Employee">Salaried Employee</option>
+                                        <option value="Self Employed">Self Employed</option>
+                                        <option value="Business Owner">Business Owner</option>
+                                        <option value="Professional">Professional</option>
                                         <option value="Others">Others</option>
                                     </select>
                                 </div>
@@ -288,7 +314,8 @@
             <p>Proposal ID: <span id="proposalId"></span></p>
             <p>Your customer proposal has been submitted and is now in Stage 1.</p>
             <div class="modal-actions">
-                <button class="btn btn-primary" onclick="window.location.href='/stage1/new'">Submit Another</button>
+                <button class="btn btn-primary" id="goToStage2Btn" onclick="">Proceed to Stage 2 →</button>
+                <button class="btn btn-secondary" onclick="window.location.href='/stage1/new'">Submit Another</button>
                 <button class="btn btn-secondary" onclick="window.location.href='/proposals'">View All Proposals</button>
             </div>
         </div>
@@ -319,24 +346,41 @@
         // Initialize on page load
         toggleCollateralField();
 
-        // Applicant Type toggle for Age/CIBIL fields (show for Individual only)
+        // Applicant Type toggle for Age/CIBIL/Employment fields (show for Individual only)
         const applicantTypeSelect = document.getElementById('applicantType');
         const applicantAgeGroup = document.getElementById('applicantAgeGroup');
         const applicantCibilGroup = document.getElementById('applicantCibilGroup');
+        const applicantEmploymentGroup = document.getElementById('applicantEmploymentGroup');
 
         function toggleApplicantFields() {
-            if (applicantTypeSelect.value === 'Individual') {
+            if (applicantTypeSelect.value === 'Individual' || applicantTypeSelect.value === 'Individual Salaried') {
                 applicantAgeGroup.style.display = '';
                 applicantCibilGroup.style.display = '';
+                applicantEmploymentGroup.style.display = applicantTypeSelect.value === 'Individual' ? '' : 'none';
             } else {
                 applicantAgeGroup.style.display = 'none';
                 applicantCibilGroup.style.display = 'none';
+                applicantEmploymentGroup.style.display = 'none';
             }
         }
 
         applicantTypeSelect.addEventListener('change', toggleApplicantFields);
         // Initialize on page load
         toggleApplicantFields();
+
+        // Co-applicant type toggle for employment field
+        function toggleCoApplicantEmployment(index) {
+            const typeSelect = document.getElementById('coApplicantType_' + index);
+            const employmentGroup = document.getElementById('coApplicantEmploymentGroup_' + index);
+            if (typeSelect && employmentGroup) {
+                employmentGroup.style.display = (typeSelect.value === 'Individual') ? '' : 'none';
+            }
+        }
+
+        // Attach listener for first co-applicant
+        document.getElementById('coApplicantType_0').addEventListener('change', function() {
+            toggleCoApplicantEmployment(0);
+        });
 
         // Loan Category toggle for Balance Transfer bank field
         const loanCategorySelect = document.getElementById('loanCategory');
@@ -393,14 +437,27 @@
 
                     <div class="form-group">
                         <label for="coApplicantType_${coApplicantCount}">Co-Applicant Type</label>
-                        <select id="coApplicantType_${coApplicantCount}" name="coApplicants[${coApplicantCount}].type">
+                        <select id="coApplicantType_${coApplicantCount}" name="coApplicants[${coApplicantCount}].type" onchange="toggleCoApplicantEmployment(${coApplicantCount})">
                             <option value="">Select Type</option>
                             <option value="Individual">Individual</option>
+                            <option value="Individual Salaried">Individual Salaried</option>
                             <option value="Proprietorship">Proprietorship</option>
                             <option value="Partnership">Partnership</option>
                             <option value="LLP">LLP</option>
                             <option value="Private Limited">Private Limited</option>
                             <option value="Public Limited">Public Limited</option>
+                            <option value="Others">Others</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group co-applicant-employment" id="coApplicantEmploymentGroup_${coApplicantCount}" style="display: none;">
+                        <label for="coApplicantEmployment_${coApplicantCount}">Employment Type</label>
+                        <select id="coApplicantEmployment_${coApplicantCount}" name="coApplicants[${coApplicantCount}].employment">
+                            <option value="">Select Employment</option>
+                            <option value="Salaried Employee">Salaried Employee</option>
+                            <option value="Self Employed">Self Employed</option>
+                            <option value="Business Owner">Business Owner</option>
+                            <option value="Professional">Professional</option>
                             <option value="Others">Others</option>
                         </select>
                     </div>
@@ -473,24 +530,37 @@
             }
 
             try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 30000);
+
                 const response = await fetch('/stage1/submit', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify(data)
+                    body: JSON.stringify(data),
+                    signal: controller.signal
                 });
 
+                clearTimeout(timeoutId);
                 const result = await response.json();
-                
+
                 if (result.success) {
                     document.getElementById('proposalId').textContent = result.proposalId;
+                    document.getElementById('goToStage2Btn').onclick = function() {
+                        window.location.href = '/stage2/' + result.proposalId;
+                    };
                     modal.style.display = 'flex';
                 } else {
-                    alert('Error submitting proposal: ' + result.error);
+                    alert('Error submitting proposal: ' + (result.error || 'Unknown error'));
                 }
             } catch (error) {
-                alert('Error submitting proposal: ' + error.message);
+                if (error.name === 'AbortError') {
+                    alert('Request timed out. Please check your connection and try again.');
+                } else {
+                    alert('Error submitting proposal: ' + error.message);
+                }
+            } finally {
                 isSubmitting = false;
             }
         });
