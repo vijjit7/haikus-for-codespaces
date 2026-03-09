@@ -64,17 +64,19 @@ app.post('/api/claude', (req, res) => {
 });
 // Connect to MongoDB
 mongoose.set('bufferTimeoutMS', 30000);
-console.log('Connecting to MongoDB:', process.env.MONGODB_URL ? 'Using MONGODB_URL env var' : 'Using localhost fallback');
-mongoose.connect(process.env.MONGODB_URL || 'mongodb://localhost:27017/haikusdb', {
+const mongoUrl = process.env.MONGODB_URL || process.env.MONGO_URL || 'mongodb://localhost:27017/haikusdb';
+console.log('Connecting to MongoDB:', (process.env.MONGODB_URL || process.env.MONGO_URL) ? 'Using env var' : 'WARNING: Using localhost fallback - set MONGODB_URL env var for Railway');
+mongoose.connect(mongoUrl, {
   serverSelectionTimeoutMS: 30000,
   socketTimeoutMS: 45000,
   connectTimeoutMS: 30000,
 })
-  .then(() => console.log('MongoDB connected'))
-  .catch(err => console.error('MongoDB connection error:', err));
+  .then(() => console.log('MongoDB connected successfully to:', mongoUrl.replace(/\/\/[^:]+:[^@]+@/, '//***:***@')))
+  .catch(err => console.error('MongoDB connection FAILED:', err.message));
 
-mongoose.connection.on('disconnected', () => console.log('MongoDB disconnected'));
-mongoose.connection.on('reconnected', () => console.log('MongoDB reconnected'));
+mongoose.connection.on('disconnected', () => console.log('MongoDB disconnected at', new Date().toISOString()));
+mongoose.connection.on('reconnected', () => console.log('MongoDB reconnected at', new Date().toISOString()));
+mongoose.connection.on('error', err => console.error('MongoDB connection error:', err.message));
 // Multer storage for Excel uploads
 const debtProfileStorage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -843,8 +845,10 @@ async function saveProposal(proposal) {
   proposal.createdAt = new Date().toISOString();
   proposal.status = 'Stage 1 - Proposal Submitted';
   proposal.currentStage = 1;
+  console.log('Saving proposal with id:', proposal.id, 'applicant:', proposal.applicantName);
   const doc = new Proposal(proposal);
   await doc.save();
+  console.log('Proposal saved to MongoDB successfully');
   return doc.toObject();
 }
 
@@ -5838,6 +5842,18 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
   console.log(`✅ Background processing complete for proposal ${proposalId}`);
 }
 
+// Health check
+app.get('/health', (req, res) => {
+  const dbStates = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+  const state = mongoose.connection.readyState;
+  res.json({
+    status: state === 1 ? 'ok' : 'degraded',
+    mongodb: dbStates[state] || 'unknown',
+    uptime: process.uptime(),
+    env: (process.env.MONGODB_URL || process.env.MONGO_URL) ? 'MongoDB URL set' : 'MongoDB URL NOT SET'
+  });
+});
+
 // Routes
 app.get('/', (req, res) => {
   res.render('dashboard', { user: 'Associate' });
@@ -5850,9 +5866,20 @@ app.get('/stage1/new', (req, res) => {
 
 app.post('/stage1/submit', async (req, res) => {
   try {
+    console.log('Stage 1 submit received, MongoDB state:', mongoose.connection.readyState);
+    if (mongoose.connection.readyState !== 1) {
+      console.error('MongoDB not connected. readyState:', mongoose.connection.readyState);
+      return res.status(503).json({ success: false, error: 'Database not connected. Please try again in a few seconds.' });
+    }
+    if (!req.body || !req.body.applicantName) {
+      console.error('Empty or invalid request body:', JSON.stringify(req.body).substring(0, 200));
+      return res.status(400).json({ success: false, error: 'Invalid form data received.' });
+    }
     const proposal = await saveProposal(req.body);
+    console.log('Stage 1 proposal saved successfully, id:', proposal.id);
     res.json({ success: true, proposalId: proposal.id });
   } catch (error) {
+    console.error('Stage 1 submit error:', error.name, error.message, error.stack);
     res.status(500).json({ success: false, error: error.message });
   }
 });
