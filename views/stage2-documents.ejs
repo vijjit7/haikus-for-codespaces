@@ -222,13 +222,13 @@
                 <div class="doc-category">
                     <h3 class="category-title">Personal ID - only for individual applicant or coapplicants</h3>
                     <ul class="doc-list">
-                        <% if (proposal.applicantType === 'Individual') { %>
+                        <% if (proposal.applicantType === 'Individual' || proposal.applicantType === 'Individual Salaried') { %>
                             <li>PAN Card of <%= proposal.applicantName || proposal.customerName %></li>
                             <li>Aadhar Card of <%= proposal.applicantName || proposal.customerName %></li>
                         <% } %>
                         <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
                             <% proposal.coApplicants.forEach((co, idx) => { %>
-                                <% if (co.type === 'Individual') { %>
+                                <% if (co.type === 'Individual' || co.type === 'Individual Salaried') { %>
                                     <li>PAN Card of <%= co.name %></li>
                                     <li>Aadhar Card of <%= co.name %></li>
                                 <% } %>
@@ -237,8 +237,31 @@
                     </ul>
                 </div>
 
+                <!-- Salary Documents (only for Individual Salaried) -->
+                <% if (proposal.applicantType === 'Individual Salaried' || (proposal.coApplicants && proposal.coApplicants.some(co => co.type === 'Individual Salaried'))) { %>
+                <div class="doc-category">
+                    <h3 class="category-title">Salary Documents</h3>
+                    <ul class="doc-list">
+                        <% if (proposal.applicantType === 'Individual Salaried') { %>
+                            <li>3 Months Payslips of <%= proposal.applicantName || proposal.customerName %></li>
+                            <li>2 Years Form 16 of <%= proposal.applicantName || proposal.customerName %></li>
+                            <li>Offer Letter of <%= proposal.applicantName || proposal.customerName %></li>
+                        <% } %>
+                        <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
+                            <% proposal.coApplicants.forEach((co, idx) => { %>
+                                <% if (co.type === 'Individual Salaried') { %>
+                                    <li>3 Months Payslips of <%= co.name %></li>
+                                    <li>2 Years Form 16 of <%= co.name %></li>
+                                    <li>Offer Letter of <%= co.name %></li>
+                                <% } %>
+                            <% }); %>
+                        <% } %>
+                    </ul>
+                </div>
+                <% } %>
+
                 <!-- Business ID (only for non-individual) -->
-                <% if (proposal.applicantType !== 'Individual') { %>
+                <% if (proposal.applicantType !== 'Individual' && proposal.applicantType !== 'Individual Salaried') { %>
                 <div class="doc-category">
                     <h3 class="category-title">Business ID - only for non individual</h3>
                     <ul class="doc-list">
@@ -283,7 +306,7 @@
                             <li>List of Directors of <%= proposal.applicantName %></li>
                             <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
                                 <% proposal.coApplicants.forEach((co, idx) => { %>
-                                    <% if (co.type !== 'Individual') { %>
+                                    <% if (co.type !== 'Individual' && co.type !== 'Individual Salaried') { %>
                                         <li>List of Shareholders of <%= co.name || 'CoApplicant ' + (idx + 1) %></li>
                                         <li>List of Directors of <%= co.name || 'CoApplicant ' + (idx + 1) %></li>
                                     <% } %>
@@ -440,6 +463,7 @@
                         <button class="tab-btn active" onclick="showTab('all')">ALL</button>
                         <button class="tab-btn" onclick="showTab('unclassified')">Unclassified</button>
                         <button class="tab-btn" onclick="showTab('personalId')">Personal ID</button>
+                        <button class="tab-btn" onclick="showTab('salaryDocuments')">Salary Documents</button>
                         <button class="tab-btn" onclick="showTab('businessId')">Business ID</button>
                         <button class="tab-btn" onclick="showTab('incorporation')">Incorporation</button>
                         <button class="tab-btn" onclick="showTab('creditReports')">Credit Reports</button>
@@ -504,6 +528,7 @@
                                                 <select class="category-select" onchange="updateCategory('<%= file.id %>', this.value)">
                                                     <option value="">Categorize...</option>
                                                     <option value="personalId" <%= file.category === 'personalId' ? 'selected' : '' %>>Personal ID</option>
+                                                    <option value="salaryDocuments" <%= file.category === 'salaryDocuments' ? 'selected' : '' %>>Salary Documents</option>
                                                     <option value="businessId" <%= file.category === 'businessId' ? 'selected' : '' %>>Business ID</option>
                                                     <option value="incorporation" <%= file.category === 'incorporation' ? 'selected' : '' %>>Incorporation</option>
                                                     <option value="creditReports" <%= file.category === 'creditReports' ? 'selected' : '' %>>Credit Reports</option>
@@ -588,6 +613,7 @@
                                 'partnership deed', 'reconstituted partnership deed',
                                 'certificate of incorporation', 'memorandum of association', 'articles of association',
                                 'gst 3b returns', 'gst 1 returns', 'all existing loan details',
+                                '3 months payslips of', '2 years form 16 of', 'offer letter of',
                                 'rental agreement', 'rent receipts', 'list of properties',
                                 'title documents', 'tax paid receipts', 'approved sanction plan',
                                 'encumberance certificate'
@@ -660,6 +686,7 @@
                         // All document types by category (for dropdown options)
                         const allDocTypesByCategory = {
                             personalId: [],
+                            salaryDocuments: [],
                             businessId: [],
                             incorporation: [],
                             creditReports: [],
@@ -674,14 +701,14 @@
                         
                         // Populate ALL document types for each category (regardless of classification status)
                         // Personal ID
-                        if (proposal.applicantType === 'Individual') {
+                        if (proposal.applicantType === 'Individual' || proposal.applicantType === 'Individual Salaried') {
                             allDocTypesByCategory.personalId.push('PAN Card of ' + (proposal.applicantName || proposal.customerName));
                             allDocTypesByCategory.personalId.push('Aadhar Card of ' + (proposal.applicantName || proposal.customerName));
                             allDocTypesByCategory.personalId.push('Passport Photo of ' + (proposal.applicantName || proposal.customerName));
                         }
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type === 'Individual') {
+                                if (co.type === 'Individual' || co.type === 'Individual Salaried') {
                                     allDocTypesByCategory.personalId.push('PAN Card of ' + co.name);
                                     allDocTypesByCategory.personalId.push('Aadhar Card of ' + co.name);
                                     allDocTypesByCategory.personalId.push('Passport Photo of ' + co.name);
@@ -689,8 +716,24 @@
                             });
                         }
                         
+                        // Salary Documents
+                        if (proposal.applicantType === 'Individual Salaried') {
+                            allDocTypesByCategory.salaryDocuments.push('3 Months Payslips of ' + (proposal.applicantName || proposal.customerName));
+                            allDocTypesByCategory.salaryDocuments.push('2 Years Form 16 of ' + (proposal.applicantName || proposal.customerName));
+                            allDocTypesByCategory.salaryDocuments.push('Offer Letter of ' + (proposal.applicantName || proposal.customerName));
+                        }
+                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                            proposal.coApplicants.forEach((co, idx) => {
+                                if (co.type === 'Individual Salaried') {
+                                    allDocTypesByCategory.salaryDocuments.push('3 Months Payslips of ' + co.name);
+                                    allDocTypesByCategory.salaryDocuments.push('2 Years Form 16 of ' + co.name);
+                                    allDocTypesByCategory.salaryDocuments.push('Offer Letter of ' + co.name);
+                                }
+                            });
+                        }
+
                         // Business ID
-                        if (proposal.applicantType !== 'Individual') {
+                        if (proposal.applicantType !== 'Individual' && proposal.applicantType !== 'Individual Salaried') {
                             allDocTypesByCategory.businessId.push('PAN Card of ' + (proposal.applicantName || 'Applicant Name') + ' (Non Individual)');
                             allDocTypesByCategory.businessId.push('GST Certificate of ' + (proposal.applicantName || 'Applicant Name'));
                             allDocTypesByCategory.businessId.push('Labour License of ' + (proposal.applicantName || 'Applicant Name'));
@@ -726,7 +769,7 @@
                         if ((proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') &&
                             proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type !== 'Individual') {
+                                if (co.type !== 'Individual' && co.type !== 'Individual Salaried') {
                                     allDocTypesByCategory.incorporation.push('List of Shareholders of ' + (co.name || 'CoApplicant ' + (idx + 1)));
                                     allDocTypesByCategory.incorporation.push('List of Directors of ' + (co.name || 'CoApplicant ' + (idx + 1)));
                                 }
@@ -736,12 +779,12 @@
                         // Credit Reports
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type === 'Individual') {
+                                if (co.type === 'Individual' || co.type === 'Individual Salaried') {
                                     allDocTypesByCategory.creditReports.push('Personal Credit Report of ' + co.name);
                                 }
                             });
                         }
-                        if (proposal.applicantType !== 'Individual') {
+                        if (proposal.applicantType !== 'Individual' && proposal.applicantType !== 'Individual Salaried') {
                             allDocTypesByCategory.creditReports.push('Business Credit Report of ' + proposal.applicantName);
                         }
                         
@@ -757,7 +800,7 @@
                         allDocTypesByCategory.financials.push('Tax Audit Report of FY2024-25');
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type === 'Individual') {
+                                if (co.type === 'Individual' || co.type === 'Individual Salaried') {
                                     allDocTypesByCategory.financials.push('ITR of ' + currentFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1)));
                                     allDocTypesByCategory.financials.push('ITR of ' + previousFY + ' of ' + (co.name || 'coApplicant' + (idx + 1) + ' name'));
                                     allDocTypesByCategory.financials.push('ITR of ' + precedingFY + ' of ' + (co.name || 'coApplicant' + (idx + 1) + ' name'));
@@ -767,13 +810,31 @@
                                 }
                             });
                         }
-                        
+
+                        // Salaried Employee Documents (for Individual applicants/co-applicants who are salaried)
+                        if (proposal.applicantType === 'Individual' && proposal.applicantEmployment === 'Salaried Employee') {
+                            allDocTypesByCategory.financials.push('Payslips (Last 3 months) of ' + (proposal.applicantName || proposal.customerName));
+                            allDocTypesByCategory.financials.push('Form 16 (Last 2 years) of ' + (proposal.applicantName || proposal.customerName));
+                            allDocTypesByCategory.personalId.push('Employee ID Card of ' + (proposal.applicantName || proposal.customerName));
+                            allDocTypesByCategory.financials.push('Offer Letter of ' + (proposal.applicantName || proposal.customerName));
+                        }
+                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                            proposal.coApplicants.forEach((co, idx) => {
+                                if (co.type === 'Individual' && co.employment === 'Salaried Employee') {
+                                    allDocTypesByCategory.financials.push('Payslips (Last 3 months) of ' + co.name);
+                                    allDocTypesByCategory.financials.push('Form 16 (Last 2 years) of ' + co.name);
+                                    allDocTypesByCategory.personalId.push('Employee ID Card of ' + co.name);
+                                    allDocTypesByCategory.financials.push('Offer Letter of ' + co.name);
+                                }
+                            });
+                        }
+
                         // Banking
                         allDocTypesByCategory.banking.push('Bank Statement of ' + proposal.applicantName);
                         allDocTypesByCategory.banking.push('Overdraft Bank Statement of ' + proposal.applicantName);
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type === 'Individual') {
+                                if (co.type === 'Individual' || co.type === 'Individual Salaried') {
                                     allDocTypesByCategory.banking.push('Bank Statement of ' + (co.name || 'Coapplicant Name' + (idx + 1)));
                                 }
                             });
@@ -807,6 +868,7 @@
                         // Categorize pending documents based on what's NOT uploaded OR not classified
                         const pendingByCategory = {
                             personalId: [],
+                            salaryDocuments: [],
                             businessId: [],
                             incorporation: [],
                             creditReports: [],
@@ -823,7 +885,7 @@
                         const uploadedPersonalIdCount = getUploadedCountInCategory('personalId');
                         
                         // Add pending personal ID docs
-                        if (proposal.applicantType === 'Individual') {
+                        if (proposal.applicantType === 'Individual' || proposal.applicantType === 'Individual Salaried') {
                             const pan1 = 'PAN Card of ' + (proposal.applicantName || proposal.customerName);
                             const aadhar1 = 'Aadhar Card of ' + (proposal.applicantName || proposal.customerName);
                             const photo1 = 'Passport Photo of ' + (proposal.applicantName || proposal.customerName);
@@ -833,7 +895,7 @@
                         }
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type === 'Individual') {
+                                if (co.type === 'Individual' || co.type === 'Individual Salaried') {
                                     const pan = 'PAN Card of ' + co.name;
                                     const aadhar = 'Aadhar Card of ' + co.name;
                                     const photo = 'Passport Photo of ' + co.name;
@@ -844,8 +906,30 @@
                             });
                         }
 
+                        // Salary Documents (for Individual Salaried applicant/co-applicants)
+                        if (proposal.applicantType === 'Individual Salaried') {
+                            const payslips1 = '3 Months Payslips of ' + (proposal.applicantName || proposal.customerName);
+                            const form16_1 = '2 Years Form 16 of ' + (proposal.applicantName || proposal.customerName);
+                            const offerLetter1 = 'Offer Letter of ' + (proposal.applicantName || proposal.customerName);
+                            if (!isDocClassified(payslips1)) pendingByCategory.salaryDocuments.push(payslips1);
+                            if (!isDocClassified(form16_1)) pendingByCategory.salaryDocuments.push(form16_1);
+                            if (!isDocClassified(offerLetter1)) pendingByCategory.salaryDocuments.push(offerLetter1);
+                        }
+                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                            proposal.coApplicants.forEach((co, idx) => {
+                                if (co.type === 'Individual Salaried') {
+                                    const coPayslips = '3 Months Payslips of ' + co.name;
+                                    const coForm16 = '2 Years Form 16 of ' + co.name;
+                                    const coOfferLetter = 'Offer Letter of ' + co.name;
+                                    if (!isDocClassified(coPayslips)) pendingByCategory.salaryDocuments.push(coPayslips);
+                                    if (!isDocClassified(coForm16)) pendingByCategory.salaryDocuments.push(coForm16);
+                                    if (!isDocClassified(coOfferLetter)) pendingByCategory.salaryDocuments.push(coOfferLetter);
+                                }
+                            });
+                        }
+
                         // Business ID (only for non-individual)
-                        if (proposal.applicantType !== 'Individual') {
+                        if (proposal.applicantType !== 'Individual' && proposal.applicantType !== 'Individual Salaried') {
                             const bizPan = 'PAN Card of ' + (proposal.applicantName || 'Applicant Name') + ' (Non Individual)';
                             const gst = 'GST Certificate of ' + (proposal.applicantName || 'Applicant Name');
                             const labour = 'Labour License of ' + (proposal.applicantName || 'Applicant Name');
@@ -895,7 +979,7 @@
                         if ((proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') &&
                             proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type !== 'Individual') {
+                                if (co.type !== 'Individual' && co.type !== 'Individual Salaried') {
                                     const coShareholderList = 'List of Shareholders of ' + (co.name || 'CoApplicant ' + (idx + 1));
                                     const coDirectorList = 'List of Directors of ' + (co.name || 'CoApplicant ' + (idx + 1));
                                     if (!isDocClassified(coShareholderList)) pendingByCategory.incorporation.push(coShareholderList);
@@ -907,13 +991,13 @@
                         // Credit Reports
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type === 'Individual') {
+                                if (co.type === 'Individual' || co.type === 'Individual Salaried') {
                                     const creditReport = 'Personal Credit Report of ' + co.name;
                                     if (!isDocClassified(creditReport)) pendingByCategory.creditReports.push(creditReport);
                                 }
                             });
                         }
-                        if (proposal.applicantType !== 'Individual') {
+                        if (proposal.applicantType !== 'Individual' && proposal.applicantType !== 'Individual Salaried') {
                             const bizCreditReport = 'Business Credit Report of ' + proposal.applicantName;
                             if (!isDocClassified(bizCreditReport)) pendingByCategory.creditReports.push(bizCreditReport);
                         }
@@ -942,7 +1026,7 @@
 
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type === 'Individual') {
+                                if (co.type === 'Individual' || co.type === 'Individual Salaried') {
                                     const coItrCurrent = 'ITR of ' + currentFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1));
                                     const coItrPrevious = 'ITR of ' + previousFY + ' of ' + (co.name || 'coApplicant' + (idx + 1) + ' name');
                                     const coItrPreceding = 'ITR of ' + precedingFY + ' of ' + (co.name || 'coApplicant' + (idx + 1) + ' name');
@@ -955,6 +1039,32 @@
                                     if (!isDocClassified(coForm26asCurrent)) pendingByCategory.financials.push(coForm26asCurrent);
                                     if (!isDocClassified(coForm26asPrevious)) pendingByCategory.financials.push(coForm26asPrevious);
                                     if (!isDocClassified(coForm26asPreceding)) pendingByCategory.financials.push(coForm26asPreceding);
+                                }
+                            });
+                        }
+
+                        // Salaried Employee Pending Documents
+                        if (proposal.applicantType === 'Individual' && proposal.applicantEmployment === 'Salaried Employee') {
+                            const payslips = 'Payslips (Last 3 months) of ' + (proposal.applicantName || proposal.customerName);
+                            const form16 = 'Form 16 (Last 2 years) of ' + (proposal.applicantName || proposal.customerName);
+                            const empId = 'Employee ID Card of ' + (proposal.applicantName || proposal.customerName);
+                            const offerLetter = 'Offer Letter of ' + (proposal.applicantName || proposal.customerName);
+                            if (!isDocClassified(payslips)) pendingByCategory.financials.push(payslips);
+                            if (!isDocClassified(form16)) pendingByCategory.financials.push(form16);
+                            if (!isDocClassified(empId)) pendingByCategory.personalId.push(empId);
+                            if (!isDocClassified(offerLetter)) pendingByCategory.financials.push(offerLetter);
+                        }
+                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                            proposal.coApplicants.forEach((co, idx) => {
+                                if (co.type === 'Individual' && co.employment === 'Salaried Employee') {
+                                    const coPayslips = 'Payslips (Last 3 months) of ' + co.name;
+                                    const coForm16 = 'Form 16 (Last 2 years) of ' + co.name;
+                                    const coEmpId = 'Employee ID Card of ' + co.name;
+                                    const coOfferLetter = 'Offer Letter of ' + co.name;
+                                    if (!isDocClassified(coPayslips)) pendingByCategory.financials.push(coPayslips);
+                                    if (!isDocClassified(coForm16)) pendingByCategory.financials.push(coForm16);
+                                    if (!isDocClassified(coEmpId)) pendingByCategory.personalId.push(coEmpId);
+                                    if (!isDocClassified(coOfferLetter)) pendingByCategory.financials.push(coOfferLetter);
                                 }
                             });
                         }
@@ -1147,7 +1257,7 @@
                         // Check coapplicants - only if they don't have bank statements in the uploaded docs
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type === 'Individual') {
+                                if (co.type === 'Individual' || co.type === 'Individual Salaried') {
                                     const coName = co.name || 'Coapplicant ' + (idx + 1);
                                     const coStmt = 'Bank Statement of ' + coName;
 
@@ -1240,6 +1350,7 @@
                         %>
                         <button class="tab-btn-pending active" onclick="showPendingTab('all')">ALL (<%= allPending.length %>)</button>
                         <button class="tab-btn-pending" onclick="showPendingTab('personalId')">Personal ID (<%= pendingByCategory.personalId.length %>)</button>
+                        <button class="tab-btn-pending" onclick="showPendingTab('salaryDocuments')">Salary Docs (<%= pendingByCategory.salaryDocuments.length %>)</button>
                         <button class="tab-btn-pending" onclick="showPendingTab('businessId')">Business ID (<%= pendingByCategory.businessId.length %>)</button>
                         <button class="tab-btn-pending" onclick="showPendingTab('incorporation')">Incorporation (<%= pendingByCategory.incorporation.length %>)</button>
                         <button class="tab-btn-pending" onclick="showPendingTab('creditReports')">Credit Reports (<%= pendingByCategory.creditReports.length %>)</button>
@@ -1292,6 +1403,24 @@
                                 </ul>
                             <% } else { %>
                                 <p class="success-message">✓ All Personal ID documents uploaded!</p>
+                            <% } %>
+                        </div>
+
+                        <!-- Salary Documents Pending -->
+                        <div class="pending-category-content" data-pending-category="salaryDocuments" style="display: none;">
+                            <% if (pendingByCategory.salaryDocuments.length > 0) { %>
+                                <ul class="pending-list">
+                                    <% pendingByCategory.salaryDocuments.forEach((doc, idx) => { %>
+                                        <li class="pending-item" data-pending-text="<%= doc.replace(/"/g, '&quot;') %>">
+                                            <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                                                <div><span class="warning-icon">⚠️</span> <%= doc %></div>
+                                                <button onclick="dismissPendingItem('salaryDocuments', <%= idx %>, this)" style="background: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85em; white-space: nowrap;" title="Mark as not required">✕ Dismiss</button>
+                                            </div>
+                                        </li>
+                                    <% }); %>
+                                </ul>
+                            <% } else { %>
+                                <p class="success-message">✓ All Salary documents uploaded!</p>
                             <% } %>
                         </div>
 
@@ -2063,6 +2192,8 @@
                                     let earliestDate = null;
                                     let latestDate = null;
 
+                                    // Collect all individual statement periods
+                                    const allPeriods = [];
                                     validStmts.forEach(stmt => {
                                         // Handle both " - " and " to " separators
                                         let periodParts = stmt.period.split(' - ');
@@ -2073,6 +2204,7 @@
                                             const fromDate = parseCoverageDate(periodParts[0].trim());
                                             const toDate = parseCoverageDate(periodParts[1].trim());
                                             if (fromDate && toDate) {
+                                                allPeriods.push({ from: fromDate, to: toDate });
                                                 if (!earliestDate || fromDate < earliestDate) earliestDate = fromDate;
                                                 if (!latestDate || toDate > latestDate) latestDate = toDate;
                                             }
@@ -2082,25 +2214,74 @@
                                     let coveredDays = 0;
                                     let missingPeriods = [];
 
-                                    if (earliestDate && latestDate) {
-                                        const effectiveStart = earliestDate < coverageOneYearAgo ? coverageOneYearAgo : earliestDate;
-                                        const effectiveEnd = latestDate > coverageToday ? coverageToday : latestDate;
-                                        coveredDays = Math.ceil((effectiveEnd - effectiveStart) / (1000 * 60 * 60 * 24));
+                                    if (earliestDate && latestDate && allPeriods.length > 0) {
+                                        // Sort periods by start date
+                                        allPeriods.sort((a, b) => a.from - b.from);
+
+                                        // Merge overlapping/adjacent periods (within 1 day tolerance)
+                                        const mergedPeriods = [];
+                                        allPeriods.forEach(period => {
+                                            if (mergedPeriods.length === 0) {
+                                                mergedPeriods.push({ from: new Date(period.from), to: new Date(period.to) });
+                                            } else {
+                                                const last = mergedPeriods[mergedPeriods.length - 1];
+                                                if (period.from <= new Date(last.to.getTime() + 86400000)) {
+                                                    if (period.to > last.to) last.to = new Date(period.to);
+                                                } else {
+                                                    mergedPeriods.push({ from: new Date(period.from), to: new Date(period.to) });
+                                                }
+                                            }
+                                        });
+
+                                        // Calculate covered days by summing merged periods clipped to required window
+                                        coveredDays = 0;
+                                        mergedPeriods.forEach(period => {
+                                            const clipStart = period.from < coverageOneYearAgo ? coverageOneYearAgo : period.from;
+                                            const clipEnd = period.to > coverageToday ? coverageToday : period.to;
+                                            if (clipEnd >= clipStart) {
+                                                coveredDays += Math.ceil((clipEnd - clipStart) / (1000 * 60 * 60 * 24));
+                                            }
+                                        });
                                         if (coveredDays < 0) coveredDays = 0;
 
-                                        // Calculate missing periods
-                                        if (earliestDate > coverageOneYearAgo) {
-                                            const missingDays = Math.ceil((earliestDate - coverageOneYearAgo) / (1000 * 60 * 60 * 24));
-                                            missingPeriods.push({
-                                                from: coverageOneYearAgo,
-                                                to: new Date(earliestDate.getTime() - 86400000),
-                                                days: missingDays
-                                            });
+                                        // Calculate missing periods - gap at start
+                                        if (mergedPeriods[0].from > coverageOneYearAgo) {
+                                            const gapEnd = new Date(mergedPeriods[0].from.getTime() - 86400000);
+                                            if (gapEnd >= coverageOneYearAgo) {
+                                                const missingDays = Math.ceil((gapEnd - coverageOneYearAgo) / (1000 * 60 * 60 * 24)) + 1;
+                                                missingPeriods.push({
+                                                    from: coverageOneYearAgo,
+                                                    to: gapEnd,
+                                                    days: missingDays
+                                                });
+                                            }
                                         }
-                                        if (latestDate < coverageToday) {
-                                            const missingDays = Math.ceil((coverageToday - latestDate) / (1000 * 60 * 60 * 24));
+
+                                        // Gaps between merged periods
+                                        for (let i = 0; i < mergedPeriods.length - 1; i++) {
+                                            let gapStart = new Date(mergedPeriods[i].to.getTime() + 86400000);
+                                            let gapEnd = new Date(mergedPeriods[i + 1].from.getTime() - 86400000);
+                                            // Clip to required window
+                                            if (gapStart < coverageOneYearAgo) gapStart = new Date(coverageOneYearAgo);
+                                            if (gapEnd > coverageToday) gapEnd = new Date(coverageToday);
+                                            if (gapStart <= gapEnd) {
+                                                const missingDays = Math.ceil((gapEnd - gapStart) / (1000 * 60 * 60 * 24)) + 1;
+                                                missingPeriods.push({
+                                                    from: gapStart,
+                                                    to: gapEnd,
+                                                    days: missingDays
+                                                });
+                                            }
+                                        }
+
+                                        // Gap at end
+                                        const lastPeriod = mergedPeriods[mergedPeriods.length - 1];
+                                        if (lastPeriod.to < coverageToday) {
+                                            let gapFrom = new Date(lastPeriod.to.getTime() + 86400000);
+                                            if (gapFrom < coverageOneYearAgo) gapFrom = new Date(coverageOneYearAgo);
+                                            const missingDays = Math.ceil((coverageToday - gapFrom) / (1000 * 60 * 60 * 24)) + 1;
                                             missingPeriods.push({
-                                                from: new Date(latestDate.getTime() + 86400000),
+                                                from: gapFrom,
                                                 to: coverageToday,
                                                 days: missingDays
                                             });
@@ -2625,16 +2806,21 @@
                                 }
 
                                 // Track uploaded month-year combinations with form types
-                                // Extract from PDF text content only
+                                // Extract from PDF text content
 
-                                // Pattern 1: "Period\nJanuary" or "Period January" (GSTR-3B format)
-                                let periodMatch = extractedText.match(/Period[\s\n]+([A-Za-z]+)/i);
+                                // Helper to validate month name
+                                function isValidMonth(name) {
+                                    return monthNames.some(m => m.toLowerCase() === (name || '').toLowerCase());
+                                }
+
+                                // Pattern 1: "Period\nJanuary" or "Period January" (GSTR-3B format) - only valid month names
+                                let periodMatch = extractedText.match(/Period[\s\n]+(January|February|March|April|May|June|July|August|September|October|November|December)/i);
                                 // Pattern 2: "Year\n2024-25" (GSTR-3B FY format)
                                 let fyMatch = extractedText.match(/Year[\s\n]+(\d{4})-(\d{2})/i);
                                 // Pattern 3: "Return Period January 2025" or "Tax Period: January 2025"
-                                let returnPeriodMatch = extractedText.match(/(?:Return|Tax)\s*Period[:\s]+([A-Za-z]+)\s+(\d{4})/i);
-                                // Pattern 4: "January 2025" standalone month year
-                                let monthYearMatch = extractedText.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b/i);
+                                let returnPeriodMatch = extractedText.match(/(?:Return|Tax)\s*Period[:\s]+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})/i);
+                                // Pattern 4: "January 2025" or "January - 2025" standalone month year
+                                let monthYearMatch = extractedText.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)[\s\-–]+(\d{4})\b/i);
 
                                 let monthName = null;
                                 let fy = null;
@@ -2674,6 +2860,7 @@
                                     }
                                 }
 
+
                                 if (monthName && fy) {
                                     const monthKey = `${monthName}-${fy}`;
                                     if (!uploadedMonthsByGstin[gstin][monthKey]) {
@@ -2696,8 +2883,8 @@
                                     // Extract year and month from text
                                     const fyMatchA = textA.match(/Year[\s\n]+(\d{4})-(\d{2})/i);
                                     const fyMatchB = textB.match(/Year[\s\n]+(\d{4})-(\d{2})/i);
-                                    const periodMatchA = textA.match(/Period[\s\n]+([A-Za-z]+)/i);
-                                    const periodMatchB = textB.match(/Period[\s\n]+([A-Za-z]+)/i);
+                                    const periodMatchA = textA.match(/Period[\s\n]+(January|February|March|April|May|June|July|August|September|October|November|December)/i);
+                                    const periodMatchB = textB.match(/Period[\s\n]+(January|February|March|April|May|June|July|August|September|October|November|December)/i);
 
                                     // Get FY start year (e.g., 2024 from 2024-25)
                                     const yearA = fyMatchA ? parseInt(fyMatchA[1]) : 9999;
@@ -2924,20 +3111,20 @@
                                                             formType = 'GSTR-1';
                                                         }
 
-                                                        // Extract period/month and year from PDF text content only
+                                                        // Extract period/month and year from PDF text content
                                                         let month = '-';
                                                         let year = '-';
 
-                                                        // Pattern 1: "Period\nJanuary" or "Period January" (GSTR-3B format)
-                                                        const periodMatch = docText.match(/Period[\s\n]+([A-Za-z]+)/i);
+                                                        // Pattern 1: "Period\nJanuary" or "Period January" (GSTR-3B format) - only valid month names
+                                                        const periodMatch = docText.match(/Period[\s\n]+(January|February|March|April|May|June|July|August|September|October|November|December)/i);
                                                         // Pattern 2: "Year\n2024-25" or "Year 2024-25" (GSTR-3B format)
                                                         const yearTextMatch = docText.match(/Year[\s\n]+(\d{4}-\d{2})/i);
 
                                                         // Pattern 3: "Return Period January 2025" or "Tax Period: January 2025"
-                                                        const returnPeriodMatch = docText.match(/(?:Return|Tax)\s*Period[:\s]+([A-Za-z]+)\s+(\d{4})/i);
+                                                        const returnPeriodMatch = docText.match(/(?:Return|Tax)\s*Period[:\s]+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})/i);
 
-                                                        // Pattern 4: "January 2025" standalone month year
-                                                        const monthYearMatch = docText.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b/i);
+                                                        // Pattern 4: "January 2025" or "January - 2025" standalone month year
+                                                        const monthYearMatch = docText.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)[\s\-–]+(\d{4})\b/i);
 
                                                         if (periodMatch) {
                                                             month = periodMatch[1];
@@ -2968,6 +3155,7 @@
                                                                 }
                                                             }
                                                         }
+
 
                                                         // Format upload date
                                                         const uploadDate = doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleDateString() : '-';
