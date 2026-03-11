@@ -6402,44 +6402,61 @@ app.post('/api/decrypt-pdf', async (req, res) => {
       return res.status(404).json({ success: false, error: 'File not found' });
     }
 
-    // Use Python script with PyMuPDF for better PDF decryption support
-    const pythonScript = path.join(__dirname, 'decrypt_pdf.py');
-    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+    // Try qpdf first (available on Linux/Railway), fall back to Python PyMuPDF (Windows dev)
+    const tempPath = filepath + '.decrypted.tmp';
+    const useQpdf = process.platform !== 'win32';
 
-    return new Promise((resolve, reject) => {
-      const pythonProcess = spawn(pythonCmd, [pythonScript, filepath, password], { shell: true });
-
-      let stdout = '';
-      let stderr = '';
-
-      pythonProcess.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      pythonProcess.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      pythonProcess.on('close', (code) => {
-        if (code === 0) {
-          res.json({ success: true, message: 'PDF decrypted successfully' });
-        } else {
-          // Check for specific error messages
-          const errorMsg = stderr.trim();
-          if (errorMsg.includes('Incorrect password')) {
-            res.status(401).json({ success: false, error: 'Incorrect password' });
+    if (useQpdf) {
+      // Use qpdf (installed via apt in Dockerfile)
+      return new Promise((resolve) => {
+        const qpdfProcess = spawn('qpdf', ['--password=' + password, '--decrypt', filepath, tempPath]);
+        let stderr = '';
+        qpdfProcess.stderr.on('data', (data) => { stderr += data.toString(); });
+        qpdfProcess.on('close', (code) => {
+          if (code === 0) {
+            fs.renameSync(tempPath, filepath);
+            res.json({ success: true, message: 'PDF decrypted successfully' });
           } else {
-            res.status(500).json({ success: false, error: errorMsg || 'Failed to decrypt PDF' });
+            if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+            if (stderr.includes('invalid password')) {
+              res.status(401).json({ success: false, error: 'Incorrect password' });
+            } else {
+              res.status(500).json({ success: false, error: stderr.trim() || 'Failed to decrypt PDF' });
+            }
           }
-        }
-        resolve();
+          resolve();
+        });
+        qpdfProcess.on('error', (err) => {
+          res.status(500).json({ success: false, error: 'qpdf not available: ' + err.message });
+          resolve();
+        });
       });
-
-      pythonProcess.on('error', (err) => {
-        res.status(500).json({ success: false, error: 'Failed to run decryption: ' + err.message });
-        resolve();
+    } else {
+      // Windows: use Python PyMuPDF
+      const pythonScript = path.join(__dirname, 'decrypt_pdf.py');
+      return new Promise((resolve) => {
+        const pythonProcess = spawn('python', [pythonScript, filepath, password], { shell: true });
+        let stderr = '';
+        pythonProcess.stderr.on('data', (data) => { stderr += data.toString(); });
+        pythonProcess.on('close', (code) => {
+          if (code === 0) {
+            res.json({ success: true, message: 'PDF decrypted successfully' });
+          } else {
+            const errorMsg = stderr.trim();
+            if (errorMsg.includes('Incorrect password')) {
+              res.status(401).json({ success: false, error: 'Incorrect password' });
+            } else {
+              res.status(500).json({ success: false, error: errorMsg || 'Failed to decrypt PDF' });
+            }
+          }
+          resolve();
+        });
+        pythonProcess.on('error', (err) => {
+          res.status(500).json({ success: false, error: 'Failed to run decryption: ' + err.message });
+          resolve();
+        });
       });
-    });
+    }
   } catch (error) {
     console.error('PDF decryption error:', error);
     res.status(500).json({ success: false, error: error.message || 'Failed to decrypt PDF' });
