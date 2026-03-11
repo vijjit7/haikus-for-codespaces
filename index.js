@@ -6404,9 +6404,10 @@ app.post('/api/decrypt-pdf', async (req, res) => {
 
     // Use Python script with PyMuPDF for better PDF decryption support
     const pythonScript = path.join(__dirname, 'decrypt_pdf.py');
+    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
 
     return new Promise((resolve, reject) => {
-      const pythonProcess = spawn('python', [pythonScript, filepath, password]);
+      const pythonProcess = spawn(pythonCmd, [pythonScript, filepath, password], { shell: true });
 
       let stdout = '';
       let stderr = '';
