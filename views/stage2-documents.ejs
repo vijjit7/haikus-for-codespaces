@@ -4551,69 +4551,7 @@
             }
         }
 
-        // Toggle select all checkboxes
-        function toggleSelectAll(selectAllCheckbox) {
-            const checkboxes = document.querySelectorAll('.doc-checkbox');
-            checkboxes.forEach(checkbox => {
-                checkbox.checked = selectAllCheckbox.checked;
-            });
-            updateBulkActions();
-        }
-
-        // Update bulk actions bar visibility and count
-        function updateBulkActions() {
-            const checkboxes = document.querySelectorAll('.doc-checkbox:checked');
-            const bulkActionsBar = document.getElementById('bulkActionsBar');
-            const selectedCount = document.getElementById('selectedCount');
-            const selectAllCheckbox = document.getElementById('selectAllCheckbox');
-            
-            if (checkboxes.length > 0) {
-                bulkActionsBar.style.display = 'flex';
-                selectedCount.textContent = checkboxes.length;
-            } else {
-                bulkActionsBar.style.display = 'none';
-            }
-            
-            // Update select all checkbox state
-            const allCheckboxes = document.querySelectorAll('.doc-checkbox');
-            selectAllCheckbox.checked = allCheckboxes.length > 0 && checkboxes.length === allCheckboxes.length;
-        }
-
-        // Delete selected documents
-        async function deleteSelectedDocuments() {
-            const checkboxes = document.querySelectorAll('.doc-checkbox:checked');
-            const fileIds = Array.from(checkboxes).map(cb => cb.value);
-            
-            if (fileIds.length === 0) {
-                alert('No documents selected');
-                return;
-            }
-            
-            if (!confirm(`Are you sure you want to delete ${fileIds.length} document(s)?`)) {
-                return;
-            }
-            
-            try {
-                const response = await fetch(`/stage2/${proposalId}/delete-multiple-documents`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ fileIds })
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    alert(`Successfully deleted ${result.deletedCount} document(s)!`);
-                    window.location.reload();
-                } else {
-                    alert('Delete failed: ' + result.error);
-                }
-            } catch (error) {
-                alert('Error: ' + error.message);
-            }
-        }
+        // (duplicate toggleSelectAll/updateBulkActions/deleteSelectedDocuments removed - correct versions above use isRowVisible)
 
         // Delete document function
         async function deleteDocument(fileId, fileName) {
