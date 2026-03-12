@@ -7980,15 +7980,74 @@ app.get('/stage3/:proposalId/download-zip', async (req, res) => {
       otherDocuments: 'Other Documents'
     };
 
+    // Diagnose mode: return JSON showing which files exist on disk vs in DB
+    if (req.query.diagnose === 'true') {
+      const proposalDir = path.join(UPLOADS_DIR, req.params.proposalId);
+      const dirExists = fs.existsSync(proposalDir);
+      const diskFiles = dirExists ? fs.readdirSync(proposalDir) : [];
+      const fileStatus = docs.map(doc => {
+        const filePath = path.join(UPLOADS_DIR, req.params.proposalId, doc.filename);
+        return {
+          category: doc.category,
+          originalName: doc.originalName,
+          filename: doc.filename,
+          existsOnDisk: fs.existsSync(filePath)
+        };
+      });
+      return res.json({
+        proposalId: req.params.proposalId,
+        uploadsDir: UPLOADS_DIR,
+        proposalDirExists: dirExists,
+        totalDocsInDB: docs.length,
+        filesOnDisk: diskFiles.length,
+        diskFiles: diskFiles,
+        fileStatus: fileStatus
+      });
+    }
+
     const zip = new AdmZip();
+
+    let addedCount = 0;
+    let missingCount = 0;
+    const missingFiles = [];
+    const usedPaths = new Set();
 
     docs.forEach(doc => {
       const filePath = path.join(UPLOADS_DIR, req.params.proposalId, doc.filename);
-      if (!fs.existsSync(filePath)) return;
+      if (!fs.existsSync(filePath)) {
+        missingCount++;
+        missingFiles.push({ category: doc.category, filename: doc.filename, originalName: doc.originalName });
+        return;
+      }
       const folder = categoryLabels[doc.category] || 'Other';
-      const fileName = doc.originalName || doc.filename;
-      zip.addFile(folder + '/' + fileName, fs.readFileSync(filePath));
+      let fileName = doc.originalName || doc.filename;
+      // Handle duplicate originalNames within the same category
+      let zipPath = folder + '/' + fileName;
+      if (usedPaths.has(zipPath)) {
+        const ext = path.extname(fileName);
+        const base = path.basename(fileName, ext);
+        let counter = 2;
+        while (usedPaths.has(folder + '/' + base + '_' + counter + ext)) counter++;
+        fileName = base + '_' + counter + ext;
+        zipPath = folder + '/' + fileName;
+      }
+      usedPaths.add(zipPath);
+      zip.addFile(zipPath, fs.readFileSync(filePath));
+      addedCount++;
     });
+
+    console.log(`ZIP download: ${addedCount} files added, ${missingCount} files missing on disk`);
+    if (missingFiles.length > 0) {
+      console.log('Missing files:', JSON.stringify(missingFiles, null, 2));
+      const proposalDir = path.join(UPLOADS_DIR, req.params.proposalId);
+      if (fs.existsSync(proposalDir)) {
+        const diskFiles = fs.readdirSync(proposalDir);
+        console.log(`Files on disk in ${proposalDir}: ${diskFiles.length} files`);
+        console.log('Disk files:', diskFiles.join(', '));
+      } else {
+        console.log('Proposal directory does NOT exist on disk:', proposalDir);
+      }
+    }
 
     const applicant = (proposal.applicantName || proposal.customerName || 'proposal').replace(/[^a-zA-Z0-9 ]/g, '').trim().replace(/\s+/g, '_');
     const zipName = `${applicant}_${req.params.proposalId}.zip`;
@@ -7997,6 +8056,7 @@ app.get('/stage3/:proposalId/download-zip', async (req, res) => {
     res.set('Content-Disposition', `attachment; filename="${zipName}"`);
     res.send(zip.toBuffer());
   } catch (error) {
+    console.error('ZIP download error:', error);
     res.status(500).send('Error creating ZIP: ' + error.message);
   }
 });
