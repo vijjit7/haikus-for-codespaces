@@ -131,10 +131,17 @@
                     <div class="form-group">
                         <div class="file-input-wrapper">
                             <input type="file" id="bulkDocuments" name="bulkDocuments" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.zip,.rar">
+                            <input type="file" id="bulkFolderInput" webkitdirectory directory multiple style="display:none">
                             <div class="file-input-display">
                                 <span class="file-icon">📎</span>
                                 <span class="file-text">Choose files or drag here</span>
                             </div>
+                        </div>
+                        <div style="display: flex; gap: 8px; margin-top: 8px;">
+                            <button type="button" onclick="document.getElementById('bulkFolderInput').click()" class="btn btn-secondary" style="font-size: 13px; padding: 6px 14px;">
+                                📁 Add Folder
+                            </button>
+                            <span style="font-size: 12px; color: #888; align-self: center;">Select entire folders — all supported files inside will be queued</span>
                         </div>
                     </div>
                     <div id="bulkFilePreview" class="file-preview"></div>
@@ -228,7 +235,7 @@
                         <% } %>
                         <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
                             <% proposal.coApplicants.forEach((co, idx) => { %>
-                                <% if (co.type === 'Individual' || co.type === 'Individual Salaried') { %>
+                                <% if (co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') { %>
                                     <li>PAN Card of <%= co.name %></li>
                                     <li>Aadhar Card of <%= co.name %></li>
                                 <% } %>
@@ -708,7 +715,7 @@
                         }
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type === 'Individual' || co.type === 'Individual Salaried') {
+                                if (co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') {
                                     allDocTypesByCategory.personalId.push('PAN Card of ' + co.name);
                                     allDocTypesByCategory.personalId.push('Aadhar Card of ' + co.name);
                                     allDocTypesByCategory.personalId.push('Passport Photo of ' + co.name);
@@ -744,9 +751,14 @@
                                 allDocTypesByCategory.businessId.push('Firm Registration Certificate of ' + (proposal.applicantName || 'Applicant Name'));
                             }
 
-                            // Firm Registration Certificate for Partnership or LLP co-applicants
+                            // Business documents for Proprietorship co-applicants
                             if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                                 proposal.coApplicants.forEach((co, idx) => {
+                                    if (co.type === 'Proprietorship') {
+                                        allDocTypesByCategory.businessId.push('GST Certificate of ' + co.name);
+                                        allDocTypesByCategory.businessId.push('UDYAM Certificate of ' + co.name);
+                                    }
+                                    // Firm Registration Certificate for Partnership or LLP co-applicants
                                     if (co.type === 'Partnership' || co.type === 'LLP') {
                                         allDocTypesByCategory.businessId.push('Firm Registration Certificate of ' + co.name);
                                     }
@@ -779,7 +791,7 @@
                         // Credit Reports
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type === 'Individual' || co.type === 'Individual Salaried') {
+                                if (co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') {
                                     allDocTypesByCategory.creditReports.push('Personal Credit Report of ' + co.name);
                                 }
                             });
@@ -800,7 +812,7 @@
                         allDocTypesByCategory.financials.push('Tax Audit Report of FY2024-25');
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type === 'Individual' || co.type === 'Individual Salaried') {
+                                if (co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') {
                                     allDocTypesByCategory.financials.push('ITR of ' + currentFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1)));
                                     allDocTypesByCategory.financials.push('ITR of ' + previousFY + ' of ' + (co.name || 'coApplicant' + (idx + 1) + ' name'));
                                     allDocTypesByCategory.financials.push('ITR of ' + precedingFY + ' of ' + (co.name || 'coApplicant' + (idx + 1) + ' name'));
@@ -834,7 +846,7 @@
                         allDocTypesByCategory.banking.push('Overdraft Bank Statement of ' + proposal.applicantName);
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type === 'Individual' || co.type === 'Individual Salaried') {
+                                if (co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') {
                                     allDocTypesByCategory.banking.push('Bank Statement of ' + (co.name || 'Coapplicant Name' + (idx + 1)));
                                 }
                             });
@@ -895,7 +907,7 @@
                         }
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type === 'Individual' || co.type === 'Individual Salaried') {
+                                if (co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') {
                                     const pan = 'PAN Card of ' + co.name;
                                     const aadhar = 'Aadhar Card of ' + co.name;
                                     const photo = 'Passport Photo of ' + co.name;
@@ -945,9 +957,16 @@
                                 if (!isDocClassified(firmRegCert)) pendingByCategory.businessId.push(firmRegCert);
                             }
 
-                            // Firm Registration Certificate for Partnership or LLP co-applicants
+                            // Business documents for Proprietorship co-applicants
                             if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                                 proposal.coApplicants.forEach((co, idx) => {
+                                    if (co.type === 'Proprietorship') {
+                                        const coGst = 'GST Certificate of ' + co.name;
+                                        const coUdyam = 'UDYAM Certificate of ' + co.name;
+                                        if (!isDocClassified(coGst)) pendingByCategory.businessId.push(coGst);
+                                        if (!isDocClassified(coUdyam)) pendingByCategory.businessId.push(coUdyam);
+                                    }
+                                    // Firm Registration Certificate for Partnership or LLP co-applicants
                                     if (co.type === 'Partnership' || co.type === 'LLP') {
                                         const coFirmRegCert = 'Firm Registration Certificate of ' + co.name;
                                         if (!isDocClassified(coFirmRegCert)) pendingByCategory.businessId.push(coFirmRegCert);
@@ -991,7 +1010,7 @@
                         // Credit Reports
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type === 'Individual' || co.type === 'Individual Salaried') {
+                                if (co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') {
                                     const creditReport = 'Personal Credit Report of ' + co.name;
                                     if (!isDocClassified(creditReport)) pendingByCategory.creditReports.push(creditReport);
                                 }
@@ -1026,7 +1045,7 @@
 
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type === 'Individual' || co.type === 'Individual Salaried') {
+                                if (co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') {
                                     const coItrCurrent = 'ITR of ' + currentFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1));
                                     const coItrPrevious = 'ITR of ' + previousFY + ' of ' + (co.name || 'coApplicant' + (idx + 1) + ' name');
                                     const coItrPreceding = 'ITR of ' + precedingFY + ' of ' + (co.name || 'coApplicant' + (idx + 1) + ' name');
@@ -1257,7 +1276,7 @@
                         // Check coapplicants - only if they don't have bank statements in the uploaded docs
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type === 'Individual' || co.type === 'Individual Salaried') {
+                                if (co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') {
                                     const coName = co.name || 'Coapplicant ' + (idx + 1);
                                     const coStmt = 'Bank Statement of ' + coName;
 
@@ -1729,7 +1748,7 @@
                             const allFinancialApplicants = [proposal.applicantName];
                             if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                                 proposal.coApplicants.forEach((co, idx) => {
-                                    if (co.type === 'Individual') {
+                                    if (co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') {
                                         allFinancialApplicants.push(co.name || 'Coapplicant ' + (idx + 1));
                                     }
                                 });
@@ -3195,27 +3214,31 @@
                             <% } %>
 
                             <%
-                            // Check if there are Excel files in debtProfile category
+                            // Only count Excel files classified as "All Existing Loan Details" for extraction
                             const debtProfileExcelFiles = uploadedFiles.filter(f =>
                                 f.category === 'debtProfile' &&
                                 (f.filename.endsWith('.xlsx') || f.filename.endsWith('.xls'))
                             );
-                            // Check if there are OCR'd image/PDF files in debtProfile category
-                            const debtProfileOcrFiles = uploadedFiles.filter(f =>
-                                f.category === 'debtProfile' &&
-                                !f.filename.endsWith('.xlsx') && !f.filename.endsWith('.xls') &&
-                                f.extractedText && f.extractedText.trim().length > 50
+                            const loanDetailFiles = debtProfileExcelFiles.filter(f =>
+                                f.classification === 'All Existing Loan Details' || f.classification === 'Loan Details'
                             );
-                            const totalDebtFiles = debtProfileExcelFiles.length + debtProfileOcrFiles.length;
+                            const totalDebtFiles = loanDetailFiles.length > 0 ? loanDetailFiles.length : debtProfileExcelFiles.length;
                             %>
 
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px;">
                                 <h3 style="margin: 0;">Debt Profile Table</h3>
-                                <% if (totalDebtFiles > 0) { %>
-                                    <button onclick="extractDebtProfile()" class="btn btn-primary" style="font-size: 0.85em; padding: 6px 12px;">
-                                        🔄 Extract Debt Profile (<%= totalDebtFiles %> file<%= totalDebtFiles > 1 ? 's' : '' %>)
-                                    </button>
-                                <% } %>
+                                <div style="display: flex; gap: 8px;">
+                                    <% if (debtProfiles && debtProfiles.length > 0) { %>
+                                        <button onclick="clearAllDebtProfiles()" class="btn" style="font-size: 0.85em; padding: 6px 12px; background: #d32f2f; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                            🗑️ Clear All (<%= debtProfiles.length %>)
+                                        </button>
+                                    <% } %>
+                                    <% if (totalDebtFiles > 0) { %>
+                                        <button onclick="extractDebtProfile()" class="btn btn-primary" style="font-size: 0.85em; padding: 6px 12px;">
+                                            🔄 Extract Debt Profile (<%= totalDebtFiles %> file<%= totalDebtFiles > 1 ? 's' : '' %>)
+                                        </button>
+                                    <% } %>
+                                </div>
                             </div>
 
                             <% if (debtProfiles && debtProfiles.length > 0) { %>
@@ -4240,6 +4263,22 @@
             processIncomingFiles(Array.from(e.target.files));
         });
 
+        // Folder input — adds all supported files from the selected folder
+        const bulkFolderInput = document.getElementById('bulkFolderInput');
+        bulkFolderInput.addEventListener('change', function(e) {
+            const ALLOWED_DOC_EXTS = ['pdf','doc','docx','xls','xlsx','jpg','jpeg','png','zip','rar'];
+            const files = Array.from(e.target.files).filter(f => {
+                const ext = f.name.split('.').pop().toLowerCase();
+                return ALLOWED_DOC_EXTS.includes(ext);
+            });
+            if (files.length > 0) {
+                processIncomingFiles(files);
+            } else {
+                alert('No supported files found in the selected folder.');
+            }
+            bulkFolderInput.value = '';
+        });
+
         // Drag and drop
         const fileInputWrapper = document.querySelector('.file-input-wrapper');
         
@@ -4264,8 +4303,58 @@
             });
         });
 
-        fileInputWrapper.addEventListener('drop', function(e) {
-            processIncomingFiles(Array.from(e.dataTransfer.files));
+        // Recursively read files from dropped folder entries
+        function readDroppedEntry(entry) {
+            return new Promise((resolve) => {
+                if (entry.isFile) {
+                    entry.file(f => resolve([f]), () => resolve([]));
+                } else if (entry.isDirectory) {
+                    const reader = entry.createReader();
+                    const allEntries = [];
+                    function readBatch() {
+                        reader.readEntries(entries => {
+                            if (entries.length === 0) {
+                                Promise.all(allEntries.map(e => readDroppedEntry(e))).then(r => resolve(r.flat()));
+                            } else {
+                                allEntries.push(...entries);
+                                readBatch();
+                            }
+                        }, () => resolve([]));
+                    }
+                    readBatch();
+                } else {
+                    resolve([]);
+                }
+            });
+        }
+
+        fileInputWrapper.addEventListener('drop', async function(e) {
+            const items = e.dataTransfer.items;
+            let allFiles = [];
+            if (items && items.length > 0) {
+                const entries = [];
+                for (let i = 0; i < items.length; i++) {
+                    const entry = items[i].webkitGetAsEntry && items[i].webkitGetAsEntry();
+                    if (entry) entries.push(entry);
+                }
+                if (entries.some(e => e.isDirectory)) {
+                    for (const entry of entries) {
+                        const files = await readDroppedEntry(entry);
+                        allFiles.push(...files);
+                    }
+                    // Filter allowed extensions
+                    const ALLOWED_DOC_EXTS = ['pdf','doc','docx','xls','xlsx','jpg','jpeg','png','zip','rar'];
+                    allFiles = allFiles.filter(f => {
+                        const ext = f.name.split('.').pop().toLowerCase();
+                        return ALLOWED_DOC_EXTS.includes(ext);
+                    });
+                }
+            }
+            if (allFiles.length > 0) {
+                processIncomingFiles(allFiles);
+            } else {
+                processIncomingFiles(Array.from(e.dataTransfer.files));
+            }
         });
 
         // Form submission — flatten checked ZIP entries into individual files
@@ -4430,7 +4519,7 @@
         // Update document category
         async function updateCategory(fileId, category) {
             if (!category) return;
-            
+
             try {
                 const response = await fetch(`/stage2/${proposalId}/categorize`, {
                     method: 'POST',
@@ -4439,12 +4528,44 @@
                     },
                     body: JSON.stringify({ fileId, category })
                 });
-                
+
                 const result = await response.json();
-                
+
                 if (result.success) {
-                    alert('Category updated successfully!');
-                    window.location.reload();
+                    // Update classification dropdown in-place without reloading
+                    const classSelect = document.querySelector(`.classification-select[data-file-id="${fileId}"]`);
+                    if (classSelect) {
+                        classSelect.setAttribute('data-category', category);
+                        // Clear and repopulate options
+                        while (classSelect.options.length > 1) {
+                            classSelect.remove(1);
+                        }
+                        classSelect.selectedIndex = 0;
+                        const docs = allDocTypesByCategory[category] || [];
+                        docs.forEach(doc => {
+                            const option = document.createElement('option');
+                            option.value = doc;
+                            if (pendingDocsByCategory[category] && pendingDocsByCategory[category].includes(doc)) {
+                                option.textContent = '⚠️ ' + doc;
+                            } else {
+                                option.textContent = '✓ ' + doc;
+                            }
+                            classSelect.appendChild(option);
+                        });
+
+                        // Auto-select GST 3B as default for turnover category
+                        if (category === 'turnover') {
+                            const gst3bOption = Array.from(classSelect.options).find(opt => opt.value.includes('GST 3B'));
+                            if (gst3bOption) {
+                                classSelect.value = gst3bOption.value;
+                                // Auto-save the classification
+                                updateClassification(fileId, gst3bOption.value);
+                                return; // updateClassification will handle the rest
+                            }
+                        }
+                    }
+                    // Clear existing classification since category changed
+                    existingClassifications[fileId] = '';
                 } else {
                     alert('Update failed: ' + result.error);
                 }
@@ -4792,6 +4913,25 @@
                 }
             } catch (error) {
                 console.error('Debt profile extraction error:', error);
+                alert('Error: ' + error.message);
+            }
+        }
+
+        // Clear all debt profiles
+        async function clearAllDebtProfiles() {
+            if (!confirm('This will delete ALL debt profile entries. Continue?')) return;
+            try {
+                const response = await fetch(`/stage2/${proposalId}/clear-debt-profiles`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const result = await response.json();
+                if (result.success) {
+                    window.location.reload();
+                } else {
+                    alert('Failed: ' + result.message);
+                }
+            } catch (error) {
                 alert('Error: ' + error.message);
             }
         }
@@ -5684,6 +5824,16 @@
                     select.appendChild(option);
                 });
                 
+                // Auto-select GST 3B as default for turnover documents with no classification
+                if (category === 'turnover' && !currentValue) {
+                    const gst3bOption = Array.from(select.options).find(opt => opt.value.includes('GST 3B'));
+                    if (gst3bOption) {
+                        select.value = gst3bOption.value;
+                        // Auto-save the classification
+                        updateClassification(fileId, gst3bOption.value);
+                    }
+                }
+
                 // Add has-value class if there's a current value
                 if (currentValue) {
                     select.classList.add('has-value');

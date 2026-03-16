@@ -147,11 +147,28 @@
             </div>
 
             <!-- Upload Zone -->
-            <div class="upload-zone" id="uploadZone" onclick="document.getElementById('policyFiles').click()">
-                <h3>Drop Policy Files Here</h3>
-                <p>or click to browse (.txt, .pdf, .jpg, .jpeg, .png &mdash; multiple files supported)</p>
-                <input type="file" id="policyFiles" accept=".txt,.pdf,.jpg,.jpeg,.png" multiple>
+            <div class="upload-zone" id="uploadZone">
+                <h3>Drop Files or Folders Here</h3>
+                <p>or click below to browse (.txt, .pdf, .jpg, .jpeg, .png)</p>
+                <div style="display: flex; gap: 12px; justify-content: center; margin-top: 10px;">
+                    <button type="button" onclick="event.stopPropagation(); document.getElementById('policyFiles').click()" style="padding: 8px 20px; background: #3498db; color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer;">+ Add Files</button>
+                    <button type="button" onclick="event.stopPropagation(); document.getElementById('policyFolder').click()" style="padding: 8px 20px; background: #27ae60; color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer;">+ Add Folder</button>
+                </div>
+                <input type="file" id="policyFiles" accept=".txt,.pdf,.jpg,.jpeg,.png" multiple style="display:none">
+                <input type="file" id="policyFolder" webkitdirectory directory multiple style="display:none">
                 <div class="file-count" id="fileCount"></div>
+            </div>
+
+            <!-- Queued Files -->
+            <div id="queuedFilesContainer" style="display:none; margin-bottom: 20px; border: 1px solid #ddd; border-radius: 8px; padding: 16px; background: #f9f9f9;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <h3 style="margin: 0; color: #2c3e50; font-size: 1em;">Queued Files <span id="queuedTotalCount" style="color: #7f8c8d; font-weight: normal;"></span></h3>
+                    <div style="display: flex; gap: 8px;">
+                        <button type="button" onclick="clearQueue()" style="padding: 6px 16px; background: #e74c3c; color: white; border: none; border-radius: 6px; font-size: 13px; cursor: pointer;">Clear All</button>
+                        <button type="button" onclick="uploadQueue()" id="uploadQueueBtn" style="padding: 6px 20px; background: #27ae60; color: white; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;">Upload All</button>
+                    </div>
+                </div>
+                <div id="queuedFilesList" style="max-height: 200px; overflow-y: auto; font-size: 13px;"></div>
             </div>
 
             <!-- Paste Zone -->
@@ -228,13 +245,20 @@
     <script>
         const uploadZone = document.getElementById('uploadZone');
         const policyFiles = document.getElementById('policyFiles');
+        const policyFolder = document.getElementById('policyFolder');
         const fileCountEl = document.getElementById('fileCount');
         const progressContainer = document.getElementById('progressContainer');
         const progressBar = document.getElementById('progressBar');
         const progressStatus = document.getElementById('progressStatus');
         const progressLog = document.getElementById('progressLog');
+        const queuedContainer = document.getElementById('queuedFilesContainer');
+        const queuedList = document.getElementById('queuedFilesList');
+        const queuedTotalCount = document.getElementById('queuedTotalCount');
 
         const ALLOWED_EXTS = ['.txt', '.pdf', '.jpg', '.jpeg', '.png'];
+
+        // Queue to accumulate files from multiple folder/file selections
+        let fileQueue = [];
 
         function getExt(name) {
             return (name || '').toLowerCase().replace(/.*(\.[^.]+)$/, '$1');
@@ -244,7 +268,114 @@
             return Array.from(files).filter(f => ALLOWED_EXTS.includes(getExt(f.name)));
         }
 
-        // Drag and drop
+        function addToQueue(files, source) {
+            const allowed = filterAllowed(files);
+            if (allowed.length === 0) {
+                alert('No supported files found. Allowed: .txt, .pdf, .jpg, .jpeg, .png');
+                return;
+            }
+            for (const f of allowed) {
+                // Avoid duplicates by name+size+lastModified
+                const isDup = fileQueue.some(q => q.name === f.name && q.size === f.size && q.lastModified === f.lastModified);
+                if (!isDup) {
+                    f._source = source;
+                    fileQueue.push(f);
+                }
+            }
+            renderQueue();
+        }
+
+        function removeFromQueue(index) {
+            fileQueue.splice(index, 1);
+            renderQueue();
+        }
+
+        function clearQueue() {
+            fileQueue = [];
+            renderQueue();
+        }
+
+        function renderQueue() {
+            if (fileQueue.length === 0) {
+                queuedContainer.style.display = 'none';
+                fileCountEl.textContent = '';
+                fileCountEl.style.display = 'none';
+                return;
+            }
+            queuedContainer.style.display = 'block';
+            queuedTotalCount.textContent = '(' + fileQueue.length + ' files)';
+            fileCountEl.textContent = fileQueue.length + ' file(s) queued - add more or click Upload All';
+            fileCountEl.style.display = 'block';
+
+            // Group by source folder
+            const groups = {};
+            fileQueue.forEach((f, idx) => {
+                const src = f._source || 'Files';
+                if (!groups[src]) groups[src] = [];
+                groups[src].push({ file: f, idx });
+            });
+
+            let html = '';
+            for (const [source, items] of Object.entries(groups)) {
+                html += '<div style="margin-bottom: 8px;"><strong style="color:#2c3e50;">' + source + '</strong> (' + items.length + ' files)';
+                html += ' <a href="#" onclick="removeGroup(\'' + source.replace(/'/g, "\\'") + '\'); return false;" style="color:#e74c3c; font-size:12px; margin-left:6px;">remove</a>';
+                html += '<div style="padding-left: 12px; color: #555;">';
+                for (const item of items) {
+                    const sizeKB = (item.file.size / 1024).toFixed(1);
+                    html += '<div style="display:flex; justify-content:space-between; padding: 2px 0; border-bottom: 1px solid #eee;">';
+                    html += '<span>' + item.file.name + '</span>';
+                    html += '<span style="color:#999; min-width:60px; text-align:right;">' + sizeKB + ' KB</span>';
+                    html += '</div>';
+                }
+                html += '</div></div>';
+            }
+            queuedList.innerHTML = html;
+        }
+
+        function removeGroup(source) {
+            fileQueue = fileQueue.filter(f => f._source !== source);
+            renderQueue();
+        }
+
+        function uploadQueue() {
+            if (fileQueue.length === 0) return;
+            const files = [...fileQueue];
+            fileQueue = [];
+            queuedContainer.style.display = 'none';
+            uploadFiles(files);
+        }
+
+        // Recursively read all files from a dropped directory entry
+        function readEntryRecursive(entry) {
+            return new Promise((resolve) => {
+                if (entry.isFile) {
+                    entry.file(f => {
+                        if (ALLOWED_EXTS.includes(getExt(f.name))) resolve([f]);
+                        else resolve([]);
+                    }, () => resolve([]));
+                } else if (entry.isDirectory) {
+                    const reader = entry.createReader();
+                    const allEntries = [];
+                    function readBatch() {
+                        reader.readEntries(entries => {
+                            if (entries.length === 0) {
+                                Promise.all(allEntries.map(e => readEntryRecursive(e))).then(results => {
+                                    resolve(results.flat());
+                                });
+                            } else {
+                                allEntries.push(...entries);
+                                readBatch();
+                            }
+                        }, () => resolve([]));
+                    }
+                    readBatch();
+                } else {
+                    resolve([]);
+                }
+            });
+        }
+
+        // Drag and drop (supports multiple folders)
         uploadZone.addEventListener('dragover', (e) => {
             e.preventDefault();
             uploadZone.classList.add('dragover');
@@ -252,27 +383,59 @@
         uploadZone.addEventListener('dragleave', () => {
             uploadZone.classList.remove('dragover');
         });
-        uploadZone.addEventListener('drop', (e) => {
+        uploadZone.addEventListener('drop', async (e) => {
             e.preventDefault();
             uploadZone.classList.remove('dragover');
-            const allowed = filterAllowed(e.dataTransfer.files);
-            if (allowed.length > 0) {
-                uploadFiles(allowed);
+
+            const items = e.dataTransfer.items;
+            if (items && items.length > 0) {
+                const entries = [];
+                for (let i = 0; i < items.length; i++) {
+                    const entry = items[i].webkitGetAsEntry && items[i].webkitGetAsEntry();
+                    if (entry) entries.push(entry);
+                }
+                if (entries.length > 0) {
+                    fileCountEl.textContent = 'Scanning dropped items...';
+                    fileCountEl.style.display = 'block';
+                    for (const entry of entries) {
+                        const files = await readEntryRecursive(entry);
+                        if (files.length > 0) {
+                            const source = entry.isDirectory ? entry.name : 'Dropped Files';
+                            files.forEach(f => f._source = source);
+                            addToQueue(files, source);
+                        }
+                    }
+                    if (fileQueue.length === 0) {
+                        alert('No supported files found. Allowed: .txt, .pdf, .jpg, .jpeg, .png');
+                    }
+                    return;
+                }
+            }
+            // Fallback
+            const fallback = filterAllowed(e.dataTransfer.files);
+            if (fallback.length > 0) {
+                addToQueue(fallback, 'Dropped Files');
             } else {
                 alert('No supported files found. Allowed: .txt, .pdf, .jpg, .jpeg, .png');
             }
         });
 
+        // File picker - adds to queue
         policyFiles.addEventListener('change', () => {
             if (policyFiles.files.length > 0) {
-                const allowed = filterAllowed(policyFiles.files);
-                if (allowed.length > 0) {
-                    fileCountEl.textContent = allowed.length + ' file(s) selected';
-                    fileCountEl.style.display = 'block';
-                    uploadFiles(allowed);
-                } else {
-                    alert('No supported files selected.');
-                }
+                addToQueue(policyFiles.files, 'Selected Files');
+                policyFiles.value = '';
+            }
+        });
+
+        // Folder picker - adds to queue
+        policyFolder.addEventListener('change', () => {
+            if (policyFolder.files.length > 0) {
+                // Get folder name from the relative path
+                const firstFile = policyFolder.files[0];
+                const folderName = firstFile.webkitRelativePath ? firstFile.webkitRelativePath.split('/')[0] : 'Folder';
+                addToQueue(policyFolder.files, folderName);
+                policyFolder.value = '';
             }
         });
 

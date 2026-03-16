@@ -1,3 +1,4 @@
+require('dotenv').config();
 let express = require('express');
 let app = express();
 
@@ -62,17 +63,38 @@ app.post('/api/claude', (req, res) => {
   python.stdin.write(JSON.stringify({ prompt }));
   python.stdin.end();
 });
+// Auto-start MongoDB service on Windows if not running
+function ensureMongoDBRunning() {
+  if (process.platform !== 'win32') return Promise.resolve();
+  const { execSync } = require('child_process');
+  try {
+    const status = execSync('sc query MongoDB', { encoding: 'utf8' });
+    if (status.includes('RUNNING')) {
+      console.log('MongoDB service is already running');
+      return Promise.resolve();
+    }
+    console.log('MongoDB service is stopped. Starting it...');
+    execSync('net start MongoDB', { encoding: 'utf8' });
+    console.log('MongoDB service started successfully');
+  } catch (err) {
+    console.log('Could not auto-start MongoDB service (may need admin rights or service not installed):', err.message);
+  }
+  return Promise.resolve();
+}
+
 // Connect to MongoDB
 mongoose.set('bufferTimeoutMS', 30000);
 const mongoUrl = process.env.MONGODB_URL || process.env.MONGO_URL || 'mongodb://localhost:27017/haikusdb';
-console.log('Connecting to MongoDB:', (process.env.MONGODB_URL || process.env.MONGO_URL) ? 'Using env var' : 'WARNING: Using localhost fallback - set MONGODB_URL env var for Railway');
-mongoose.connect(mongoUrl, {
-  serverSelectionTimeoutMS: 30000,
-  socketTimeoutMS: 45000,
-  connectTimeoutMS: 30000,
-})
-  .then(() => console.log('MongoDB connected successfully to:', mongoUrl.replace(/\/\/[^:]+:[^@]+@/, '//***:***@')))
-  .catch(err => console.error('MongoDB connection FAILED:', err.message));
+ensureMongoDBRunning().then(() => {
+  console.log('Connecting to MongoDB:', (process.env.MONGODB_URL || process.env.MONGO_URL) ? 'Using env var' : 'WARNING: Using localhost fallback - set MONGODB_URL env var for Railway');
+  mongoose.connect(mongoUrl, {
+    serverSelectionTimeoutMS: 30000,
+    socketTimeoutMS: 45000,
+    connectTimeoutMS: 30000,
+  })
+    .then(() => console.log('MongoDB connected successfully to:', mongoUrl.replace(/\/\/[^:]+:[^@]+@/, '//***:***@')))
+    .catch(err => console.error('MongoDB connection FAILED:', err.message));
+});
 
 mongoose.connection.on('disconnected', () => console.log('MongoDB disconnected at', new Date().toISOString()));
 mongoose.connection.on('reconnected', () => console.log('MongoDB reconnected at', new Date().toISOString()));
@@ -198,28 +220,28 @@ function getRowValue(row, ...possibleNames) {
 function processDebtProfileData(data, proposalId) {
   return data.map((row, idx) => {
     // Skip if row is essentially empty
-    const bank = getRowValue(row, 'Bank Name', 'Bank', 'Lender', 'Financial Institution', 'Financier', 'bank name');
-    const loanAmount = getRowValue(row, 'Loan Amount', 'Amount', 'Sanctioned Amount', 'loan amount');
+    const bank = getRowValue(row, 'Bank Name', 'Bank', 'Lender', 'Financial Institution', 'Financier', 'bank name', 'Name of Bank', 'Name of the Bank', 'Bank/NBFC', 'Bank / NBFC', 'Loans', 'Loan From');
+    const loanAmount = getRowValue(row, 'Loan Amount', 'Amount', 'Sanctioned Amount', 'Sanction Amount', 'Disbursed Amount', 'Loan Amt', 'loan amount', 'Outstanding', 'Outstanding Amount', 'Outstanding Balance', 'Principal Outstanding', 'Balance');
     if (!bank && !loanAmount) {
       return null; // Will be filtered out below
     }
     // Get values using flexible matching
-    const emiStartDate = getRowValue(row, 'EMI Start Date', 'EMI Start', 'Start Date', 'emi start date');
-    const tenure = getRowValue(row, 'Tenure', 'Loan Tenure', 'Tenure (Months)', 'Tenor', 'Tenor (months)', 'tenure');
-    const sanctionDate = getRowValue(row, 'Sanction Date', 'Date of Sanction', 'sanction date');
+    const emiStartDate = getRowValue(row, 'EMI Start Date', 'EMI Start', 'Start Date', 'emi start date', 'First EMI Date', 'Disbursement Date', 'Disbursal Date', 'Date of Disbursement');
+    const tenure = getRowValue(row, 'Tenure', 'Loan Tenure', 'Tenure (Months)', 'Tenor', 'Tenor (months)', 'tenure', 'Total Tenure', 'Tenure in Months', 'Tenure(Months)');
+    const sanctionDate = getRowValue(row, 'Sanction Date', 'Date of Sanction', 'sanction date', 'Sanction Dt', 'Date of Sanction/Disbursement');
 
     const { monthsCompleted, percentCompleted } = calculateTenureProgress(emiStartDate, tenure);
-    const emiEndDateValue = getRowValue(row, 'EMI End Date', 'EMI End', 'End Date', 'emi end date');
+    const emiEndDateValue = getRowValue(row, 'EMI End Date', 'EMI End', 'End Date', 'emi end date', 'Last EMI Date', 'Maturity Date', 'Maturity');
     const emiEndDate = emiEndDateValue || calculateEmiEndDate(emiStartDate, tenure);
 
     return {
-      sNo: getRowValue(row, 'S.No', 'SNo', 'Sr.No', 's.no', 'sno') || idx + 1,
-      loanApplicant: getRowValue(row, 'Applicant', 'Loan Applicant', 'Borrower', 'Borrower Name', 'Name', 'applicant'),
-      bank: getRowValue(row, 'Bank Name', 'Bank', 'Lender', 'Financial Institution', 'Financier', 'bank name'),
-      loanType: getRowValue(row, 'Loan Type', 'Type of Loan', 'Product', 'loan type'),
-      loanAmount: Number(String(getRowValue(row, 'Loan Amount', 'Amount', 'Sanctioned Amount', 'loan amount') || 0).replace(/[^0-9.-]/g, '')) || 0,
-      emi: Number(String(getRowValue(row, 'EMI', 'Monthly EMI', 'emi') || 0).replace(/[^0-9.-]/g, '')) || 0,
-      roi: Number(String(getRowValue(row, 'ROI', 'Rate of Interest', 'Interest Rate', 'Rate', 'roi') || 0).replace(/[^0-9.-]/g, '')) || 0,
+      sNo: getRowValue(row, 'S.No', 'SNo', 'Sr.No', 'Sl.No', 's.no', 'sno', 'sl.no', 'Sr No', 'S No') || idx + 1,
+      loanApplicant: getRowValue(row, 'Applicant', 'Loan Applicant', 'Borrower', 'Borrower Name', 'Name', 'applicant', 'Customer Name', 'Name of Borrower', 'Account Holder'),
+      bank: bank,
+      loanType: getRowValue(row, 'Loan Type', 'Type of Loan', 'Product', 'loan type', 'Nature of Loan', 'Facility', 'Facility Type', 'Type', 'Loan Category', 'Nature of Facility'),
+      loanAmount: Number(String(loanAmount || 0).replace(/[^0-9.-]/g, '')) || 0,
+      emi: Number(String(getRowValue(row, 'EMI', 'Monthly EMI', 'emi', 'EMI Amount', 'EMI Amt', 'Monthly Instalment', 'Instalment', 'EMI (Rs)', 'EMI(Rs.)') || 0).replace(/[^0-9.-]/g, '')) || 0,
+      roi: Number(String(getRowValue(row, 'ROI', 'Rate of Interest', 'Interest Rate', 'Rate', 'roi', 'ROI (%)', 'ROI(%)', 'Interest', 'Rate (%)') || 0).replace(/[^0-9.-]/g, '')) || 0,
       sanctionDate: parseExcelDate(sanctionDate),
       tenure: parseInt(tenure) || 0,
       emiStartDate: parseExcelDate(emiStartDate),
@@ -265,57 +287,67 @@ function findHeaderRowAndParseExcel(sheet) {
   const rawData = xlsx.utils.sheet_to_json(sheet, { defval: '', header: 1 });
 
   // Keywords to identify header row (case insensitive)
-  const headerKeywords = ['s.no', 'sno', 'sr.no', 'applicant', 'bank', 'loan', 'emi', 'tenure', 'roi'];
+  const headerKeywords = ['s.no', 'sno', 'sr.no', 'sl.no', 'applicant', 'borrower', 'bank', 'lender', 'financier', 'financial institution', 'loan', 'sanction', 'emi', 'tenure', 'tenor', 'roi', 'rate of interest', 'interest rate', 'outstanding', 'balance', 'disburs', 'repayment'];
 
-  let headerRowIndex = -1;
-
-  // Find the row that contains header keywords
-  for (let i = 0; i < Math.min(rawData.length, 10); i++) { // Check first 10 rows
+  // Find ALL header rows (sheet may contain multiple tables)
+  const headerRows = [];
+  for (let i = 0; i < rawData.length; i++) {
     const row = rawData[i];
     if (!row || row.length === 0) continue;
 
     const rowText = row.map(cell => String(cell || '').toLowerCase().trim()).join(' ');
     const matchCount = headerKeywords.filter(kw => rowText.includes(kw)).length;
 
-    if (matchCount >= 3) { // At least 3 keywords found
-      headerRowIndex = i;
-      break;
+    // A header row needs 3+ keyword matches AND most non-empty cells must be text (not numbers)
+    // This prevents data rows like [7, "yes bank", "car loan", 7200000, ...] from being detected as headers
+    if (matchCount >= 3) {
+      const nonEmptyCells = row.filter(cell => cell !== '' && cell !== null && cell !== undefined);
+      const textCells = nonEmptyCells.filter(cell => typeof cell === 'string' && isNaN(Number(cell)));
+      const textRatio = nonEmptyCells.length > 0 ? textCells.length / nonEmptyCells.length : 0;
+      if (textRatio >= 0.5) {
+        headerRows.push({ index: i, matchCount });
+      }
     }
   }
 
-  if (headerRowIndex === -1) {
+  if (headerRows.length === 0) {
     // Fallback: use first row as header
     return xlsx.utils.sheet_to_json(sheet, { defval: '' });
   }
 
-  // Extract headers from the header row (clean newlines/carriage returns from header text)
-  const headers = rawData[headerRowIndex].map(h => String(h || '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim());
+  // Process each table section and merge all results
+  const allResults = [];
+  const dataKeywords = ['loan amount', 'amount', 'sanction', 'disburs', 'outstanding', 'bank', 'financier', 'lender', 'emi', 'financial institution', 'borrower', 'applicant', 'loans'];
 
-  // Convert remaining rows to objects using these headers
-  const result = [];
-  for (let i = headerRowIndex + 1; i < rawData.length; i++) {
-    const row = rawData[i];
-    if (!row || row.every(cell => cell === '' || cell === null || cell === undefined)) continue;
+  for (let h = 0; h < headerRows.length; h++) {
+    const headerRowIndex = headerRows[h].index;
+    // Data ends at the next header row or end of file
+    const nextHeaderIndex = h + 1 < headerRows.length ? headerRows[h + 1].index : rawData.length;
 
-    const obj = {};
-    headers.forEach((header, idx) => {
-      if (header) {
-        obj[header] = row[idx] !== undefined ? row[idx] : '';
+    // Extract headers from the header row (clean newlines/carriage returns)
+    const headers = rawData[headerRowIndex].map(hdr => String(hdr || '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim());
+
+    for (let i = headerRowIndex + 1; i < nextHeaderIndex; i++) {
+      const row = rawData[i];
+      if (!row || row.every(cell => cell === '' || cell === null || cell === undefined)) continue;
+
+      const obj = {};
+      headers.forEach((header, idx) => {
+        if (header) {
+          obj[header] = row[idx] !== undefined ? row[idx] : '';
+        }
+      });
+
+      const objKeys = Object.keys(obj).map(k => k.toLowerCase().trim());
+      const hasData = dataKeywords.some(kw => objKeys.some(k => k.includes(kw) && obj[Object.keys(obj)[objKeys.indexOf(k)]] !== '' && obj[Object.keys(obj)[objKeys.indexOf(k)]] !== undefined));
+
+      if (hasData) {
+        allResults.push(obj);
       }
-    });
-
-    // Only add if there's meaningful data (at least has a loan amount or bank name)
-    // Use partial key matching (handles headers like "Loan Amount (in Lakhs)", "EMI(Rs.)", "Financier")
-    const objKeys = Object.keys(obj).map(k => k.toLowerCase().trim());
-    const dataKeywords = ['loan amount', 'amount', 'bank', 'financier', 'lender', 'emi', 'financial institution'];
-    const hasData = dataKeywords.some(kw => objKeys.some(k => k.includes(kw) && obj[Object.keys(obj)[objKeys.indexOf(k)]] !== '' && obj[Object.keys(obj)[objKeys.indexOf(k)]] !== undefined));
-
-    if (hasData) {
-      result.push(obj);
     }
   }
 
-  return result;
+  return allResults;
 }
 
 // Route to extract debt profile from uploaded Excel files in the proposal
@@ -328,58 +360,77 @@ app.post('/stage2/:proposalId/extract-debt-profile', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Proposal not found' });
     }
 
-    // Find Excel files in debtProfile category
+    // Find only Excel files classified as "All Existing Loan Details" in debtProfile category
     const excelDocs = (proposal.documents || []).filter(doc =>
       doc.category === 'debtProfile' &&
-      (doc.filename.endsWith('.xlsx') || doc.filename.endsWith('.xls'))
+      (doc.filename.endsWith('.xlsx') || doc.filename.endsWith('.xls')) &&
+      (doc.classification === 'All Existing Loan Details' || doc.classification === 'Loan Details')
     );
 
-    // Find image/PDF files with extracted text in debtProfile category
-    const ocrDocs = (proposal.documents || []).filter(doc =>
-      doc.category === 'debtProfile' &&
-      !doc.filename.endsWith('.xlsx') && !doc.filename.endsWith('.xls') &&
-      doc.extractedText && doc.extractedText.trim().length > 50
-    );
+    // Fallback: if no classified Excel files, try any Excel in debtProfile
+    if (excelDocs.length === 0) {
+      const anyExcel = (proposal.documents || []).filter(doc =>
+        doc.category === 'debtProfile' &&
+        (doc.filename.endsWith('.xlsx') || doc.filename.endsWith('.xls'))
+      );
+      if (anyExcel.length > 0) excelDocs.push(...anyExcel);
+    }
 
-    if (excelDocs.length === 0 && ocrDocs.length === 0) {
-      return res.status(400).json({ success: false, message: 'No debt profile files found (Excel or image/PDF with extracted text)' });
+    const ocrDocs = []; // Only extract from Excel files
+
+    if (excelDocs.length === 0) {
+      return res.status(400).json({ success: false, message: 'No "All Existing Loan Details" Excel file found in Debt Profile category. Please upload and classify the loan details Excel file.' });
     }
 
     let allDebtProfiles = [];
 
-    // Process Excel files
+    // Process Excel files — try all sheets to find loan data
     for (const doc of excelDocs) {
       const filePath = path.join(UPLOADS_DIR, proposalId, doc.filename);
       if (fs.existsSync(filePath)) {
         try {
           const workbook = xlsx.readFile(filePath);
-          const sheetName = workbook.SheetNames[0];
-          const sheet = workbook.Sheets[sheetName];
-
           console.log('\n========================================');
           console.log('📊 PROCESSING EXCEL FILE:', doc.originalName || doc.filename);
-          console.log('Sheet name:', sheetName);
+          console.log('Available sheets:', workbook.SheetNames.join(', '));
 
-          // Use smart header detection
-          const data = findHeaderRowAndParseExcel(sheet);
-          console.log('Rows found after parsing:', data.length);
-          if (data.length > 0) {
-            console.log('Column headers:', Object.keys(data[0]));
-            console.log('First row sample:', JSON.stringify(data[0], null, 2));
+          let bestSheetData = [];
+          let bestSheetName = '';
+
+          // Try each sheet and pick the one that yields the most debt profiles
+          for (const sheetName of workbook.SheetNames) {
+            const sheet = workbook.Sheets[sheetName];
+            console.log(`\n  Trying sheet: "${sheetName}"`);
+
+            const data = findHeaderRowAndParseExcel(sheet);
+            console.log(`  Rows found: ${data.length}`);
+            if (data.length > 0) {
+              console.log('  Column headers:', Object.keys(data[0]));
+            }
+
+            const mappedData = processDebtProfileData(data, proposalId);
+            console.log(`  Mapped debt profiles: ${mappedData.length}`);
+
+            if (mappedData.length > bestSheetData.length) {
+              bestSheetData = mappedData;
+              bestSheetName = sheetName;
+            }
+          }
+
+          if (bestSheetData.length > 0) {
+            console.log(`\n  ✓ Best sheet: "${bestSheetName}" with ${bestSheetData.length} records`);
+            allDebtProfiles = allDebtProfiles.concat(bestSheetData);
           } else {
-            // Try fallback: read raw data to see what's there
-            const rawData = xlsx.utils.sheet_to_json(sheet, { defval: '', header: 1 });
-            console.log('Raw data rows:', rawData.length);
+            console.log('  ✗ No debt profile data found in any sheet');
+            // Log first sheet raw data for debugging
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            const rawData = xlsx.utils.sheet_to_json(firstSheet, { defval: '', header: 1 });
             if (rawData.length > 0) {
-              console.log('First 5 raw rows:');
-              rawData.slice(0, 5).forEach((row, i) => console.log(`Row ${i}:`, row));
+              console.log('  First 5 raw rows of first sheet:');
+              rawData.slice(0, 5).forEach((row, i) => console.log(`  Row ${i}:`, row));
             }
           }
           console.log('========================================\n');
-
-          const mappedData = processDebtProfileData(data, proposalId);
-          console.log('Mapped debt profiles:', mappedData.length);
-          allDebtProfiles = allDebtProfiles.concat(mappedData);
         } catch (excelErr) {
           console.error(`Error reading Excel file ${doc.filename}:`, excelErr);
         }
@@ -464,14 +515,39 @@ app.post('/stage2/:proposalId/extract-debt-profile', async (req, res) => {
       return res.status(400).json({ success: false, message: 'No data could be extracted from debt profile files' });
     }
 
+    // Deduplicate by bank+loanAmount+loanType+loanApplicant+emi (same loan appearing in multiple table sections)
+    const seen = new Set();
+    const uniqueProfiles = allDebtProfiles.filter(p => {
+      const key = (p.bank || '').toLowerCase().trim() + '|' + p.loanAmount + '|' + (p.loanType || '').toLowerCase().trim() + '|' + (p.loanApplicant || '').toLowerCase().trim() + '|' + p.emi;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    // Re-number serial numbers
+    uniqueProfiles.forEach((p, i) => { p.sNo = i + 1; });
+    console.log(`Debt profiles: ${allDebtProfiles.length} total, ${uniqueProfiles.length} after dedup`);
+
     // Remove previous debt profiles for this proposal and insert new
     await DebtProfile.deleteMany({ proposalId: proposalId });
-    await DebtProfile.insertMany(allDebtProfiles);
+    await DebtProfile.insertMany(uniqueProfiles);
 
-    res.json({ success: true, message: `Extracted ${allDebtProfiles.length} loan records`, count: allDebtProfiles.length });
+    res.json({ success: true, message: `Extracted ${uniqueProfiles.length} loan records`, count: uniqueProfiles.length });
   } catch (err) {
     console.error('Error extracting debt profile:', err);
     res.status(500).json({ success: false, message: 'Error processing debt profile' });
+  }
+});
+
+// Route to clear all debt profiles for a proposal
+app.post('/stage2/:proposalId/clear-debt-profiles', async (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const result = await DebtProfile.deleteMany({ proposalId: proposalId });
+    console.log(`Cleared ${result.deletedCount} debt profiles for proposal ${proposalId}`);
+    res.json({ success: true, message: `Cleared ${result.deletedCount} debt profile entries` });
+  } catch (err) {
+    console.error('Error clearing debt profiles:', err);
+    res.status(500).json({ success: false, message: 'Error clearing debt profiles' });
   }
 });
 
@@ -3122,7 +3198,7 @@ function getDocumentTypesForCategory(category, proposal) {
       }
       if (proposal.coApplicants && proposal.coApplicants.length > 0) {
         proposal.coApplicants.forEach(co => {
-          if ((co.type === 'Individual' || co.type === 'Individual Salaried') && co.name) {
+          if ((co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') && co.name) {
             docTypes.push(`PAN Card of ${co.name}`);
             docTypes.push(`Aadhar Card of ${co.name}`);
             docTypes.push(`Passport Photo of ${co.name}`);
@@ -3171,7 +3247,7 @@ function getDocumentTypesForCategory(category, proposal) {
     case 'creditReports':
       if (proposal.coApplicants && proposal.coApplicants.length > 0) {
         proposal.coApplicants.forEach(co => {
-          if ((co.type === 'Individual' || co.type === 'Individual Salaried') && co.name) {
+          if ((co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') && co.name) {
             docTypes.push(`Personal Credit Report of ${co.name}`);
           }
         });
@@ -3187,7 +3263,7 @@ function getDocumentTypesForCategory(category, proposal) {
       docTypes.push(`ITR of Preceding previous year of ${applicantName}`);
       if (proposal.coApplicants && proposal.coApplicants.length > 0) {
         proposal.coApplicants.forEach(co => {
-          if ((co.type === 'Individual' || co.type === 'Individual Salaried') && co.name) {
+          if ((co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') && co.name) {
             docTypes.push(`ITR of Current Year of ${co.name}`);
             docTypes.push(`ITR of Previous Year of ${co.name}`);
             docTypes.push(`ITR of Preceding previous year of ${co.name}`);
@@ -3201,7 +3277,7 @@ function getDocumentTypesForCategory(category, proposal) {
       docTypes.push(`Overdraft Bank Statement of ${applicantName}`);
       if (proposal.coApplicants && proposal.coApplicants.length > 0) {
         proposal.coApplicants.forEach(co => {
-          if ((co.type === 'Individual' || co.type === 'Individual Salaried') && co.name) {
+          if ((co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') && co.name) {
             docTypes.push(`Bank Statement of ${co.name}`);
           }
         });
@@ -6016,7 +6092,7 @@ app.get('/stage2/:proposalId', async (req, res) => {
 });
 
 app.post('/stage2/:proposalId/upload', (req, res) => {
-  upload.array('documents', 50)(req, res, async (err) => {
+  upload.array('documents', 500)(req, res, async (err) => {
     if (err) {
       console.error('Multer error:', err);
       return res.status(400).json({ success: false, error: err.message || 'Upload error' });
@@ -8629,7 +8705,7 @@ app.get('/admin/import-chat', async (req, res) => {
 });
 
 // Admin: Upload & process policy files (txt, pdf, jpg, png)
-app.post('/admin/import-chat', policyUpload.array('policyFiles', 20), async (req, res) => {
+app.post('/admin/import-chat', policyUpload.array('policyFiles', 100), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ success: false, error: 'No files uploaded' });

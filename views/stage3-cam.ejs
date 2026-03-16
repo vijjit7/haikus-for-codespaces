@@ -724,11 +724,15 @@
                                                 const text = doc.extractedText || '';
                                                 if (!text || text.length < 100) return;
 
-                                                // Skip Form 26AS, GST docs
+                                                // Skip pure Form 26AS, GST docs (but NOT combined ITR+26AS documents)
                                                 const docClass = (doc.classification || '').toLowerCase();
+                                                const hasITRIndicators = text.includes('INCOME TAX RETURN') ||
+                                                    text.includes('ITR-') ||
+                                                    /Profit.*?before.*?tax/i.test(text) ||
+                                                    /COMPUTATION\s+OF\s+TOTAL/i.test(text);
                                                 if (docClass.includes('form 26as') || docClass.includes('26as') ||
                                                     docClass.includes('gst') ||
-                                                    text.includes('Annual Tax Statement') ||
+                                                    (!hasITRIndicators && text.includes('Annual Tax Statement')) ||
                                                     (text.includes('Details of Tax Deducted at Source') && !text.includes('Profit'))) return;
 
                                                 // Detect FY from classification or text
@@ -755,12 +759,13 @@
 
                                                 const fyNorm = fy.length > 7 ? fy.substring(0, 4) + '-' + fy.slice(-2) : fy;
 
-                                                // Skip co-applicant ITRs
+                                                // Skip co-applicant ITRs (but not for Proprietorship — proprietor's ITR IS the firm's ITR)
                                                 const applicantName = (proposal.applicantName || '').toLowerCase();
+                                                const applicantType = (proposal.applicantType || '').toLowerCase();
                                                 const isCoApplicantITR = proposal.coApplicants && proposal.coApplicants.some(ca =>
                                                     docClass.includes((ca.name || '').toLowerCase().split(' ')[0])
                                                 ) && !docClass.includes(applicantName.split(' ')[0]);
-                                                if (isCoApplicantITR) return;
+                                                if (isCoApplicantITR && applicantType !== 'proprietorship') return;
 
                                                 if (!fyData[fyNorm]) {
                                                     fyData[fyNorm] = { turnover: null, grossProfit: null, depreciation: null, interestOnLoans: null, netProfit: null };
@@ -1184,14 +1189,14 @@
                                                     if (fd.netProfit && !fyData[fyNorm].netProfit) fyData[fyNorm].netProfit = fd.netProfit;
                                                 }
 
-                                                // AI extractedDetails fallback
+                                                // AI extractedDetails — authoritative override (more reliable than OCR text parsing)
                                                 if (doc.extractedDetails) {
                                                     const ed = doc.extractedDetails;
-                                                    if (ed.turnover && !fyData[fyNorm].turnover) fyData[fyNorm].turnover = ed.turnover;
-                                                    if (ed.grossProfit && !fyData[fyNorm].grossProfit) fyData[fyNorm].grossProfit = ed.grossProfit;
-                                                    if (ed.depreciation && !fyData[fyNorm].depreciation) fyData[fyNorm].depreciation = ed.depreciation;
-                                                    if (ed.interestOnLoans && !fyData[fyNorm].interestOnLoans) fyData[fyNorm].interestOnLoans = ed.interestOnLoans;
-                                                    if (ed.netProfit && !fyData[fyNorm].netProfit) fyData[fyNorm].netProfit = ed.netProfit;
+                                                    if (ed.turnover) fyData[fyNorm].turnover = ed.turnover;
+                                                    if (ed.grossProfit) fyData[fyNorm].grossProfit = ed.grossProfit;
+                                                    if (ed.depreciation) fyData[fyNorm].depreciation = ed.depreciation;
+                                                    if (ed.interestOnLoans) fyData[fyNorm].interestOnLoans = ed.interestOnLoans;
+                                                    if (ed.netProfit) fyData[fyNorm].netProfit = ed.netProfit;
                                                 }
                                             });
 
@@ -3496,9 +3501,34 @@
                             }
                         }
                         
+                        // Detect account type from text - use header area only to avoid matching disclaimers
+                        let detectedAccountType = 'Unknown';
+                        const acTypeHeader = text.substring(0, 1500);
+                        if (/\b(OD\s+ACCOUNT|OVERDRAFT|CASH\s+CREDIT|CC\s+ACCOUNT|OD\s+A\/C)\b/i.test(acTypeHeader) ||
+                            /(?:Account\s*Type|A\/C\s*Type)[:\s]*(?:OD|Overdraft|Cash\s*Credit|CC|CAA)/i.test(acTypeHeader) ||
+                            /Scheme\s*[:\s].*(?:OD|Overdraft|Cash\s*Credit)/i.test(acTypeHeader)) {
+                            detectedAccountType = 'OD/CC';
+                        } else if (/\b(SAVINGS?\s+(?:ACCOUNT|A\/C|AC))\b/i.test(acTypeHeader) ||
+                            /Account\s*Type[:\s]*(?:Savings?|SB|SA)/i.test(acTypeHeader) ||
+                            /(?:Product|Scheme)\s*(?:Description)?[:\s].*Savings/i.test(acTypeHeader)) {
+                            detectedAccountType = 'Savings';
+                        } else if (/\b(CURRENT\s+(?:ACCOUNT|A\/C|AC))\b/i.test(acTypeHeader) ||
+                            /Account\s*Type[:\s]*(?:Current|CA)/i.test(acTypeHeader) ||
+                            /(?:Product|Scheme)\s*(?:Description)?[:\s].*Current/i.test(acTypeHeader) ||
+                            /Scheme\s*[:\s]\s*CA\s*[-–]/i.test(acTypeHeader)) {
+                            detectedAccountType = 'Current';
+                        }
+                        // Fallback: if overall average balance is negative, likely OD/CC
+                        const tempOverallAvg = Object.values(monthlyAvgBalances);
+                        const tempAvgVal = tempOverallAvg.length > 0 ? tempOverallAvg.reduce((s,v) => s+v, 0) / tempOverallAvg.length : 0;
+                        if (detectedAccountType === 'Unknown' && tempAvgVal < 0) {
+                            detectedAccountType = 'OD/CC';
+                        }
+
                         accountAnalysis[acNo] = {
                             accountNo: acNo,
                             accountName: account.accountName,
+                            accountType: detectedAccountType,
                             monthlyCredits: monthCreditsTotal,
                             monthlyDebits: monthDebitsTotal,
                             monthlyInterGroupCredits: monthlyInterGroupCredits,
@@ -3676,10 +3706,12 @@
                                     </table>
                                 </div>
                                 
-                                <!-- Average Banking Analysis (skip if overall average is negative) -->
+                                <!-- Average Banking Analysis (skip for OD/CC accounts and if overall average is negative) -->
                                 <%
                                 let totalAvgBalance = 0;
                                 let avgMonthCount = 0;
+                                const isODAccount = account.accountType === 'OD/CC';
+                                if (!isODAccount) {
                                 account.sortedMonths.forEach(monthKey => {
                                     const avgBalance = account.monthlyAvgBalances[monthKey] || 0;
                                     if (avgBalance > 0) {
@@ -3687,8 +3719,9 @@
                                         avgMonthCount++;
                                     }
                                 });
+                                }
                                 const overallAvgBalance = avgMonthCount > 0 ? totalAvgBalance / avgMonthCount : 0;
-                                if (overallAvgBalance > 0) { %>
+                                if (!isODAccount && overallAvgBalance > 0) { %>
                                 <div style="margin-bottom: 25px;">
                                     <h5 style="background: #f1c40f; color: #000; padding: 8px 12px; margin: 0 0 10px 0; border-radius: 4px;">Average Banking Analysis</h5>
                                     <p style="font-size: 0.85em; color: #666; margin: 0 0 10px 0;">Average of day closing balances per month</p>
@@ -4925,9 +4958,913 @@
 
                 <div id="eligibilityPanel" class="analysis-panel">
                     <h3>Eligibility Analysis</h3>
-                    <div class="placeholder-content">
-                        <div class="icon">✅</div>
-                        <p>Eligibility basis and calculations will be displayed here.</p>
+                    <%
+                    // === Compute eligibility auto-fill data ===
+
+                    // Get the last 2 FYs from sorted FYs (already computed above in financials section)
+                    const eligFYs = sortedFYs.filter(fy => !fy.includes('2025-26')).slice(-2);
+                    const eligPrevFY = eligFYs.length >= 2 ? eligFYs[0] : (eligFYs[0] || '');
+                    const eligLatestFY = eligFYs.length >= 2 ? eligFYs[1] : (eligFYs.length === 1 ? eligFYs[0] : '');
+
+                    // Extract taxPaid per FY from financial documents
+                    const taxPaidByFY = {};
+                    (proposal.documents || []).filter(d => d.category === 'financials').forEach(doc => {
+                        let docFY = null;
+                        const classMatch = (doc.classification || '').match(/FY\s*(\d{4}-\d{2,4})/i);
+                        if (classMatch) {
+                            docFY = classMatch[1];
+                        } else {
+                            const textFYMatch = (doc.extractedText || '').match(/(?:Assessment|A\.?Y\.?)\s*(?:Year)?\s*[:\s]*(\d{4})-(\d{2,4})/i);
+                            if (textFYMatch) {
+                                const ayYear = parseInt(textFYMatch[1]);
+                                docFY = `${ayYear - 1}-${String(ayYear).slice(-2)}`;
+                            }
+                        }
+                        if (!docFY) return;
+                        const fyNorm = docFY.length > 7 ? docFY.substring(0, 4) + '-' + docFY.slice(-2) : docFY;
+                        const tp = (doc.financialData && doc.financialData.taxPaid) || (doc.extractedDetails && doc.extractedDetails.taxPaid) || 0;
+                        if (tp) taxPaidByFY[fyNorm] = (taxPaidByFY[fyNorm] || 0) + tp;
+                    });
+
+                    // Get rental income
+                    const eligRentalIncome = (proposal.otherIncomeDetails && proposal.otherIncomeDetails.totalAnnualRent) || 0;
+
+                    // Get loan details
+                    const eligLoanAmount = parseFloat(proposal.loanAmount) || 0;
+                    const eligLoanTenure = parseInt(proposal.loanTenure) || 0;
+                    const eligLoanCategory = proposal.loanCategory || 'Fresh Loan';
+                    const eligCollateralType = proposal.natureOfCollateral || '';
+
+                    // Max LTV mapping
+                    const ltvMap = {
+                        'Residential House': 75,
+                        'Commercial Property': 65,
+                        'Residential Land': 50,
+                        'Commercial Land': 50,
+                        'Other Non-Standard Collateral': 55
+                    };
+                    const eligDefaultLTV = ltvMap[eligCollateralType] || 65;
+
+                    // Build auto-fill data per FY
+                    const eligAutoFill = {};
+                    [eligPrevFY, eligLatestFY].filter(Boolean).forEach(fy => {
+                        const fd = fyData[fy] || {};
+                        eligAutoFill[fy] = {
+                            netProfit: fd.netProfit || 0,
+                            depreciation: fd.depreciation || 0,
+                            interestOnLoans: fd.interestOnLoans || 0,
+                            taxPaid: taxPaidByFY[fy] || 0
+                        };
+                    });
+
+                    // Saved eligibility data
+                    const savedElig = proposal.eligibilityData || {};
+                    %>
+
+                    <!-- Eligibility Program Sub-tabs -->
+                    <div style="display:flex; gap:0; margin-bottom:20px; border-bottom:2px solid #1976d2;">
+                        <button class="elig-program-tab active" onclick="showEligProgram('normalIncome', this)" style="padding:10px 24px; border:none; background:#1976d2; color:white; font-weight:600; cursor:pointer; border-radius:6px 6px 0 0; font-size:0.9em;">Normal Income (EBITDA)</button>
+                        <button class="elig-program-tab" onclick="showEligProgram('banking', this)" style="padding:10px 24px; border:none; background:#e0e0e0; color:#666; font-weight:500; cursor:pointer; border-radius:6px 6px 0 0; font-size:0.9em; margin-left:2px;">Banking Program</button>
+                        <button class="elig-program-tab" onclick="showEligProgram('gst', this)" style="padding:10px 24px; border:none; background:#e0e0e0; color:#666; font-weight:500; cursor:pointer; border-radius:6px 6px 0 0; font-size:0.9em; margin-left:2px;">GST Program</button>
+                    </div>
+
+                    <!-- Tab 1: Normal Income (EBITDA) -->
+                    <div id="eligNormalIncome" class="elig-program-content" style="display:block;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                            <h4 style="margin:0; color:#1976d2;">Self Employed - Normal Income Program (EBITDA Based)</h4>
+                            <button onclick="resetEligibilityToExtracted()" style="padding:6px 14px; background:#ff9800; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.8em; font-weight:500;">Recalculate from Extracted Data</button>
+                        </div>
+
+                        <!-- Income Table -->
+                        <div style="overflow-x:auto; margin-bottom:20px;">
+                            <table id="eligIncomeTable" border="1" style="width:100%; border-collapse:collapse; background:#fff; font-size:0.85em;">
+                                <thead>
+                                    <tr style="background:#e3f2fd;">
+                                        <th style="padding:8px; text-align:left; width:30%;">Annual Income (Rs.)</th>
+                                        <th style="padding:8px; text-align:center; width:22%;"><%= eligPrevFY || 'Previous Year' %></th>
+                                        <th style="padding:8px; text-align:center; width:22%;"><%= eligLatestFY || 'Latest Year' %></th>
+                                        <th style="padding:8px; text-align:center; width:26%; background:#e8f5e9;">Output (Average)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Net Profit (less tax) -->
+                                    <tr>
+                                        <td style="padding:8px; font-weight:500;">Net Profit (less total tax paid)</td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligNetProfitPrev" class="elig-input" data-field="netProfitPrev"
+                                                value="<%= savedElig.netProfitPrev != null ? savedElig.netProfitPrev : ((eligAutoFill[eligPrevFY]?.netProfit || 0) - (eligAutoFill[eligPrevFY]?.taxPaid || 0)) %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligNetProfitLatest" class="elig-input" data-field="netProfitLatest"
+                                                value="<%= savedElig.netProfitLatest != null ? savedElig.netProfitLatest : ((eligAutoFill[eligLatestFY]?.netProfit || 0) - (eligAutoFill[eligLatestFY]?.taxPaid || 0)) %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td id="eligNetProfitAvg" style="padding:8px; text-align:right; font-weight:bold; background:#e8f5e9;"></td>
+                                    </tr>
+                                    <!-- Depreciation -->
+                                    <tr>
+                                        <td style="padding:8px;">Depreciation</td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligDepPrev" class="elig-input" data-field="depPrev"
+                                                value="<%= savedElig.depPrev != null ? savedElig.depPrev : (eligAutoFill[eligPrevFY]?.depreciation || 0) %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligDepLatest" class="elig-input" data-field="depLatest"
+                                                value="<%= savedElig.depLatest != null ? savedElig.depLatest : (eligAutoFill[eligLatestFY]?.depreciation || 0) %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td id="eligDepAvg" style="padding:8px; text-align:right; font-weight:bold; background:#e8f5e9;"></td>
+                                    </tr>
+                                    <!-- Other Non-Cash Expenses -->
+                                    <tr>
+                                        <td style="padding:8px;">Other Non-Cash Expenses</td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligNonCashPrev" class="elig-input" data-field="nonCashPrev"
+                                                value="<%= savedElig.nonCashPrev || 0 %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligNonCashLatest" class="elig-input" data-field="nonCashLatest"
+                                                value="<%= savedElig.nonCashLatest || 0 %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right; color:#999;">-</td>
+                                    </tr>
+                                    <!-- One-time Income Excluded -->
+                                    <tr>
+                                        <td style="padding:8px;">One-time Income Excluded</td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligOneTimeIncPrev" class="elig-input" data-field="oneTimeIncPrev"
+                                                value="<%= savedElig.oneTimeIncPrev || 0 %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligOneTimeIncLatest" class="elig-input" data-field="oneTimeIncLatest"
+                                                value="<%= savedElig.oneTimeIncLatest || 0 %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right; color:#999;">-</td>
+                                    </tr>
+                                    <!-- One-time Expenses Added Back -->
+                                    <tr>
+                                        <td style="padding:8px;">One-time Expenses Added Back</td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligOneTimeExpPrev" class="elig-input" data-field="oneTimeExpPrev"
+                                                value="<%= savedElig.oneTimeExpPrev || 0 %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligOneTimeExpLatest" class="elig-input" data-field="oneTimeExpLatest"
+                                                value="<%= savedElig.oneTimeExpLatest || 0 %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right; color:#999;">-</td>
+                                    </tr>
+                                    <!-- Salary Drawn from Firm/Company -->
+                                    <tr>
+                                        <td style="padding:8px;">Salary Drawn from Firm/Company</td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligSalaryPrev" class="elig-input" data-field="salaryPrev"
+                                                value="<%= savedElig.salaryPrev || 0 %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligSalaryLatest" class="elig-input" data-field="salaryLatest"
+                                                value="<%= savedElig.salaryLatest || 0 %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right; color:#999;">-</td>
+                                    </tr>
+                                    <!-- Interest on Capital of Firm -->
+                                    <tr>
+                                        <td style="padding:8px;">Interest on Capital of Firm</td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligIntCapPrev" class="elig-input" data-field="intCapPrev"
+                                                value="<%= savedElig.intCapPrev || 0 %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligIntCapLatest" class="elig-input" data-field="intCapLatest"
+                                                value="<%= savedElig.intCapLatest || 0 %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right; color:#999;">-</td>
+                                    </tr>
+                                    <!-- Interest Paid on Loans -->
+                                    <tr>
+                                        <td style="padding:8px;">Interest Paid on Loans</td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligIntLoanPrev" class="elig-input" data-field="intLoanPrev"
+                                                value="<%= savedElig.intLoanPrev != null ? savedElig.intLoanPrev : (eligAutoFill[eligPrevFY]?.interestOnLoans || 0) %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligIntLoanLatest" class="elig-input" data-field="intLoanLatest"
+                                                value="<%= savedElig.intLoanLatest != null ? savedElig.intLoanLatest : (eligAutoFill[eligLatestFY]?.interestOnLoans || 0) %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right; color:#999;">-</td>
+                                    </tr>
+                                    <!-- Total Business Income -->
+                                    <tr style="background:#e3f2fd; font-weight:bold;">
+                                        <td style="padding:8px; font-weight:700;">Total Business Income</td>
+                                        <td id="eligBizIncomePrev" style="padding:8px; text-align:right; font-weight:700;"></td>
+                                        <td id="eligBizIncomeLatest" style="padding:8px; text-align:right; font-weight:700;"></td>
+                                        <td style="padding:8px; text-align:right; color:#999;">-</td>
+                                    </tr>
+                                    <!-- Separator -->
+                                    <tr><td colspan="4" style="padding:4px; background:#f5f5f5; font-size:0.8em; color:#888; text-align:center;">Other Income Sources</td></tr>
+                                    <!-- Agriculture -->
+                                    <tr>
+                                        <td style="padding:8px;">Agriculture</td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligAgriPrev" class="elig-input" data-field="agriPrev"
+                                                value="<%= savedElig.agriPrev || 0 %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligAgriLatest" class="elig-input" data-field="agriLatest"
+                                                value="<%= savedElig.agriLatest || 0 %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right; color:#999;">-</td>
+                                    </tr>
+                                    <!-- Interest/Dividend -->
+                                    <tr>
+                                        <td style="padding:8px;">Interest / Dividend</td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligIntDivPrev" class="elig-input" data-field="intDivPrev"
+                                                value="<%= savedElig.intDivPrev || 0 %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligIntDivLatest" class="elig-input" data-field="intDivLatest"
+                                                value="<%= savedElig.intDivLatest || 0 %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right; color:#999;">-</td>
+                                    </tr>
+                                    <!-- Rental -->
+                                    <tr>
+                                        <td style="padding:8px;">Rental Income</td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligRentalPrev" class="elig-input" data-field="rentalPrev"
+                                                value="<%= savedElig.rentalPrev != null ? savedElig.rentalPrev : eligRentalIncome %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right;">
+                                            <input type="number" id="eligRentalLatest" class="elig-input" data-field="rentalLatest"
+                                                value="<%= savedElig.rentalLatest != null ? savedElig.rentalLatest : eligRentalIncome %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:120px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:8px; text-align:right; color:#999;">-</td>
+                                    </tr>
+                                    <!-- Total Other Income -->
+                                    <tr style="background:#fff3e0; font-weight:bold;">
+                                        <td style="padding:8px; font-weight:700;">Total Other Income</td>
+                                        <td id="eligOtherIncomePrev" style="padding:8px; text-align:right; font-weight:700;"></td>
+                                        <td id="eligOtherIncomeLatest" style="padding:8px; text-align:right; font-weight:700;"></td>
+                                        <td style="padding:8px; text-align:right; color:#999;">-</td>
+                                    </tr>
+                                    <!-- Total Verified Income -->
+                                    <tr style="background:#c8e6c9; font-weight:bold;">
+                                        <td style="padding:8px; font-weight:700; font-size:0.95em;">Total Verified Income</td>
+                                        <td id="eligTotalIncomePrev" style="padding:8px; text-align:right; font-weight:700; font-size:0.95em;"></td>
+                                        <td id="eligTotalIncomeLatest" style="padding:8px; text-align:right; font-weight:700; font-size:0.95em;"></td>
+                                        <td id="eligTotalIncomeAvg" style="padding:8px; text-align:right; font-weight:700; font-size:0.95em; background:#a5d6a7;"></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Obligations Section -->
+                        <h4 style="margin:20px 0 10px; color:#e65100;">Obligations & Eligibility</h4>
+
+                        <!-- Debt Profile Checkboxes -->
+                        <div style="margin-bottom:15px; padding:12px; background:#fff8e1; border-radius:6px; border:1px solid #ffe082;">
+                            <strong style="font-size:0.85em; color:#e65100;">Existing Loan Obligations (from Debt Profile)</strong>
+                            <p style="font-size:0.75em; color:#888; margin:4px 0 8px;">Uncheck loans to exclude them from obligation total (e.g., BT/Takeover loans)</p>
+                            <% if (debtProfilesList.length > 0) { %>
+                            <table style="width:100%; border-collapse:collapse; font-size:0.82em; background:white;">
+                                <thead>
+                                    <tr style="background:#fff3e0;">
+                                        <th style="padding:6px; text-align:center; width:40px;">Include</th>
+                                        <th style="padding:6px; text-align:left;">Bank</th>
+                                        <th style="padding:6px; text-align:left;">Loan Type</th>
+                                        <th style="padding:6px; text-align:right;">EMI (Rs.)</th>
+                                        <th style="padding:6px; text-align:right;">POS (Rs.)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <% debtProfilesList.forEach(function(profile, idx) {
+                                        const profileEMI = profile.emi || 0;
+                                        const profilePOS = calculatePOS(profile.loanAmount, profile.roi, profile.tenure, profile.monthsCompleted);
+                                        // Auto-exclude if BT and loan type matches
+                                        const isBT = eligLoanCategory.toLowerCase().includes('balance transfer') || eligLoanCategory.toLowerCase().includes('bt');
+                                        const savedExclude = savedElig.excludedLoans && savedElig.excludedLoans.includes(idx.toString());
+                                        const defaultExclude = savedElig.excludedLoans ? savedExclude : false;
+                                    %>
+                                    <tr>
+                                        <td style="padding:6px; text-align:center;">
+                                            <input type="checkbox" class="elig-loan-check" data-idx="<%= idx %>" data-emi="<%= profileEMI %>"
+                                                <%= defaultExclude ? '' : 'checked' %>
+                                                onchange="recalculateEligibility()">
+                                        </td>
+                                        <td style="padding:6px;"><%= profile.bank || '-' %></td>
+                                        <td style="padding:6px;"><%= profile.loanType || '-' %></td>
+                                        <td style="padding:6px; text-align:right;"><%= profileEMI ? profileEMI.toLocaleString('en-IN') : '-' %></td>
+                                        <td style="padding:6px; text-align:right;"><%= profilePOS !== null ? profilePOS.toLocaleString('en-IN') : '-' %></td>
+                                    </tr>
+                                    <% }); %>
+                                </tbody>
+                            </table>
+                            <% } else { %>
+                            <p style="font-size:0.8em; color:#999; margin:5px 0;">No debt profiles found. Total obligations will be 0.</p>
+                            <% } %>
+                        </div>
+
+                        <!-- Eligibility Calculation Table -->
+                        <div style="overflow-x:auto;">
+                            <table border="1" style="width:100%; border-collapse:collapse; background:#fff; font-size:0.85em;">
+                                <tbody>
+                                    <tr>
+                                        <td style="padding:10px; width:40%; font-weight:500;">Total Obligations (Existing EMIs)</td>
+                                        <td id="eligTotalObligations" style="padding:10px; text-align:right; font-weight:bold; width:30%;">0</td>
+                                        <td style="padding:10px; width:30%; color:#888; font-size:0.8em;">Sum of included loan EMIs</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding:10px; font-weight:500;">
+                                            Proposed EMI
+                                            <div style="margin-top:5px; display:flex; gap:10px; align-items:center;">
+                                                <label style="font-size:0.8em; color:#666; font-weight:normal;">ROI %:</label>
+                                                <input type="number" id="eligROI" class="elig-input" data-field="roi" step="0.01"
+                                                    value="<%= savedElig.roi || '' %>" placeholder="e.g. 12.5"
+                                                    oninput="recalculateEligibility()"
+                                                    style="width:80px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                                <span style="font-size:0.8em; color:#666;">Loan: ₹<%= eligLoanAmount.toLocaleString('en-IN') %> | Tenure: <%= eligLoanTenure %> Yr (<%= eligLoanTenure * 12 %> Mo)</span>
+                                            </div>
+                                        </td>
+                                        <td id="eligProposedEMI" style="padding:10px; text-align:right; font-weight:bold;">-</td>
+                                        <td style="padding:10px; color:#888; font-size:0.8em;">EMI on requested loan</td>
+                                    </tr>
+                                    <tr style="background:#fff3e0;">
+                                        <td style="padding:10px; font-weight:700;">FOIR %</td>
+                                        <td id="eligFOIR" style="padding:10px; text-align:right; font-weight:bold; font-size:1.1em;"></td>
+                                        <td style="padding:10px; color:#888; font-size:0.8em;">(Obligations + Proposed EMI) / Total Verified Income x 100</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding:10px; font-weight:500;">Loan Amount as per 100% FOIR</td>
+                                        <td id="eligFOIRLoan" style="padding:10px; text-align:right; font-weight:bold;"></td>
+                                        <td style="padding:10px; color:#888; font-size:0.8em;">(Total Verified Income - Obligations) x Tenure Factor</td>
+                                    </tr>
+                                    <tr><td colspan="3" style="padding:2px; background:#e0e0e0;"></td></tr>
+                                    <tr>
+                                        <td style="padding:10px; font-weight:500;">Valuation of Property</td>
+                                        <td style="padding:10px; text-align:right;">
+                                            <input type="number" id="eligValuation" class="elig-input" data-field="valuation"
+                                                value="<%= savedElig.valuation || '' %>" placeholder="Enter valuation"
+                                                oninput="recalculateEligibility()"
+                                                style="width:140px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:10px; color:#888; font-size:0.8em;">Manual input</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding:10px; font-weight:500;">
+                                            Max LTV %
+                                            <span style="font-size:0.75em; color:#888; margin-left:5px;">(<%= eligCollateralType || 'Not set' %>)</span>
+                                        </td>
+                                        <td style="padding:10px; text-align:right;">
+                                            <input type="number" id="eligMaxLTV" class="elig-input" data-field="maxLTV" step="1" min="0" max="100"
+                                                value="<%= savedElig.maxLTV != null ? savedElig.maxLTV : eligDefaultLTV %>"
+                                                oninput="recalculateEligibility()"
+                                                style="width:80px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                            <span style="font-size:0.85em;">%</span>
+                                        </td>
+                                        <td style="padding:10px; color:#888; font-size:0.8em;">Auto-set from collateral type</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding:10px; font-weight:500;">Loan Amount as per Max LTV</td>
+                                        <td id="eligLTVLoan" style="padding:10px; text-align:right; font-weight:bold;"></td>
+                                        <td style="padding:10px; color:#888; font-size:0.8em;">Valuation x Max LTV %</td>
+                                    </tr>
+                                    <!-- Final Result Row -->
+                                    <tr style="background:#1976d2; color:white;">
+                                        <td style="padding:14px; font-weight:700; font-size:1.05em;">Loan Amount Possible (Rs.)</td>
+                                        <td id="eligLoanPossible" style="padding:14px; text-align:right; font-weight:700; font-size:1.2em;"></td>
+                                        <td style="padding:14px; font-size:0.8em; opacity:0.9;">Lower of FOIR-based & LTV-based</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Tab 2: Banking Program -->
+                    <div id="eligBanking" class="elig-program-content" style="display:none;">
+                        <%
+                        // === Compute Banking Eligibility Data ===
+                        // Filter accounts: include Current + Savings, exclude OD/CC (negative balance accounts)
+                        const bankEligAccounts = accountsList.filter(ac => ac.accountType !== 'OD/CC');
+                        const bankExcludedAccounts = accountsList.filter(ac => ac.accountType === 'OD/CC');
+
+                        // Build unified month list from all eligible accounts (last 12 months)
+                        const bankAllMonths = new Set();
+                        bankEligAccounts.forEach(ac => {
+                            ac.sortedMonths.forEach(mk => bankAllMonths.add(mk));
+                        });
+                        // Sort chronologically (oldest first)
+                        const bankSortedMonths = Array.from(bankAllMonths).sort((a, b) => {
+                            const [mA, yA] = a.split('-').map(Number);
+                            const [mB, yB] = b.split('-').map(Number);
+                            return (yA * 12 + mA) - (yB * 12 + mB);
+                        }).slice(-12);
+
+                        // For each month, compute combined avg balance across all eligible accounts
+                        const bankMonthlyTotals = {};
+                        let bankGrandTotal = 0;
+                        let bankMonthsWithData = 0;
+                        bankSortedMonths.forEach(mk => {
+                            let monthTotal = 0;
+                            let hasData = false;
+                            bankEligAccounts.forEach(ac => {
+                                const bal = ac.monthlyAvgBalances[mk];
+                                if (bal !== undefined && bal !== null) {
+                                    monthTotal += bal;
+                                    hasData = true;
+                                }
+                            });
+                            bankMonthlyTotals[mk] = hasData ? monthTotal : null;
+                            if (hasData && monthTotal > 0) {
+                                bankGrandTotal += monthTotal;
+                                bankMonthsWithData++;
+                            }
+                        });
+                        const bankOverallAvg = bankMonthsWithData > 0 ? bankGrandTotal / bankMonthsWithData : 0;
+
+                        // Collect all bulk credits from eligible accounts for loan exclusion
+                        const bankBulkCredits = [];
+                        bankEligAccounts.forEach((ac, acIdx) => {
+                            (ac.top10Credits || []).forEach((credit, crIdx) => {
+                                if (credit.amount >= 50000) { // Only show credits >= 50k as bulk
+                                    bankBulkCredits.push({
+                                        acNo: ac.accountNo,
+                                        acIdx: acIdx,
+                                        crIdx: crIdx,
+                                        date: credit.date,
+                                        particulars: credit.particulars,
+                                        amount: credit.amount,
+                                        monthKey: credit.monthKey,
+                                        isInterGroup: credit.isInterGroup
+                                    });
+                                }
+                            });
+                        });
+                        // Sort by amount descending
+                        bankBulkCredits.sort((a, b) => b.amount - a.amount);
+
+                        // Saved banking eligibility data
+                        const savedBankElig = proposal.bankingEligibilityData || {};
+
+                        // Month name helper
+                        const bankMonthNames = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                        %>
+
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                            <h4 style="margin:0; color:#1976d2;">Banking Program (Average Bank Balance Based)</h4>
+                            <button onclick="resetBankingEligibility()" style="padding:6px 14px; background:#ff9800; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.8em; font-weight:500;">Recalculate from Extracted Data</button>
+                        </div>
+
+                        <p style="font-size:0.82em; color:#666; margin:0 0 15px; line-height:1.5;">
+                            Eligibility based on average bank balance of Current + Savings accounts (last 12 months).
+                            OD/CC accounts with negative balances are excluded. Bulk credits from loans should be removed.
+                        </p>
+
+                        <% if (bankEligAccounts.length === 0 && bankExcludedAccounts.length === 0) { %>
+                        <div class="placeholder-content">
+                            <div class="icon">🏦</div>
+                            <p>No banking documents uploaded. Please add bank statements in Stage 2.</p>
+                        </div>
+                        <% } else { %>
+
+                        <!-- Account Selection -->
+                        <div style="margin-bottom:15px; padding:12px; background:#e3f2fd; border-radius:6px; border:1px solid #90caf9;">
+                            <strong style="font-size:0.85em; color:#1565c0;">Bank Accounts Included</strong>
+                            <p style="font-size:0.75em; color:#888; margin:4px 0 8px;">OD/CC accounts (negative balance) are auto-excluded. Toggle accounts to include/exclude.</p>
+                            <table style="width:100%; border-collapse:collapse; font-size:0.82em; background:white;">
+                                <thead>
+                                    <tr style="background:#e3f2fd;">
+                                        <th style="padding:6px; text-align:center; width:40px;">Include</th>
+                                        <th style="padding:6px; text-align:left;">Account No.</th>
+                                        <th style="padding:6px; text-align:left;">Account Name</th>
+                                        <th style="padding:6px; text-align:center;">Type</th>
+                                        <th style="padding:6px; text-align:right;">Avg. Balance</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <% accountsList.forEach(function(ac, idx) {
+                                        const isOD = ac.accountType === 'OD/CC';
+                                        // Compute account's overall avg balance
+                                        let acAvgSum = 0, acAvgCnt = 0;
+                                        Object.values(ac.monthlyAvgBalances).forEach(v => {
+                                            if (v > 0) { acAvgSum += v; acAvgCnt++; }
+                                        });
+                                        const acOverallAvg = acAvgCnt > 0 ? acAvgSum / acAvgCnt : 0;
+                                        const savedExcluded = savedBankElig.excludedAccounts && savedBankElig.excludedAccounts.includes(idx.toString());
+                                        const defaultInclude = savedBankElig.excludedAccounts ? !savedExcluded : !isOD;
+                                    %>
+                                    <tr style="<%= isOD ? 'background:#fff3e0;' : '' %>">
+                                        <td style="padding:6px; text-align:center;">
+                                            <input type="checkbox" class="bank-elig-ac-check" data-idx="<%= idx %>"
+                                                <%= defaultInclude ? 'checked' : '' %>
+                                                onchange="recalculateBankingEligibility()">
+                                        </td>
+                                        <td style="padding:6px;"><%= ac.accountNo %></td>
+                                        <td style="padding:6px;"><%= ac.accountName %></td>
+                                        <td style="padding:6px; text-align:center;">
+                                            <span style="padding:2px 8px; border-radius:3px; font-size:0.8em; font-weight:500;
+                                                background:<%= isOD ? '#ffccbc' : (ac.accountType === 'Savings' ? '#c8e6c9' : '#bbdefb') %>;
+                                                color:<%= isOD ? '#bf360c' : (ac.accountType === 'Savings' ? '#2e7d32' : '#1565c0') %>;">
+                                                <%= ac.accountType || 'Unknown' %>
+                                            </span>
+                                        </td>
+                                        <td style="padding:6px; text-align:right;"><%= acOverallAvg > 0 ? acOverallAvg.toLocaleString('en-IN', {maximumFractionDigits:0}) : (isOD ? 'Negative' : '-') %></td>
+                                    </tr>
+                                    <% }); %>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Monthly Average Balance Table -->
+                        <div style="overflow-x:auto; margin-bottom:20px;">
+                            <table id="bankEligBalanceTable" border="1" style="width:100%; border-collapse:collapse; background:#fff; font-size:0.85em;">
+                                <thead>
+                                    <tr style="background:#e3f2fd;">
+                                        <th style="padding:8px; text-align:left; width:30%;">Month</th>
+                                        <% bankEligAccounts.forEach(function(ac) { %>
+                                        <th style="padding:8px; text-align:right; font-size:0.8em;">A/C ...<%= ac.accountNo.replace(/\D/g, '').slice(-4) %><br><span style="font-weight:normal; color:#888;"><%= ac.accountType %></span></th>
+                                        <% }); %>
+                                        <th style="padding:8px; text-align:right; background:#e8f5e9;">Combined Avg</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <% bankSortedMonths.forEach(function(mk) {
+                                        const [m, y] = mk.split('-');
+                                        const monthLabel = bankMonthNames[parseInt(m)] + '-' + y.slice(-2);
+                                    %>
+                                    <tr>
+                                        <td style="padding:6px 8px;"><%= monthLabel %></td>
+                                        <% bankEligAccounts.forEach(function(ac) {
+                                            const bal = ac.monthlyAvgBalances[mk];
+                                        %>
+                                        <td style="padding:6px 8px; text-align:right;"><%= bal != null ? Math.round(bal).toLocaleString('en-IN') : '-' %></td>
+                                        <% }); %>
+                                        <td style="padding:6px 8px; text-align:right; font-weight:bold; background:#e8f5e9;">
+                                            <%= bankMonthlyTotals[mk] != null ? Math.round(bankMonthlyTotals[mk]).toLocaleString('en-IN') : '-' %>
+                                        </td>
+                                    </tr>
+                                    <% }); %>
+                                    <!-- Overall Average Row -->
+                                    <tr style="background:#c8e6c9; font-weight:bold;">
+                                        <td style="padding:8px;">Average Monthly Balance (12M)</td>
+                                        <% bankEligAccounts.forEach(function(ac) {
+                                            let s = 0, c = 0;
+                                            bankSortedMonths.forEach(mk => {
+                                                const b = ac.monthlyAvgBalances[mk];
+                                                if (b != null && b > 0) { s += b; c++; }
+                                            });
+                                        %>
+                                        <td style="padding:8px; text-align:right;"><%= c > 0 ? Math.round(s/c).toLocaleString('en-IN') : '-' %></td>
+                                        <% }); %>
+                                        <td id="bankEligOverallAvg" style="padding:8px; text-align:right; font-size:1em; background:#a5d6a7;"><%= bankOverallAvg > 0 ? Math.round(bankOverallAvg).toLocaleString('en-IN') : '-' %></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Bulk Credits to Exclude -->
+                        <div style="margin-bottom:15px; padding:12px; background:#fff8e1; border-radius:6px; border:1px solid #ffe082;">
+                            <strong style="font-size:0.85em; color:#e65100;">Bulk Credits - Loan Disbursements to Exclude</strong>
+                            <p style="font-size:0.75em; color:#888; margin:4px 0 8px;">Check credits that are loan disbursements / bulk transfers to exclude from balance computation. These are spread across the months they occurred.</p>
+                            <% if (bankBulkCredits.length > 0) { %>
+                            <table style="width:100%; border-collapse:collapse; font-size:0.82em; background:white;">
+                                <thead>
+                                    <tr style="background:#fff3e0;">
+                                        <th style="padding:6px; text-align:center; width:40px;">Exclude</th>
+                                        <th style="padding:6px; text-align:left;">Date</th>
+                                        <th style="padding:6px; text-align:left;">Account</th>
+                                        <th style="padding:6px; text-align:left;">Particulars</th>
+                                        <th style="padding:6px; text-align:right;">Amount (Rs.)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <% bankBulkCredits.forEach(function(bc, bcIdx) {
+                                        const savedExcluded = savedBankElig.excludedBulkCredits && savedBankElig.excludedBulkCredits.includes(bcIdx.toString());
+                                        // Auto-detect loan disbursements from particulars
+                                        const loanKeywords = /\b(LOAN|DISB|DISBURSEMENT|NEFT.*LOAN|RTGS.*LOAN|SANCTION)\b/i;
+                                        const isLikelyLoan = loanKeywords.test(bc.particulars);
+                                        const defaultExclude = savedBankElig.excludedBulkCredits ? savedExcluded : isLikelyLoan;
+                                    %>
+                                    <tr style="<%= bc.isInterGroup ? 'background:#fff5f5;' : '' %>">
+                                        <td style="padding:6px; text-align:center;">
+                                            <input type="checkbox" class="bank-elig-bulk-check" data-idx="<%= bcIdx %>"
+                                                data-amount="<%= bc.amount %>" data-month="<%= bc.monthKey %>"
+                                                <%= defaultExclude ? 'checked' : '' %>
+                                                onchange="recalculateBankingEligibility()">
+                                        </td>
+                                        <td style="padding:6px;"><%= bc.date %></td>
+                                        <td style="padding:6px; font-size:0.85em;">...<%= bc.acNo.replace(/\D/g, '').slice(-4) %></td>
+                                        <td style="padding:6px;"><%= bc.particulars %><%= bc.isInterGroup ? ' <span style="color:#e74c3c;font-size:0.8em;">[INTER-GROUP]</span>' : '' %></td>
+                                        <td style="padding:6px; text-align:right; font-weight:500;"><%= bc.amount.toLocaleString('en-IN', {maximumFractionDigits:0}) %></td>
+                                    </tr>
+                                    <% }); %>
+                                </tbody>
+                            </table>
+                            <% } else { %>
+                            <p style="font-size:0.8em; color:#999; margin:5px 0;">No bulk credits (>50,000) found in bank statements.</p>
+                            <% } %>
+                        </div>
+
+                        <!-- Banking Eligibility Calculation -->
+                        <h4 style="margin:20px 0 10px; color:#e65100;">Eligibility Calculation</h4>
+                        <div style="overflow-x:auto;">
+                            <table border="1" style="width:100%; border-collapse:collapse; background:#fff; font-size:0.85em;">
+                                <tbody>
+                                    <tr>
+                                        <td style="padding:10px; width:40%; font-weight:500;">Average Monthly Bank Balance (12M)</td>
+                                        <td id="bankEligAvgBalance" style="padding:10px; text-align:right; font-weight:bold; width:30%;"><%= bankOverallAvg > 0 ? Math.round(bankOverallAvg).toLocaleString('en-IN') : '-' %></td>
+                                        <td style="padding:10px; width:30%; color:#888; font-size:0.8em;">Combined avg of included accounts</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding:10px; font-weight:500;">Less: Excluded Bulk Credits (monthly impact)</td>
+                                        <td id="bankEligBulkExclusion" style="padding:10px; text-align:right; font-weight:bold; color:#e74c3c;">0</td>
+                                        <td style="padding:10px; color:#888; font-size:0.8em;">Excluded loan credits spread per month</td>
+                                    </tr>
+                                    <tr style="background:#e8f5e9;">
+                                        <td style="padding:10px; font-weight:700;">Adjusted Average Monthly Balance</td>
+                                        <td id="bankEligAdjustedAvg" style="padding:10px; text-align:right; font-weight:bold; font-size:1.05em;"></td>
+                                        <td style="padding:10px; color:#888; font-size:0.8em;">Avg balance - bulk credit impact</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding:10px; font-weight:500;">
+                                            Multiplier
+                                            <div style="margin-top:5px;">
+                                                <input type="number" id="bankEligMultiplier" class="bank-elig-input" data-field="multiplier" step="0.1"
+                                                    value="<%= savedBankElig.multiplier != null ? savedBankElig.multiplier : 4 %>" placeholder="e.g. 4"
+                                                    oninput="recalculateBankingEligibility()"
+                                                    style="width:80px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                                <span style="font-size:0.8em; color:#666;">x (times annual avg)</span>
+                                            </div>
+                                        </td>
+                                        <td id="bankEligMultiplierResult" style="padding:10px; text-align:right; font-weight:bold;"></td>
+                                        <td style="padding:10px; color:#888; font-size:0.8em;">Adjusted Avg x 12 x Multiplier</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding:10px; font-weight:500;">Total Obligations (Existing EMIs)</td>
+                                        <td id="bankEligObligations" style="padding:10px; text-align:right; font-weight:bold;">0</td>
+                                        <td style="padding:10px; color:#888; font-size:0.8em;">From Normal Income tab obligations</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding:10px; font-weight:500;">
+                                            Proposed EMI
+                                            <div style="margin-top:5px; display:flex; gap:10px; align-items:center;">
+                                                <label style="font-size:0.8em; color:#666; font-weight:normal;">ROI %:</label>
+                                                <input type="number" id="bankEligROI" class="bank-elig-input" data-field="bankRoi" step="0.01"
+                                                    value="<%= savedBankElig.bankRoi || '' %>" placeholder="e.g. 12.5"
+                                                    oninput="recalculateBankingEligibility()"
+                                                    style="width:80px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                                <span style="font-size:0.8em; color:#666;">Loan: ₹<%= eligLoanAmount.toLocaleString('en-IN') %> | Tenure: <%= eligLoanTenure %> Yr</span>
+                                            </div>
+                                        </td>
+                                        <td id="bankEligProposedEMI" style="padding:10px; text-align:right; font-weight:bold;">-</td>
+                                        <td style="padding:10px; color:#888; font-size:0.8em;">EMI on requested loan</td>
+                                    </tr>
+                                    <tr><td colspan="3" style="padding:2px; background:#e0e0e0;"></td></tr>
+                                    <tr>
+                                        <td style="padding:10px; font-weight:500;">Valuation of Property</td>
+                                        <td style="padding:10px; text-align:right;">
+                                            <input type="number" id="bankEligValuation" class="bank-elig-input" data-field="bankValuation"
+                                                value="<%= savedBankElig.bankValuation || '' %>" placeholder="Enter valuation"
+                                                oninput="recalculateBankingEligibility()"
+                                                style="width:140px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                        <td style="padding:10px; color:#888; font-size:0.8em;">Manual input</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding:10px; font-weight:500;">
+                                            Max LTV %
+                                            <span style="font-size:0.75em; color:#888; margin-left:5px;">(<%= eligCollateralType || 'Not set' %>)</span>
+                                        </td>
+                                        <td style="padding:10px; text-align:right;">
+                                            <input type="number" id="bankEligMaxLTV" class="bank-elig-input" data-field="bankMaxLTV" step="1" min="0" max="100"
+                                                value="<%= savedBankElig.bankMaxLTV != null ? savedBankElig.bankMaxLTV : eligDefaultLTV %>"
+                                                oninput="recalculateBankingEligibility()"
+                                                style="width:80px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                            <span style="font-size:0.85em;">%</span>
+                                        </td>
+                                        <td style="padding:10px; color:#888; font-size:0.8em;">Auto-set from collateral type</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding:10px; font-weight:500;">Loan Amount as per Max LTV</td>
+                                        <td id="bankEligLTVLoan" style="padding:10px; text-align:right; font-weight:bold;"></td>
+                                        <td style="padding:10px; color:#888; font-size:0.8em;">Valuation x Max LTV %</td>
+                                    </tr>
+                                    <!-- Final Result -->
+                                    <tr style="background:#1976d2; color:white;">
+                                        <td style="padding:14px; font-weight:700; font-size:1.05em;">Loan Amount Possible - Banking (Rs.)</td>
+                                        <td id="bankEligLoanPossible" style="padding:14px; text-align:right; font-weight:700; font-size:1.2em;"></td>
+                                        <td style="padding:14px; font-size:0.8em; opacity:0.9;">Lower of (Multiplier-based & LTV-based)</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <% } %>
+                    </div>
+
+                    <!-- Tab 3: GST Program -->
+                    <div id="eligGst" class="elig-program-content" style="display:none;">
+                        <%
+                        // === Compute GST Eligibility Data ===
+                        // Use GST turnover (annualized from latest FY, or P&L sales as fallback)
+                        // gstTurnoverByFY, projectedTurnover, latestGstFY, gstFYs already computed in turnover section
+                        const gstEligTurnover = projectedTurnover > 0 ? projectedTurnover : (plSales2425 > 0 ? plSales2425 : plSales2324);
+                        const gstEligSource = projectedTurnover > 0 ? ('GST Annualized ' + (latestGstFY || '')) : (plSales2425 > 0 ? 'P&L Sales 2024-25' : (plSales2324 > 0 ? 'P&L Sales 2023-24' : 'Not Available'));
+
+                        // Total EMI obligations from debt profile (reuse from Normal Income)
+                        let gstTotalEMI = 0;
+                        debtProfilesList.forEach(function(profile) {
+                            gstTotalEMI += profile.emi || 0;
+                        });
+
+                        // Saved GST eligibility data
+                        const savedGstElig = proposal.gstEligibilityData || {};
+                        const gstMargins = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
+                        %>
+
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                            <h4 style="margin:0; color:#1976d2;">GST Program (Turnover Based)</h4>
+                        </div>
+
+                        <p style="font-size:0.82em; color:#666; margin:0 0 10px; line-height:1.5;">
+                            Eligibility based on GST turnover with margin assumptions. Source: <strong><%= gstEligSource %></strong>
+                        </p>
+
+                        <!-- GST Inputs -->
+                        <div style="display:flex; flex-wrap:wrap; gap:15px; margin-bottom:15px; padding:12px; background:#e3f2fd; border-radius:6px; border:1px solid #90caf9;">
+                            <div>
+                                <label style="font-size:0.8em; color:#666; display:block; margin-bottom:4px;">Annual Turnover (Rs.)</label>
+                                <input type="number" id="gstEligTurnover" class="gst-elig-input" data-field="gstTurnover"
+                                    value="<%= savedGstElig.gstTurnover != null ? savedGstElig.gstTurnover : Math.round(gstEligTurnover) %>"
+                                    oninput="recalculateGstEligibility()"
+                                    style="width:160px; text-align:right; padding:6px 8px; border:1px solid #ddd; border-radius:4px; font-size:0.9em;">
+                            </div>
+                            <div>
+                                <label style="font-size:0.8em; color:#666; display:block; margin-bottom:4px;">FOIR %</label>
+                                <select id="gstEligFOIR" class="gst-elig-input" data-field="gstFoir"
+                                    onchange="recalculateGstEligibility()"
+                                    style="padding:6px 8px; border:1px solid #ddd; border-radius:4px; font-size:0.9em;">
+                                    <% for (let f = 70; f <= 100; f += 5) { %>
+                                    <option value="<%= f %>" <%= (savedGstElig.gstFoir == f || (!savedGstElig.gstFoir && f === 70)) ? 'selected' : '' %>><%= f %>%</option>
+                                    <% } %>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="font-size:0.8em; color:#666; display:block; margin-bottom:4px;">Monthly Obligation (EMI)</label>
+                                <input type="number" id="gstEligObligation" class="gst-elig-input" data-field="gstObligation"
+                                    value="<%= savedGstElig.gstObligation != null ? savedGstElig.gstObligation : gstTotalEMI %>"
+                                    oninput="recalculateGstEligibility()"
+                                    style="width:120px; text-align:right; padding:6px 8px; border:1px solid #ddd; border-radius:4px; font-size:0.9em;">
+                            </div>
+                            <div>
+                                <label style="font-size:0.8em; color:#666; display:block; margin-bottom:4px;">ROI % (for EMI factor)</label>
+                                <input type="number" id="gstEligROI" class="gst-elig-input" data-field="gstRoi" step="0.01"
+                                    value="<%= savedGstElig.gstRoi || '' %>" placeholder="e.g. 12"
+                                    oninput="recalculateGstEligibility()"
+                                    style="width:80px; text-align:right; padding:6px 8px; border:1px solid #ddd; border-radius:4px; font-size:0.9em;">
+                            </div>
+                            <div>
+                                <label style="font-size:0.8em; color:#666; display:block; margin-bottom:4px;">Tenure</label>
+                                <span style="font-size:0.9em; padding:6px 0; display:inline-block;"><%= eligLoanTenure %> Yr (<%= eligLoanTenure * 12 %> Mo)</span>
+                            </div>
+                        </div>
+
+                        <!-- GST Eligibility Matrix Table -->
+                        <div style="overflow-x:auto; margin-bottom:20px;">
+                            <table id="gstEligTable" border="1" style="width:100%; border-collapse:collapse; background:#fff; font-size:0.82em; min-width:900px;">
+                                <thead>
+                                    <tr style="background:#e3f2fd;">
+                                        <th style="padding:8px; text-align:left; width:180px; position:sticky; left:0; background:#e3f2fd; z-index:1;">Parameter</th>
+                                        <% gstMargins.forEach(function(m) { %>
+                                        <th style="padding:6px; text-align:center; font-size:0.9em;"><%= m %>%</th>
+                                        <% }); %>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Annual Turnover -->
+                                    <tr>
+                                        <td style="padding:6px 8px; font-weight:500; position:sticky; left:0; background:#fff; z-index:1;">Annual Turnover</td>
+                                        <% gstMargins.forEach(function(m) { %>
+                                        <td class="gst-turnover-cell" style="padding:6px; text-align:right; font-size:0.9em;"></td>
+                                        <% }); %>
+                                    </tr>
+                                    <!-- Gross Margin -->
+                                    <tr style="background:#f5f5f5;">
+                                        <td style="padding:6px 8px; font-weight:500; position:sticky; left:0; background:#f5f5f5; z-index:1;">Gross Margin</td>
+                                        <% gstMargins.forEach(function(m) { %>
+                                        <td class="gst-margin-cell" data-margin="<%= m %>" style="padding:6px; text-align:right; font-size:0.9em;"></td>
+                                        <% }); %>
+                                    </tr>
+                                    <!-- Gross Income Per Annum (Margin * FOIR) -->
+                                    <tr>
+                                        <td style="padding:6px 8px; font-weight:500; position:sticky; left:0; background:#fff; z-index:1;">Gross Income Per Annum</td>
+                                        <% gstMargins.forEach(function(m) { %>
+                                        <td class="gst-grossincome-cell" style="padding:6px; text-align:right; font-size:0.9em;"></td>
+                                        <% }); %>
+                                    </tr>
+                                    <!-- Income Per Month -->
+                                    <tr style="background:#f5f5f5;">
+                                        <td style="padding:6px 8px; font-weight:500; position:sticky; left:0; background:#f5f5f5; z-index:1;">Income Per Month</td>
+                                        <% gstMargins.forEach(function(m) { %>
+                                        <td class="gst-monthlyincome-cell" style="padding:6px; text-align:right; font-size:0.9em;"></td>
+                                        <% }); %>
+                                    </tr>
+                                    <!-- Monthly Obligation -->
+                                    <tr>
+                                        <td style="padding:6px 8px; font-weight:500; position:sticky; left:0; background:#fff; z-index:1;">Monthly Obligation (EMI)</td>
+                                        <% gstMargins.forEach(function(m) { %>
+                                        <td class="gst-obligation-cell" style="padding:6px; text-align:right; font-size:0.9em; color:#e65100;"></td>
+                                        <% }); %>
+                                    </tr>
+                                    <!-- Available Income -->
+                                    <tr style="background:#e8f5e9; font-weight:bold;">
+                                        <td style="padding:6px 8px; font-weight:700; position:sticky; left:0; background:#e8f5e9; z-index:1;">Available Income</td>
+                                        <% gstMargins.forEach(function(m) { %>
+                                        <td class="gst-available-cell" style="padding:6px; text-align:right; font-size:0.9em; font-weight:600;"></td>
+                                        <% }); %>
+                                    </tr>
+                                    <!-- Loan Possible -->
+                                    <tr style="background:#1976d2; color:white; font-weight:bold;">
+                                        <td style="padding:8px; font-weight:700; position:sticky; left:0; background:#1976d2; color:white; z-index:1;">Loan Possible (Rs.)</td>
+                                        <% gstMargins.forEach(function(m) { %>
+                                        <td class="gst-loanpossible-cell" style="padding:6px; text-align:right; font-size:0.95em; font-weight:700;"></td>
+                                        <% }); %>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- LTV Check -->
+                        <div style="overflow-x:auto;">
+                            <table border="1" style="width:100%; border-collapse:collapse; background:#fff; font-size:0.85em; max-width:500px;">
+                                <tbody>
+                                    <tr>
+                                        <td style="padding:10px; font-weight:500;">Valuation of Property</td>
+                                        <td style="padding:10px; text-align:right;">
+                                            <input type="number" id="gstEligValuation" class="gst-elig-input" data-field="gstValuation"
+                                                value="<%= savedGstElig.gstValuation || '' %>" placeholder="Enter valuation"
+                                                oninput="recalculateGstEligibility()"
+                                                style="width:140px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding:10px; font-weight:500;">Max LTV %</td>
+                                        <td style="padding:10px; text-align:right;">
+                                            <input type="number" id="gstEligMaxLTV" class="gst-elig-input" data-field="gstMaxLTV" step="1" min="0" max="100"
+                                                value="<%= savedGstElig.gstMaxLTV != null ? savedGstElig.gstMaxLTV : eligDefaultLTV %>"
+                                                oninput="recalculateGstEligibility()"
+                                                style="width:80px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                                            <span style="font-size:0.85em;">%</span>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding:10px; font-weight:500;">Loan Amount as per Max LTV</td>
+                                        <td id="gstEligLTVLoan" style="padding:10px; text-align:right; font-weight:bold;"></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
 
@@ -5421,6 +6358,522 @@
 
             if (fy2324Input) fy2324Input.addEventListener('input', updateGrowthDisplay);
             if (fy2425Input) fy2425Input.addEventListener('input', updateGrowthDisplay);
+        });
+
+        // ========== ELIGIBILITY CALCULATOR ==========
+
+        // Extracted data for reset functionality
+        const eligExtractedData = <%- JSON.stringify({
+            netProfitPrev: (eligAutoFill[eligPrevFY]?.netProfit || 0) - (eligAutoFill[eligPrevFY]?.taxPaid || 0),
+            netProfitLatest: (eligAutoFill[eligLatestFY]?.netProfit || 0) - (eligAutoFill[eligLatestFY]?.taxPaid || 0),
+            depPrev: eligAutoFill[eligPrevFY]?.depreciation || 0,
+            depLatest: eligAutoFill[eligLatestFY]?.depreciation || 0,
+            intLoanPrev: eligAutoFill[eligPrevFY]?.interestOnLoans || 0,
+            intLoanLatest: eligAutoFill[eligLatestFY]?.interestOnLoans || 0,
+            rentalPrev: eligRentalIncome,
+            rentalLatest: eligRentalIncome,
+            maxLTV: eligDefaultLTV,
+            loanAmount: eligLoanAmount,
+            loanTenure: eligLoanTenure
+        }) %>;
+
+        // Program sub-tab switching
+        function showEligProgram(program, btn) {
+            document.querySelectorAll('.elig-program-content').forEach(c => c.style.display = 'none');
+            document.querySelectorAll('.elig-program-tab').forEach(t => {
+                t.style.background = '#e0e0e0';
+                t.style.color = '#666';
+                t.style.fontWeight = '500';
+            });
+            document.getElementById('elig' + program.charAt(0).toUpperCase() + program.slice(1)).style.display = 'block';
+            btn.style.background = '#1976d2';
+            btn.style.color = 'white';
+            btn.style.fontWeight = '600';
+        }
+
+        // Format number Indian style
+        function fmtInd(val) {
+            if (val === null || val === undefined || isNaN(val)) return '-';
+            return Math.round(val).toLocaleString('en-IN');
+        }
+
+        // EMI calculation for eligibility (uses same formula as debt profile)
+        function calcEligEMI(principal, annualRate, tenureMonths) {
+            if (!principal || !annualRate || !tenureMonths || principal <= 0 || tenureMonths <= 0) return null;
+            const r = annualRate / 12 / 100;
+            if (r === 0) return Math.round(principal / tenureMonths);
+            return Math.round(principal * r * Math.pow(1 + r, tenureMonths) / (Math.pow(1 + r, tenureMonths) - 1));
+        }
+
+        // Reverse: max loan from EMI capacity
+        function calcMaxLoanFromEMI(emiCapacity, annualRate, tenureMonths) {
+            if (!emiCapacity || emiCapacity <= 0 || !annualRate || !tenureMonths || tenureMonths <= 0) return 0;
+            const r = annualRate / 12 / 100;
+            if (r === 0) return Math.round(emiCapacity * tenureMonths);
+            return Math.round(emiCapacity * (Math.pow(1 + r, tenureMonths) - 1) / (r * Math.pow(1 + r, tenureMonths)));
+        }
+
+        // Debounced auto-save
+        let eligSaveTimer = null;
+        function autoSaveEligibility() {
+            if (eligSaveTimer) clearTimeout(eligSaveTimer);
+            eligSaveTimer = setTimeout(saveEligibilityData, 1500);
+        }
+
+        // Main recalculation function
+        function recalculateEligibility() {
+            const v = (id) => parseFloat(document.getElementById(id)?.value) || 0;
+
+            // Business Income rows
+            const netProfitPrev = v('eligNetProfitPrev');
+            const netProfitLatest = v('eligNetProfitLatest');
+            const depPrev = v('eligDepPrev');
+            const depLatest = v('eligDepLatest');
+            const nonCashPrev = v('eligNonCashPrev');
+            const nonCashLatest = v('eligNonCashLatest');
+            const oneTimeIncPrev = v('eligOneTimeIncPrev');
+            const oneTimeIncLatest = v('eligOneTimeIncLatest');
+            const oneTimeExpPrev = v('eligOneTimeExpPrev');
+            const oneTimeExpLatest = v('eligOneTimeExpLatest');
+            const salaryPrev = v('eligSalaryPrev');
+            const salaryLatest = v('eligSalaryLatest');
+            const intCapPrev = v('eligIntCapPrev');
+            const intCapLatest = v('eligIntCapLatest');
+            const intLoanPrev = v('eligIntLoanPrev');
+            const intLoanLatest = v('eligIntLoanLatest');
+
+            // Total Business Income = sum of all 8 rows
+            const bizPrev = netProfitPrev + depPrev + nonCashPrev - oneTimeIncPrev + oneTimeExpPrev + salaryPrev + intCapPrev + intLoanPrev;
+            const bizLatest = netProfitLatest + depLatest + nonCashLatest - oneTimeIncLatest + oneTimeExpLatest + salaryLatest + intCapLatest + intLoanLatest;
+
+            // Other Income rows
+            const agriPrev = v('eligAgriPrev');
+            const agriLatest = v('eligAgriLatest');
+            const intDivPrev = v('eligIntDivPrev');
+            const intDivLatest = v('eligIntDivLatest');
+            const rentalPrev = v('eligRentalPrev');
+            const rentalLatest = v('eligRentalLatest');
+
+            const otherPrev = agriPrev + intDivPrev + rentalPrev;
+            const otherLatest = agriLatest + intDivLatest + rentalLatest;
+
+            // Total Verified Income
+            const totalPrev = bizPrev + otherPrev;
+            const totalLatest = bizLatest + otherLatest;
+
+            // Averages
+            const netProfitAvg = (netProfitPrev + netProfitLatest) / 2;
+            const depAvg = (depPrev + depLatest) / 2;
+            const totalIncomeAvg = (totalPrev + totalLatest) / 2;
+
+            // Update display
+            document.getElementById('eligNetProfitAvg').textContent = fmtInd(netProfitAvg);
+            document.getElementById('eligDepAvg').textContent = fmtInd(depAvg);
+            document.getElementById('eligBizIncomePrev').textContent = fmtInd(bizPrev);
+            document.getElementById('eligBizIncomeLatest').textContent = fmtInd(bizLatest);
+            document.getElementById('eligOtherIncomePrev').textContent = fmtInd(otherPrev);
+            document.getElementById('eligOtherIncomeLatest').textContent = fmtInd(otherLatest);
+            document.getElementById('eligTotalIncomePrev').textContent = fmtInd(totalPrev);
+            document.getElementById('eligTotalIncomeLatest').textContent = fmtInd(totalLatest);
+            document.getElementById('eligTotalIncomeAvg').textContent = fmtInd(totalIncomeAvg);
+
+            // Obligations: sum of checked loan EMIs
+            let totalObligations = 0;
+            document.querySelectorAll('.elig-loan-check').forEach(cb => {
+                if (cb.checked) {
+                    totalObligations += parseFloat(cb.dataset.emi) || 0;
+                }
+            });
+            document.getElementById('eligTotalObligations').textContent = fmtInd(totalObligations);
+
+            // Proposed EMI
+            const roi = v('eligROI');
+            const loanAmt = eligExtractedData.loanAmount;
+            const tenureMonths = eligExtractedData.loanTenure * 12;
+            const proposedEMI = calcEligEMI(loanAmt, roi, tenureMonths);
+            document.getElementById('eligProposedEMI').textContent = proposedEMI ? fmtInd(proposedEMI) : '-';
+
+            // FOIR
+            const totalEMIBurden = totalObligations + (proposedEMI || 0);
+            const foirPct = totalIncomeAvg > 0 ? (totalEMIBurden / (totalIncomeAvg / 12)) * 100 : 0;
+            const foirEl = document.getElementById('eligFOIR');
+            foirEl.textContent = totalIncomeAvg > 0 ? foirPct.toFixed(1) + '%' : '-';
+            foirEl.style.color = foirPct > 80 ? '#e74c3c' : (foirPct > 60 ? '#ff9800' : '#2e7d32');
+
+            // Loan Amount as per 100% FOIR
+            const monthlyIncomeAvg = totalIncomeAvg / 12;
+            const emiCapacity = monthlyIncomeAvg - totalObligations;
+            const foirLoan = (roi > 0 && tenureMonths > 0 && emiCapacity > 0) ? calcMaxLoanFromEMI(emiCapacity, roi, tenureMonths) : 0;
+            document.getElementById('eligFOIRLoan').textContent = foirLoan > 0 ? fmtInd(foirLoan) : '-';
+
+            // LTV-based loan
+            const valuation = v('eligValuation');
+            const maxLTV = v('eligMaxLTV');
+            const ltvLoan = valuation > 0 && maxLTV > 0 ? Math.round(valuation * maxLTV / 100) : 0;
+            document.getElementById('eligLTVLoan').textContent = ltvLoan > 0 ? fmtInd(ltvLoan) : '-';
+
+            // Loan Amount Possible = min of FOIR-based and LTV-based (only consider positive values)
+            let loanPossible = 0;
+            if (foirLoan > 0 && ltvLoan > 0) {
+                loanPossible = Math.min(foirLoan, ltvLoan);
+            } else if (foirLoan > 0) {
+                loanPossible = foirLoan;
+            } else if (ltvLoan > 0) {
+                loanPossible = ltvLoan;
+            }
+            document.getElementById('eligLoanPossible').textContent = loanPossible > 0 ? fmtInd(loanPossible) : '-';
+
+            // Auto-save
+            autoSaveEligibility();
+        }
+
+        // Save eligibility data to server
+        async function saveEligibilityData() {
+            const data = {};
+            document.querySelectorAll('.elig-input').forEach(input => {
+                const field = input.dataset.field;
+                if (field) {
+                    data[field] = input.value !== '' ? parseFloat(input.value) : null;
+                }
+            });
+
+            // Save excluded loans
+            const excludedLoans = [];
+            document.querySelectorAll('.elig-loan-check').forEach(cb => {
+                if (!cb.checked) excludedLoans.push(cb.dataset.idx);
+            });
+            data.excludedLoans = excludedLoans;
+            data.updatedAt = new Date().toISOString();
+
+            try {
+                await fetch(`/stage3/${proposalId}/save-eligibility`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+            } catch (err) {
+                console.error('Failed to save eligibility data:', err);
+            }
+        }
+
+        // Reset auto-fillable fields to extracted values
+        function resetEligibilityToExtracted() {
+            const setVal = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) el.value = val;
+            };
+            setVal('eligNetProfitPrev', eligExtractedData.netProfitPrev);
+            setVal('eligNetProfitLatest', eligExtractedData.netProfitLatest);
+            setVal('eligDepPrev', eligExtractedData.depPrev);
+            setVal('eligDepLatest', eligExtractedData.depLatest);
+            setVal('eligIntLoanPrev', eligExtractedData.intLoanPrev);
+            setVal('eligIntLoanLatest', eligExtractedData.intLoanLatest);
+            setVal('eligRentalPrev', eligExtractedData.rentalPrev);
+            setVal('eligRentalLatest', eligExtractedData.rentalLatest);
+            setVal('eligMaxLTV', eligExtractedData.maxLTV);
+            recalculateEligibility();
+        }
+
+        // ========== BANKING ELIGIBILITY CALCULATOR ==========
+
+        // Server-side banking data for client-side recalculation
+        const bankAccountsData = <%- JSON.stringify(accountsList.map(ac => ({
+            accountNo: ac.accountNo,
+            accountName: ac.accountName,
+            accountType: ac.accountType,
+            monthlyAvgBalances: ac.monthlyAvgBalances,
+            sortedMonths: ac.sortedMonths
+        }))) %>;
+        const bankBulkCreditsData = <%- JSON.stringify(bankBulkCredits.map(bc => ({
+            amount: bc.amount,
+            monthKey: bc.monthKey
+        }))) %>;
+        const bankSortedMonthsData = <%- JSON.stringify(bankSortedMonths) %>;
+
+        // Debounced auto-save for banking
+        let bankEligSaveTimer = null;
+        function autoSaveBankingEligibility() {
+            if (bankEligSaveTimer) clearTimeout(bankEligSaveTimer);
+            bankEligSaveTimer = setTimeout(saveBankingEligibilityData, 1500);
+        }
+
+        function recalculateBankingEligibility() {
+            // Determine which accounts are included
+            const includedAccountIdxs = new Set();
+            document.querySelectorAll('.bank-elig-ac-check').forEach(cb => {
+                if (cb.checked) includedAccountIdxs.add(parseInt(cb.dataset.idx));
+            });
+
+            // Determine which bulk credits are excluded
+            const excludedBulkCredits = [];
+            document.querySelectorAll('.bank-elig-bulk-check').forEach(cb => {
+                if (cb.checked) {
+                    excludedBulkCredits.push({
+                        idx: parseInt(cb.dataset.idx),
+                        amount: parseFloat(cb.dataset.amount) || 0,
+                        monthKey: cb.dataset.month
+                    });
+                }
+            });
+
+            // Calculate combined monthly avg balance for included accounts
+            let grandTotal = 0;
+            let monthsWithData = 0;
+
+            // Calculate total excluded amount spread per month
+            const excludedPerMonth = {};
+            excludedBulkCredits.forEach(ec => {
+                if (!excludedPerMonth[ec.monthKey]) excludedPerMonth[ec.monthKey] = 0;
+                excludedPerMonth[ec.monthKey] += ec.amount;
+            });
+
+            // Total excluded bulk credit amount
+            let totalExcludedBulk = 0;
+            excludedBulkCredits.forEach(ec => { totalExcludedBulk += ec.amount; });
+
+            bankSortedMonthsData.forEach(mk => {
+                let monthTotal = 0;
+                let hasData = false;
+                bankAccountsData.forEach((ac, idx) => {
+                    if (!includedAccountIdxs.has(idx)) return;
+                    const bal = ac.monthlyAvgBalances[mk];
+                    if (bal !== undefined && bal !== null) {
+                        monthTotal += bal;
+                        hasData = true;
+                    }
+                });
+                if (hasData && monthTotal > 0) {
+                    grandTotal += monthTotal;
+                    monthsWithData++;
+                }
+            });
+
+            const avgBalance = monthsWithData > 0 ? grandTotal / monthsWithData : 0;
+
+            // Bulk credit monthly impact: spread excluded credits across months they occurred
+            // The balance impact = total excluded amount / number of months of data
+            const bulkMonthlyImpact = monthsWithData > 0 ? totalExcludedBulk / monthsWithData : 0;
+            const adjustedAvg = Math.max(0, avgBalance - bulkMonthlyImpact);
+
+            // Update display
+            const avgBalEl = document.getElementById('bankEligAvgBalance');
+            if (avgBalEl) avgBalEl.textContent = avgBalance > 0 ? fmtInd(avgBalance) : '-';
+
+            const bulkExEl = document.getElementById('bankEligBulkExclusion');
+            if (bulkExEl) bulkExEl.textContent = bulkMonthlyImpact > 0 ? fmtInd(bulkMonthlyImpact) : '0';
+
+            const adjAvgEl = document.getElementById('bankEligAdjustedAvg');
+            if (adjAvgEl) adjAvgEl.textContent = adjustedAvg > 0 ? fmtInd(adjustedAvg) : '-';
+
+            // Multiplier-based loan amount: Adjusted Monthly Avg x 12 x Multiplier
+            const multiplier = parseFloat(document.getElementById('bankEligMultiplier')?.value) || 0;
+            const multiplierLoan = adjustedAvg > 0 && multiplier > 0 ? Math.round(adjustedAvg * 12 * multiplier) : 0;
+            const multResultEl = document.getElementById('bankEligMultiplierResult');
+            if (multResultEl) multResultEl.textContent = multiplierLoan > 0 ? fmtInd(multiplierLoan) : '-';
+
+            // Read obligations from Normal Income tab
+            let totalObligations = 0;
+            document.querySelectorAll('.elig-loan-check').forEach(cb => {
+                if (cb.checked) totalObligations += parseFloat(cb.dataset.emi) || 0;
+            });
+            const bankObEl = document.getElementById('bankEligObligations');
+            if (bankObEl) bankObEl.textContent = fmtInd(totalObligations);
+
+            // Proposed EMI for banking
+            const bankROI = parseFloat(document.getElementById('bankEligROI')?.value) || 0;
+            const bankProposedEMI = calcEligEMI(eligExtractedData.loanAmount, bankROI, eligExtractedData.loanTenure * 12);
+            const bankEmiEl = document.getElementById('bankEligProposedEMI');
+            if (bankEmiEl) bankEmiEl.textContent = bankProposedEMI ? fmtInd(bankProposedEMI) : '-';
+
+            // LTV-based loan
+            const bankVal = parseFloat(document.getElementById('bankEligValuation')?.value) || 0;
+            const bankLTV = parseFloat(document.getElementById('bankEligMaxLTV')?.value) || 0;
+            const bankLTVLoan = bankVal > 0 && bankLTV > 0 ? Math.round(bankVal * bankLTV / 100) : 0;
+            const bankLTVEl = document.getElementById('bankEligLTVLoan');
+            if (bankLTVEl) bankLTVEl.textContent = bankLTVLoan > 0 ? fmtInd(bankLTVLoan) : '-';
+
+            // Loan possible = min of multiplier-based and LTV-based
+            let bankLoanPossible = 0;
+            if (multiplierLoan > 0 && bankLTVLoan > 0) {
+                bankLoanPossible = Math.min(multiplierLoan, bankLTVLoan);
+            } else if (multiplierLoan > 0) {
+                bankLoanPossible = multiplierLoan;
+            } else if (bankLTVLoan > 0) {
+                bankLoanPossible = bankLTVLoan;
+            }
+            const bankPossibleEl = document.getElementById('bankEligLoanPossible');
+            if (bankPossibleEl) bankPossibleEl.textContent = bankLoanPossible > 0 ? fmtInd(bankLoanPossible) : '-';
+
+            autoSaveBankingEligibility();
+        }
+
+        // Save banking eligibility data
+        async function saveBankingEligibilityData() {
+            const data = {};
+            document.querySelectorAll('.bank-elig-input').forEach(input => {
+                const field = input.dataset.field;
+                if (field) data[field] = input.value !== '' ? parseFloat(input.value) : null;
+            });
+
+            // Save excluded accounts
+            const excludedAccounts = [];
+            document.querySelectorAll('.bank-elig-ac-check').forEach(cb => {
+                if (!cb.checked) excludedAccounts.push(cb.dataset.idx);
+            });
+            data.excludedAccounts = excludedAccounts;
+
+            // Save excluded bulk credits
+            const excludedBulkCredits = [];
+            document.querySelectorAll('.bank-elig-bulk-check').forEach(cb => {
+                if (cb.checked) excludedBulkCredits.push(cb.dataset.idx);
+            });
+            data.excludedBulkCredits = excludedBulkCredits;
+            data.updatedAt = new Date().toISOString();
+
+            try {
+                await fetch(`/stage3/${proposalId}/save-banking-eligibility`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+            } catch (err) {
+                console.error('Failed to save banking eligibility data:', err);
+            }
+        }
+
+        // Reset banking eligibility to defaults
+        function resetBankingEligibility() {
+            // Re-check all non-OD accounts, uncheck OD accounts
+            document.querySelectorAll('.bank-elig-ac-check').forEach(cb => {
+                const idx = parseInt(cb.dataset.idx);
+                const ac = bankAccountsData[idx];
+                cb.checked = ac && ac.accountType !== 'OD/CC';
+            });
+            // Uncheck all bulk credit exclusions
+            document.querySelectorAll('.bank-elig-bulk-check').forEach(cb => {
+                cb.checked = false;
+            });
+            // Reset multiplier to default
+            const multEl = document.getElementById('bankEligMultiplier');
+            if (multEl) multEl.value = 4;
+            // Reset LTV to default
+            const ltvEl = document.getElementById('bankEligMaxLTV');
+            if (ltvEl) ltvEl.value = eligExtractedData.maxLTV;
+            recalculateBankingEligibility();
+        }
+
+        // ========== GST ELIGIBILITY CALCULATOR ==========
+
+        const gstMargins = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
+
+        // Debounced auto-save for GST
+        let gstEligSaveTimer = null;
+        function autoSaveGstEligibility() {
+            if (gstEligSaveTimer) clearTimeout(gstEligSaveTimer);
+            gstEligSaveTimer = setTimeout(saveGstEligibilityData, 1500);
+        }
+
+        function recalculateGstEligibility() {
+            const turnover = parseFloat(document.getElementById('gstEligTurnover')?.value) || 0;
+            const foirPct = parseFloat(document.getElementById('gstEligFOIR')?.value) || 70;
+            const obligation = parseFloat(document.getElementById('gstEligObligation')?.value) || 0;
+            const roi = parseFloat(document.getElementById('gstEligROI')?.value) || 0;
+            const tenureMonths = eligExtractedData.loanTenure * 12;
+
+            // EMI factor: for Rs.1 lakh loan, what's the EMI? Then loan = available / (emi per lakh) * 100000
+            // Or simpler: loan = available income / EMI-per-rupee
+            // EMI per rupee = r*(1+r)^n / ((1+r)^n - 1) where r = monthly rate
+            let emiFactor = 0;
+            if (roi > 0 && tenureMonths > 0) {
+                const r = roi / 12 / 100;
+                if (r === 0) {
+                    emiFactor = 1 / tenureMonths;
+                } else {
+                    emiFactor = r * Math.pow(1 + r, tenureMonths) / (Math.pow(1 + r, tenureMonths) - 1);
+                }
+            }
+
+            const turnoverCells = document.querySelectorAll('.gst-turnover-cell');
+            const marginCells = document.querySelectorAll('.gst-margin-cell');
+            const grossIncomeCells = document.querySelectorAll('.gst-grossincome-cell');
+            const monthlyIncomeCells = document.querySelectorAll('.gst-monthlyincome-cell');
+            const obligationCells = document.querySelectorAll('.gst-obligation-cell');
+            const availableCells = document.querySelectorAll('.gst-available-cell');
+            const loanCells = document.querySelectorAll('.gst-loanpossible-cell');
+
+            gstMargins.forEach((margin, i) => {
+                // Annual Turnover (same across all columns)
+                turnoverCells[i].textContent = turnover > 0 ? fmtInd(turnover) : '-';
+
+                // Gross Margin = Turnover * Margin%
+                const grossMargin = turnover * margin / 100;
+                marginCells[i].textContent = grossMargin > 0 ? fmtInd(grossMargin) : '-';
+
+                // Gross Income Per Annum = Gross Margin * FOIR%
+                const grossIncome = grossMargin * foirPct / 100;
+                grossIncomeCells[i].textContent = grossIncome > 0 ? fmtInd(grossIncome) : '-';
+
+                // Income Per Month = Gross Income / 12
+                const monthlyIncome = grossIncome / 12;
+                monthlyIncomeCells[i].textContent = monthlyIncome > 0 ? fmtInd(monthlyIncome) : '-';
+
+                // Monthly Obligation (same across all columns)
+                obligationCells[i].textContent = obligation > 0 ? fmtInd(obligation) : '0';
+
+                // Available Income = Monthly Income - Obligation
+                const available = monthlyIncome - obligation;
+                availableCells[i].textContent = fmtInd(Math.max(0, available));
+                availableCells[i].style.color = available < 0 ? '#e74c3c' : '';
+
+                // Loan Possible = Available Income / EMI factor
+                let loanPossible = 0;
+                if (available > 0 && emiFactor > 0) {
+                    loanPossible = Math.round(available / emiFactor);
+                }
+                loanCells[i].textContent = loanPossible > 0 ? fmtInd(loanPossible) : '-';
+            });
+
+            // LTV calculation
+            const gstVal = parseFloat(document.getElementById('gstEligValuation')?.value) || 0;
+            const gstLTV = parseFloat(document.getElementById('gstEligMaxLTV')?.value) || 0;
+            const gstLTVLoan = gstVal > 0 && gstLTV > 0 ? Math.round(gstVal * gstLTV / 100) : 0;
+            const gstLTVEl = document.getElementById('gstEligLTVLoan');
+            if (gstLTVEl) gstLTVEl.textContent = gstLTVLoan > 0 ? fmtInd(gstLTVLoan) : '-';
+
+            autoSaveGstEligibility();
+        }
+
+        // Save GST eligibility data
+        async function saveGstEligibilityData() {
+            const data = {};
+            document.querySelectorAll('.gst-elig-input').forEach(input => {
+                const field = input.dataset.field;
+                if (field) {
+                    if (input.tagName === 'SELECT') {
+                        data[field] = parseInt(input.value) || null;
+                    } else {
+                        data[field] = input.value !== '' ? parseFloat(input.value) : null;
+                    }
+                }
+            });
+            data.updatedAt = new Date().toISOString();
+
+            try {
+                await fetch(`/stage3/${proposalId}/save-gst-eligibility`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+            } catch (err) {
+                console.error('Failed to save GST eligibility data:', err);
+            }
+        }
+
+        // Run initial calculation on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            recalculateEligibility();
+            recalculateBankingEligibility();
+            recalculateGstEligibility();
         });
     </script>
 </body>
