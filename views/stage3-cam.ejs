@@ -682,6 +682,8 @@
                                                                 if (/^\d{1,2}$/.test(numStr.trim()) && parseInt(numStr) <= 50) continue;
                                                                 // Skip enumeration markers like "(1)", "(2)", "(3)"
                                                                 if (/^\(\d{1,2}\)$/.test(numStr.trim())) continue;
+                                                                // Skip year-like numbers (2015-2030) that appear as AY/FY in garbled ITR text
+                                                                if (/^20[12]\d$/.test(numStr.trim())) continue;
                                                                 // Skip section references like "U/S 288A" OCR'd as "U/S 2884"
                                                                 const numIdx = afterText.indexOf(numStr);
                                                                 if (numIdx >= 2) {
@@ -1007,6 +1009,7 @@
                                                         if (np !== null) fyData[fyNorm].netProfit = np;
 
                                                         // Extract previous year data from second column
+                                                        // P&L is the most authoritative source, so OVERRIDE values from ITR acks
                                                         const prevYearMatch = text.match(/31-03-(\d{4})\s+31-03-(\d{4})/);
                                                         if (prevYearMatch) {
                                                             const prevYear = parseInt(prevYearMatch[2]);
@@ -1016,13 +1019,16 @@
                                                             }
 
                                                             const pr = extractPrevYearVal(text, ['Revenue\\s+from\\s+Operations'], adjMin(10000));
-                                                            if (pr && !fyData[prevFYNorm].turnover) fyData[prevFYNorm].turnover = pr;
+                                                            if (pr && pr > 0) fyData[prevFYNorm].turnover = pr;
 
                                                             const pd = extractPrevYearVal(text, ['Depreciation\\s+and\\s+amortization', 'Depreciation\\s+(?:debited|expense)'], adjMin(1000));
-                                                            if (pd && pd > 0 && !fyData[prevFYNorm].depreciation) fyData[prevFYNorm].depreciation = pd;
+                                                            if (pd && pd > 0) fyData[prevFYNorm].depreciation = pd;
+
+                                                            const pfc = extractPrevYearVal(text, ['Finance\\s+Cost', 'Finance\\s+costs?'], adjMin(100));
+                                                            if (pfc && pfc > 0 && !fyData[prevFYNorm].interestOnLoans) fyData[prevFYNorm].interestOnLoans = pfc;
 
                                                             const pnp = extractPrevYearVal(text, ['Profit\\s+before\\s+tax'], adjMin(100));
-                                                            if (pnp !== null && !fyData[prevFYNorm].netProfit) fyData[prevFYNorm].netProfit = pnp;
+                                                            if (pnp !== null && pnp > 0) fyData[prevFYNorm].netProfit = pnp;
                                                         }
                                                     }
                                                 }
@@ -1079,6 +1085,19 @@
                                                                 const dd = parseCurrencyVal(depBlock[1]);
                                                                 if (dd && dd >= 1000) fyData[fyNorm].depreciation = dd;
                                                             }
+                                                        }
+                                                    }
+                                                }
+                                                if (!fyData[fyNorm].depreciation) {
+                                                    // Try "Depreciation as per IT Act" total from Schedule 3
+                                                    // ITR depreciation schedules list per-block amounts then a Total row
+                                                    const depScheduleMatch = text.match(/Depreciation\s+as\s+per\s+(?:Income\s+Tax|IT)\s+Act[\s\S]*?Total[\s\S]{0,200}?Depreciation\s*\n([\s\S]{0,500}?)(?:Asst|WDV\s+as\s+on)/i);
+                                                    if (depScheduleMatch) {
+                                                        // Get the last number in the depreciation column (the Total)
+                                                        const depNums = depScheduleMatch[1].match(/[\d,]+(?:\.\d+)?/g);
+                                                        if (depNums && depNums.length > 0) {
+                                                            const lastDepVal = parseCurrencyVal(depNums[depNums.length - 1]);
+                                                            if (lastDepVal && lastDepVal >= adjMin(1000)) fyData[fyNorm].depreciation = lastDepVal;
                                                         }
                                                     }
                                                 }
@@ -1171,11 +1190,14 @@
                                                     }
                                                 }
                                                 if (!fyData[fyNorm].netProfit) {
-                                                    // "Net Profit Before Tax as per P&L a/c"
-                                                    const npPL = text.match(/Net\s+Profit\s+Before\s+Tax\s+as\s+per\s+P\s*&?\s*L\s*[aA]?\/?\.?[cC]?\s*\n?\s*([\d,.]+)/i);
+                                                    // "Net Profit Before Tax as per P&L a/c" or "P & Lalc" (OCR garbled)
+                                                    const npPL = text.match(/Net\s+Profit\s+Before\s+Tax\s+as\s+per\s+P\s*&?\s*L\s*[aA]?\/?\.?[cC]?[^\n]*\n\s*([\d,.]+)/i);
                                                     if (npPL) {
                                                         const npVal = parseCurrencyVal(npPL[1]);
-                                                        if (npVal !== null && Math.abs(npVal) >= 100) fyData[fyNorm].netProfit = npVal;
+                                                        // Skip year-like numbers (2015-2030) captured from garbled AY text
+                                                        if (npVal !== null && Math.abs(npVal) >= 100 && !/^20[12]\d$/.test(String(Math.abs(npVal)))) {
+                                                            fyData[fyNorm].netProfit = npVal;
+                                                        }
                                                     }
                                                 }
 
