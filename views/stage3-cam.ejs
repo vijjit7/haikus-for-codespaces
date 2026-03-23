@@ -3820,8 +3820,15 @@
                         if (gstinMatch) {
                             gstin = gstinMatch[1];
                         } else {
-                            const filenameMatch = doc.originalName.match(/GSTR3B_([A-Z0-9]{15})_/);
-                            if (filenameMatch) gstin = filenameMatch[1];
+                            // Try generic GSTIN pattern in text (e.g., "GSTIN  27AAACR5055K1ZK" or "GSTIN: 27...")
+                            const genericGstinMatch = text.match(/GSTIN[\s:]+([A-Z0-9]{15})/);
+                            if (genericGstinMatch) {
+                                gstin = genericGstinMatch[1];
+                            } else {
+                                // Fallback to filename
+                                const filenameMatch = (doc.originalName || '').match(/GSTR3B_([A-Z0-9]{15})_/);
+                                if (filenameMatch) gstin = filenameMatch[1];
+                            }
                         }
 
                         // Extract Trade Name and Legal Name
@@ -3839,6 +3846,71 @@
                         const yearMatch = text.match(/Year\s+(\d{4}-\d{2})/);
                         if (periodMatch) period = periodMatch[1];
                         if (yearMatch) year = yearMatch[1];
+
+                        // Fallback: extract period/year from filename when text extraction fails
+                        if (!period || !year) {
+                            const filename = doc.originalName || '';
+                            const _monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+                            const _monthAbbrevs = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+                            // Pattern 1: MMYYYY in filename preceded by _ or space (e.g., GSTR3B_GSTIN_012025.pdf or GSTR3B_042024.pdf)
+                            const mmyyyyMatch = filename.match(/[_\s](\d{2})(20\d{2})(?:\b|\.)/);
+                            if (mmyyyyMatch) {
+                                const mm = parseInt(mmyyyyMatch[1]);
+                                const yyyy = parseInt(mmyyyyMatch[2]);
+                                if (mm >= 1 && mm <= 12) {
+                                    if (!period) period = _monthNames[mm - 1];
+                                    if (!year) {
+                                        if (mm >= 4) year = yyyy + '-' + String(yyyy + 1).slice(-2);
+                                        else year = (yyyy - 1) + '-' + String(yyyy).slice(-2);
+                                    }
+                                }
+                            }
+
+                            // Pattern 2: Month name/abbreviation + FY (e.g., "April 2024-25", "APR 2025-26", "November 2023-24")
+                            if (!period || !year) {
+                                const _allMonths = _monthNames.join('|') + '|' + _monthAbbrevs.join('|');
+                                const nameFyMatch = filename.match(new RegExp('(' + _allMonths + ')\\s*(\\d{4}-\\d{2})', 'i'));
+                                if (nameFyMatch) {
+                                    if (!period) {
+                                        const abbIdx = _monthAbbrevs.findIndex(a => a.toLowerCase() === nameFyMatch[1].toLowerCase());
+                                        period = abbIdx >= 0 ? _monthNames[abbIdx] : nameFyMatch[1].charAt(0).toUpperCase() + nameFyMatch[1].slice(1).toLowerCase();
+                                    }
+                                    if (!year) year = nameFyMatch[2];
+                                }
+                            }
+
+                            // Pattern 2b: Month name/abbreviation + 2-digit FY (e.g., "APRIL 24-25", "JAN 24-25")
+                            if (!period || !year) {
+                                const _allMonths2 = _monthNames.join('|') + '|' + _monthAbbrevs.join('|');
+                                const nameShortFyMatch = filename.match(new RegExp('(' + _allMonths2 + ')\\s*(\\d{2})-(\\d{2})(?!\\d)', 'i'));
+                                if (nameShortFyMatch) {
+                                    if (!period) {
+                                        const abbIdx = _monthAbbrevs.findIndex(a => a.toLowerCase() === nameShortFyMatch[1].toLowerCase());
+                                        period = abbIdx >= 0 ? _monthNames[abbIdx] : nameShortFyMatch[1].charAt(0).toUpperCase() + nameShortFyMatch[1].slice(1).toLowerCase();
+                                    }
+                                    if (!year) year = '20' + nameShortFyMatch[2] + '-' + nameShortFyMatch[3];
+                                }
+                            }
+
+                            // Pattern 3: Month name + YYYY (e.g., "April 2024")
+                            if (!period || !year) {
+                                const _allMonths = _monthNames.join('|') + '|' + _monthAbbrevs.join('|');
+                                const nameYrMatch = filename.match(new RegExp('(' + _allMonths + ')\\s*(\\d{4})(?!\\d)', 'i'));
+                                if (nameYrMatch) {
+                                    if (!period) {
+                                        const abbIdx = _monthAbbrevs.findIndex(a => a.toLowerCase() === nameYrMatch[1].toLowerCase());
+                                        period = abbIdx >= 0 ? _monthNames[abbIdx] : nameYrMatch[1].charAt(0).toUpperCase() + nameYrMatch[1].slice(1).toLowerCase();
+                                    }
+                                    if (!year) {
+                                        const yyyy = parseInt(nameYrMatch[2]);
+                                        const mm = _monthNames.indexOf(period) + 1;
+                                        if (mm >= 4) year = yyyy + '-' + String(yyyy + 1).slice(-2);
+                                        else if (mm >= 1) year = (yyyy - 1) + '-' + String(yyyy).slice(-2);
+                                    }
+                                }
+                            }
+                        }
 
                         // Extract Outward Supplies data from Section 3.1
                         // Pattern: (a) Outward taxable supplies ... followed by numbers
@@ -3906,9 +3978,10 @@
                         }
 
                         // Check if this period+year already exists for this GSTIN (avoid duplicates)
-                        const existingMonthIndex = gstDataByGstin[gstin].months.findIndex(
+                        // Only deduplicate when both period and year are non-empty
+                        const existingMonthIndex = (period && year) ? gstDataByGstin[gstin].months.findIndex(
                             m => m.period === period && m.year === year
-                        );
+                        ) : -1;
 
                         const monthData = {
                             period: period,

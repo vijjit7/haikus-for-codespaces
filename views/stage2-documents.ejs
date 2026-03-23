@@ -2789,10 +2789,16 @@
                                 if (gstinMatch) {
                                     gstin = gstinMatch[1];
                                 } else {
-                                    // Try to extract from filename (GSTR1_GSTIN_MMYYYY.pdf or GSTR3B_GSTIN_MMYYYY.pdf)
-                                    const fileGstinMatch = fileName.match(/GSTR[13]B?_([A-Z0-9]{15})_/);
-                                    if (fileGstinMatch) {
-                                        gstin = fileGstinMatch[1];
+                                    // Try generic GSTIN pattern in text
+                                    const genericGstinMatch = extractedText.match(/GSTIN[\s:]+([A-Z0-9]{15})/);
+                                    if (genericGstinMatch) {
+                                        gstin = genericGstinMatch[1];
+                                    } else {
+                                        // Try to extract from filename (GSTR1_GSTIN_MMYYYY.pdf or GSTR3B_GSTIN_MMYYYY.pdf)
+                                        const fileGstinMatch = fileName.match(/GSTR[13]B?_([A-Z0-9]{15})_/);
+                                        if (fileGstinMatch) {
+                                            gstin = fileGstinMatch[1];
+                                        }
                                     }
                                 }
 
@@ -2879,6 +2885,65 @@
                                     }
                                 }
 
+                                // Fallback: extract month/year from filename when text extraction fails
+                                if (!monthName || !fy) {
+                                    const origName = doc.originalName || doc.filename || '';
+                                    const _mNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+                                    const _mAbbrevs = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+
+                                    // Filename pattern 1: _MMYYYY (e.g., GSTR3B_GSTIN_012025.pdf)
+                                    const fnMmyyyy = origName.match(/[_\s](\d{2})(20\d{2})(?:\b|\.)/);
+                                    if (fnMmyyyy) {
+                                        const mm = parseInt(fnMmyyyy[1]), yyyy = parseInt(fnMmyyyy[2]);
+                                        if (mm >= 1 && mm <= 12) {
+                                            if (!monthName) monthName = _mNames[mm - 1];
+                                            if (!fy) fy = getFinancialYear(mm - 1, yyyy);
+                                        }
+                                    }
+
+                                    // Filename pattern 2: Month name + YYYY-YY FY (e.g., "April 2024-25")
+                                    if (!monthName || !fy) {
+                                        const allM = _mNames.join('|') + '|' + _mAbbrevs.join('|');
+                                        const fnNameFy = origName.match(new RegExp('(' + allM + ')\\s*(\\d{4}-\\d{2})', 'i'));
+                                        if (fnNameFy) {
+                                            if (!monthName) {
+                                                const ai = _mAbbrevs.findIndex(a => a.toLowerCase() === fnNameFy[1].toLowerCase());
+                                                monthName = ai >= 0 ? _mNames[ai] : fnNameFy[1].charAt(0).toUpperCase() + fnNameFy[1].slice(1).toLowerCase();
+                                            }
+                                            if (!fy) fy = fnNameFy[2];
+                                        }
+                                    }
+
+                                    // Filename pattern 2b: Month name + YY-YY (e.g., "APRIL 24-25")
+                                    if (!monthName || !fy) {
+                                        const allM = _mNames.join('|') + '|' + _mAbbrevs.join('|');
+                                        const fnShortFy = origName.match(new RegExp('(' + allM + ')\\s*(\\d{2})-(\\d{2})(?!\\d)', 'i'));
+                                        if (fnShortFy) {
+                                            if (!monthName) {
+                                                const ai = _mAbbrevs.findIndex(a => a.toLowerCase() === fnShortFy[1].toLowerCase());
+                                                monthName = ai >= 0 ? _mNames[ai] : fnShortFy[1].charAt(0).toUpperCase() + fnShortFy[1].slice(1).toLowerCase();
+                                            }
+                                            if (!fy) fy = '20' + fnShortFy[2] + '-' + fnShortFy[3];
+                                        }
+                                    }
+
+                                    // Filename pattern 3: Month name + YYYY (e.g., "April 2024")
+                                    if (!monthName || !fy) {
+                                        const allM = _mNames.join('|') + '|' + _mAbbrevs.join('|');
+                                        const fnNameYr = origName.match(new RegExp('(' + allM + ')\\s*(\\d{4})(?!\\d)', 'i'));
+                                        if (fnNameYr) {
+                                            if (!monthName) {
+                                                const ai = _mAbbrevs.findIndex(a => a.toLowerCase() === fnNameYr[1].toLowerCase());
+                                                monthName = ai >= 0 ? _mNames[ai] : fnNameYr[1].charAt(0).toUpperCase() + fnNameYr[1].slice(1).toLowerCase();
+                                            }
+                                            if (!fy) {
+                                                const yyyy = parseInt(fnNameYr[2]);
+                                                const mi = _mNames.indexOf(monthName);
+                                                if (mi !== -1) fy = getFinancialYear(mi, yyyy);
+                                            }
+                                        }
+                                    }
+                                }
 
                                 if (monthName && fy) {
                                     const monthKey = `${monthName}-${fy}`;
@@ -2893,33 +2958,71 @@
                                 }
                             });
 
+                            // Helper: extract FY year and month from doc (text then filename fallback)
+                            function getDocSortKey(doc) {
+                                const text = doc.extractedText || '';
+                                const origName = doc.originalName || doc.filename || '';
+                                const _mN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+                                const _mA = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+                                const monthOrderFY = {
+                                    'april': 0, 'may': 1, 'june': 2, 'july': 3, 'august': 4, 'september': 5,
+                                    'october': 6, 'november': 7, 'december': 8, 'january': 9, 'february': 10, 'march': 11
+                                };
+
+                                let fyYear = 9999, monthIdx = 99;
+
+                                // Try text extraction first
+                                const fyM = text.match(/Year[\s\n]+(\d{4})-(\d{2})/i);
+                                const pM = text.match(/Period[\s\n]+(January|February|March|April|May|June|July|August|September|October|November|December)/i);
+                                if (fyM) fyYear = parseInt(fyM[1]);
+                                if (pM) monthIdx = monthOrderFY[pM[1].toLowerCase()] ?? 99;
+
+                                // Filename fallback for FY year
+                                if (fyYear === 9999) {
+                                    const fnFy = origName.match(/(\d{4})-\d{2}/);
+                                    if (fnFy) fyYear = parseInt(fnFy[1]);
+                                    else {
+                                        // Try YY-YY format
+                                        const allM = _mN.join('|') + '|' + _mA.join('|');
+                                        const fnShort = origName.match(new RegExp('(?:' + allM + ')\\s*(\\d{2})-(\\d{2})(?!\\d)', 'i'));
+                                        if (fnShort) fyYear = 2000 + parseInt(fnShort[1]);
+                                    }
+                                }
+
+                                // Filename fallback for month
+                                if (monthIdx === 99) {
+                                    // Try month name in filename
+                                    const allM = _mN.join('|') + '|' + _mA.join('|');
+                                    const fnMonth = origName.match(new RegExp('(' + allM + ')', 'i'));
+                                    if (fnMonth) {
+                                        let mName = fnMonth[1];
+                                        const ai = _mA.findIndex(a => a.toLowerCase() === mName.toLowerCase());
+                                        if (ai >= 0) mName = _mN[ai];
+                                        else mName = mName.charAt(0).toUpperCase() + mName.slice(1).toLowerCase();
+                                        monthIdx = monthOrderFY[mName.toLowerCase()] ?? 99;
+                                    }
+                                    // Try MMYYYY in filename
+                                    if (monthIdx === 99) {
+                                        const fnMm = origName.match(/[_\s](\d{2})(20\d{2})(?:\b|\.)/);
+                                        if (fnMm) {
+                                            const mm = parseInt(fnMm[1]);
+                                            if (mm >= 1 && mm <= 12) {
+                                                monthIdx = monthOrderFY[_mN[mm - 1].toLowerCase()] ?? 99;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                return { fyYear, monthIdx };
+                            }
+
                             // Sort GST returns by financial year and month (chronological order)
                             Object.keys(gstReturnsByGstin).forEach(gstin => {
                                 gstReturnsByGstin[gstin].sort((a, b) => {
-                                    const textA = a.extractedText || '';
-                                    const textB = b.extractedText || '';
-
-                                    // Extract year and month from text
-                                    const fyMatchA = textA.match(/Year[\s\n]+(\d{4})-(\d{2})/i);
-                                    const fyMatchB = textB.match(/Year[\s\n]+(\d{4})-(\d{2})/i);
-                                    const periodMatchA = textA.match(/Period[\s\n]+(January|February|March|April|May|June|July|August|September|October|November|December)/i);
-                                    const periodMatchB = textB.match(/Period[\s\n]+(January|February|March|April|May|June|July|August|September|October|November|December)/i);
-
-                                    // Get FY start year (e.g., 2024 from 2024-25)
-                                    const yearA = fyMatchA ? parseInt(fyMatchA[1]) : 9999;
-                                    const yearB = fyMatchB ? parseInt(fyMatchB[1]) : 9999;
-
-                                    // Get month index (0-11, with April=0 for FY order)
-                                    const monthOrderFY = {
-                                        'april': 0, 'may': 1, 'june': 2, 'july': 3, 'august': 4, 'september': 5,
-                                        'october': 6, 'november': 7, 'december': 8, 'january': 9, 'february': 10, 'march': 11
-                                    };
-                                    const monthA = periodMatchA ? (monthOrderFY[periodMatchA[1].toLowerCase()] ?? 99) : 99;
-                                    const monthB = periodMatchB ? (monthOrderFY[periodMatchB[1].toLowerCase()] ?? 99) : 99;
-
-                                    // Sort by year first, then by month within FY
-                                    if (yearA !== yearB) return yearA - yearB;
-                                    return monthA - monthB;
+                                    const keyA = getDocSortKey(a);
+                                    const keyB = getDocSortKey(b);
+                                    if (keyA.fyYear !== keyB.fyYear) return keyA.fyYear - keyB.fyYear;
+                                    return keyA.monthIdx - keyB.monthIdx;
                                 });
                             });
 
@@ -3175,6 +3278,65 @@
                                                             }
                                                         }
 
+                                                        // Fallback: extract month/year from filename
+                                                        if (month === '-' || year === '-') {
+                                                            const origName = doc.originalName || doc.filename || '';
+                                                            const _mN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+                                                            const _mA = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+
+                                                            // _MMYYYY (e.g., _012025)
+                                                            const fn1 = origName.match(/[_\s](\d{2})(20\d{2})(?:\b|\.)/);
+                                                            if (fn1) {
+                                                                const mm = parseInt(fn1[1]), yyyy = parseInt(fn1[2]);
+                                                                if (mm >= 1 && mm <= 12) {
+                                                                    if (month === '-') month = _mN[mm - 1];
+                                                                    if (year === '-') year = getFinancialYear(mm - 1, yyyy);
+                                                                }
+                                                            }
+
+                                                            // Month name + YYYY-YY (e.g., "April 2024-25")
+                                                            if (month === '-' || year === '-') {
+                                                                const allM = _mN.join('|') + '|' + _mA.join('|');
+                                                                const fn2 = origName.match(new RegExp('(' + allM + ')\\s*(\\d{4}-\\d{2})', 'i'));
+                                                                if (fn2) {
+                                                                    if (month === '-') {
+                                                                        const ai = _mA.findIndex(a => a.toLowerCase() === fn2[1].toLowerCase());
+                                                                        month = ai >= 0 ? _mN[ai] : fn2[1].charAt(0).toUpperCase() + fn2[1].slice(1).toLowerCase();
+                                                                    }
+                                                                    if (year === '-') year = fn2[2];
+                                                                }
+                                                            }
+
+                                                            // Month name + YY-YY (e.g., "APRIL 24-25")
+                                                            if (month === '-' || year === '-') {
+                                                                const allM = _mN.join('|') + '|' + _mA.join('|');
+                                                                const fn2b = origName.match(new RegExp('(' + allM + ')\\s*(\\d{2})-(\\d{2})(?!\\d)', 'i'));
+                                                                if (fn2b) {
+                                                                    if (month === '-') {
+                                                                        const ai = _mA.findIndex(a => a.toLowerCase() === fn2b[1].toLowerCase());
+                                                                        month = ai >= 0 ? _mN[ai] : fn2b[1].charAt(0).toUpperCase() + fn2b[1].slice(1).toLowerCase();
+                                                                    }
+                                                                    if (year === '-') year = '20' + fn2b[2] + '-' + fn2b[3];
+                                                                }
+                                                            }
+
+                                                            // Month name + YYYY (e.g., "April 2024")
+                                                            if (month === '-' || year === '-') {
+                                                                const allM = _mN.join('|') + '|' + _mA.join('|');
+                                                                const fn3 = origName.match(new RegExp('(' + allM + ')\\s*(\\d{4})(?!\\d)', 'i'));
+                                                                if (fn3) {
+                                                                    if (month === '-') {
+                                                                        const ai = _mA.findIndex(a => a.toLowerCase() === fn3[1].toLowerCase());
+                                                                        month = ai >= 0 ? _mN[ai] : fn3[1].charAt(0).toUpperCase() + fn3[1].slice(1).toLowerCase();
+                                                                    }
+                                                                    if (year === '-') {
+                                                                        const yyyy = parseInt(fn3[2]);
+                                                                        const mi = _mN.indexOf(month);
+                                                                        if (mi !== -1) year = getFinancialYear(mi, yyyy);
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
 
                                                         // Format upload date
                                                         const uploadDate = doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleDateString() : '-';
