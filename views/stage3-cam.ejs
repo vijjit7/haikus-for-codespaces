@@ -1629,15 +1629,61 @@
                                         if (!memoSales2425 && proposal.turnoverData?.fy2425) memoSales2425 = proposal.turnoverData.fy2425;
                                         // Calculate GST projected turnover - same logic as analysis section
                                         const turnoverDocs = proposal.documents ? proposal.documents.filter(d => d.category === 'turnover') : [];
+                                        // Helper: extract period and year from text, with filename fallback
+                                        function extractGstPeriodYear(doc) {
+                                            const txt = doc.extractedText || '';
+                                            let period = '', year = '';
+                                            const periodMatch = txt.match(/Period\s+([A-Za-z]+)/);
+                                            const yearMatch = txt.match(/Year\s+(\d{4}-\d{2})/);
+                                            if (periodMatch) period = periodMatch[1];
+                                            if (yearMatch) year = yearMatch[1];
+                                            if (!period || !year) {
+                                                const filename = doc.originalName || '';
+                                                const _mn = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+                                                const _ma = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+                                                const mmyyyyMatch = filename.match(/[_\s](\d{2})(20\d{2})(?:\b|\.)/);
+                                                if (mmyyyyMatch) {
+                                                    const mm = parseInt(mmyyyyMatch[1]), yyyy = parseInt(mmyyyyMatch[2]);
+                                                    if (mm >= 1 && mm <= 12) {
+                                                        if (!period) period = _mn[mm - 1];
+                                                        if (!year) year = mm >= 4 ? yyyy + '-' + String(yyyy + 1).slice(-2) : (yyyy - 1) + '-' + String(yyyy).slice(-2);
+                                                    }
+                                                }
+                                                if (!period || !year) {
+                                                    const allM = _mn.join('|') + '|' + _ma.join('|');
+                                                    const nameFyMatch = filename.match(new RegExp('(' + allM + ')\\s*(\\d{4}-\\d{2})', 'i'));
+                                                    if (nameFyMatch) {
+                                                        if (!period) { const ai = _ma.findIndex(a => a.toLowerCase() === nameFyMatch[1].toLowerCase()); period = ai >= 0 ? _mn[ai] : nameFyMatch[1].charAt(0).toUpperCase() + nameFyMatch[1].slice(1).toLowerCase(); }
+                                                        if (!year) year = nameFyMatch[2];
+                                                    }
+                                                }
+                                                if (!period || !year) {
+                                                    const allM = _mn.join('|') + '|' + _ma.join('|');
+                                                    const nameShortFyMatch = filename.match(new RegExp('(' + allM + ')\\s*(\\d{2})-(\\d{2})(?!\\d)', 'i'));
+                                                    if (nameShortFyMatch) {
+                                                        if (!period) { const ai = _ma.findIndex(a => a.toLowerCase() === nameShortFyMatch[1].toLowerCase()); period = ai >= 0 ? _mn[ai] : nameShortFyMatch[1].charAt(0).toUpperCase() + nameShortFyMatch[1].slice(1).toLowerCase(); }
+                                                        if (!year) year = '20' + nameShortFyMatch[2] + '-' + nameShortFyMatch[3];
+                                                    }
+                                                }
+                                                if (!period || !year) {
+                                                    const allM = _mn.join('|') + '|' + _ma.join('|');
+                                                    const nameYrMatch = filename.match(new RegExp('(' + allM + ')\\s*(\\d{4})(?!\\d)', 'i'));
+                                                    if (nameYrMatch) {
+                                                        if (!period) { const ai = _ma.findIndex(a => a.toLowerCase() === nameYrMatch[1].toLowerCase()); period = ai >= 0 ? _mn[ai] : nameYrMatch[1].charAt(0).toUpperCase() + nameYrMatch[1].slice(1).toLowerCase(); }
+                                                        if (!year) { const yyyy = parseInt(nameYrMatch[2]), mm = _mn.indexOf(period) + 1; if (mm >= 4) year = yyyy + '-' + String(yyyy + 1).slice(-2); else if (mm >= 1) year = (yyyy - 1) + '-' + String(yyyy).slice(-2); }
+                                                    }
+                                                }
+                                            }
+                                            return { period, year };
+                                        }
                                         let memoGstTotal = 0;
                                         const memoGstMonthSet = new Set();
                                         turnoverDocs.forEach(doc => {
                                             const txt = doc.extractedText || '';
-                                            // Check if FY 2025-26
-                                            const yearMatch = txt.match(/Year\s+(\d{4}-\d{2})/);
-                                            if (yearMatch && yearMatch[1] === '2025-26') {
-                                                const periodMatch = txt.match(/Period\s+([A-Za-z]+)/);
-                                                if (periodMatch) memoGstMonthSet.add(periodMatch[1]);
+                                            // Check if FY 2025-26 (with filename fallback)
+                                            const { period: memoPeriod, year: memoYear } = extractGstPeriodYear(doc);
+                                            if (memoYear === '2025-26') {
+                                                if (memoPeriod) memoGstMonthSet.add(memoPeriod);
                                                 // Extract all outward supplies components (same as analysis)
                                                 let taxableValue = 0, zeroRatedValue = 0, exemptedValue = 0, ecommerceSupplies = 0;
                                                 const outwardMatch = txt.match(/\(a\)\s*Outward taxable supplies[^)]+\)\s*(-?[\d,.]+)/);
@@ -1686,11 +1732,10 @@
                                         const camMonthOrder = ['April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December', 'January', 'February', 'March'];
                                         turnoverDocs.forEach(doc => {
                                             const txt = doc.extractedText || '';
-                                            const yearMatch = txt.match(/Year\s+(\d{4}-\d{2})/);
-                                            if (!yearMatch || yearMatch[1] !== '2025-26') return;
-                                            const periodMatch = txt.match(/Period\s+([A-Za-z]+)/);
-                                            if (!periodMatch) return;
-                                            const period = periodMatch[1];
+                                            const { period: camPeriod, year: camYear } = extractGstPeriodYear(doc);
+                                            if (camYear !== '2025-26') return;
+                                            if (!camPeriod) return;
+                                            const period = camPeriod;
                                             let taxableValue = 0, integratedTax = 0, centralTax = 0, stateTax = 0, cess = 0;
                                             const outwardMatch = txt.match(/\(a\)\s*Outward taxable supplies[^)]+\)\s*(-?[\d,.]+)\s+(-?[\d,.]+)\s+(-?[\d,.]+)\s+(-?[\d,.]+)\s+(-?[\d,.]+)/);
                                             if (outwardMatch) {
@@ -1796,13 +1841,13 @@
                                         turnoverDocs.forEach(doc => {
                                             const txt = doc.extractedText || '';
                                             const gstinMatch = txt.match(/GSTIN of the supplier\s+([A-Z0-9]{15})/) ||
+                                                               txt.match(/GSTIN[\s:]+([A-Z0-9]{15})/) ||
                                                                doc.originalName.match(/GSTR3B_([A-Z0-9]{15})_/);
-                                            const yearMatch = txt.match(/Year\s+(\d{4}-\d{2})/);
-                                            if (gstinMatch && yearMatch && yearMatch[1] === '2025-26') {
+                                            const { period: contribPeriod, year: contribYear } = extractGstPeriodYear(doc);
+                                            if (gstinMatch && contribYear === '2025-26') {
                                                 const gstin = gstinMatch[1];
                                                 if (!gstinContribution[gstin]) gstinContribution[gstin] = { total: 0, months: new Set() };
-                                                const periodMatch = txt.match(/Period\s+([A-Za-z]+)/);
-                                                if (periodMatch) gstinContribution[gstin].months.add(periodMatch[1]);
+                                                if (contribPeriod) gstinContribution[gstin].months.add(contribPeriod);
                                                 // Extract all outward supplies (support negative values for sales returns)
                                                 const outwardMatch = txt.match(/\(a\)\s*Outward taxable supplies[^)]+\)\s*(-?[\d,.]+)/);
                                                 const zeroMatch = txt.match(/\(b\)\s*Outward taxable supplies\s*\(zero rated\)\s*(-?[\d,.]+)/i);
