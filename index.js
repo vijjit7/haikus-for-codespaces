@@ -3,8 +3,8 @@ let express = require('express');
 let app = express();
 
 // IMPORTANT: JSON body parser must be before routes
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(express.json({ limit: '200mb' }));
+app.use(express.urlencoded({ extended: true, limit: '200mb' }));
 
 const { execFile } = require('child_process');
 const mongoose = require('mongoose');
@@ -32,6 +32,7 @@ const { spawn } = require('child_process');
 const FormData = require('form-data');
 const xlsx = require('xlsx');
 const { PDFDocument } = require('pdf-lib');
+const sharp = require('sharp');
 
 // Claude Agent API Endpoint
 app.post('/api/claude', (req, res) => {
@@ -890,7 +891,7 @@ const upload = multer({
       cb(new Error('Only documents, images, zip and rar files are allowed!'));
     }
   },
-  limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
+  limits: { fileSize: 200 * 1024 * 1024 } // 200MB limit
 });
 
 // Data storage paths
@@ -3188,6 +3189,10 @@ async function autoClassifyDocument(filename, extractedText, category, proposal)
 function getDocumentTypesForCategory(category, proposal) {
   const docTypes = [];
   const applicantName = proposal.applicantName || proposal.customerName || 'Applicant';
+  // Normalize co-applicant types: default empty/missing type to 'Individual'
+  if (proposal.coApplicants) {
+    proposal.coApplicants.forEach(co => { if (!co.type) co.type = 'Individual'; });
+  }
   
   switch (category) {
     case 'personalId':
@@ -3230,6 +3235,24 @@ function getDocumentTypesForCategory(category, proposal) {
         docTypes.push(`GST Certificate of ${applicantName}`);
         docTypes.push(`Labour License of ${applicantName}`);
         docTypes.push(`UDYAM Certificate of ${applicantName}`);
+        if (proposal.applicantType === 'Partnership' || proposal.applicantType === 'LLP') {
+          docTypes.push(`Firm Registration Certificate of ${applicantName}`);
+        }
+      }
+      // Business documents for non-individual co-applicants
+      if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+        proposal.coApplicants.forEach(co => {
+          if (co.type !== 'Individual' && co.type !== 'Individual Salaried' && co.name) {
+            if (co.type !== 'Proprietorship') {
+              docTypes.push(`PAN Card of ${co.name} (Non Individual)`);
+            }
+            docTypes.push(`GST Certificate of ${co.name}`);
+            docTypes.push(`UDYAM Certificate of ${co.name}`);
+            if (co.type === 'Partnership' || co.type === 'LLP') {
+              docTypes.push(`Firm Registration Certificate of ${co.name}`);
+            }
+          }
+        });
       }
       break;
       
@@ -3241,6 +3264,22 @@ function getDocumentTypesForCategory(category, proposal) {
         docTypes.push('Certificate of Incorporation');
         docTypes.push('Memorandum of Association');
         docTypes.push('Articles of Association');
+        docTypes.push(`List of Shareholders of ${applicantName}`);
+        docTypes.push(`List of Directors of ${applicantName}`);
+      }
+      // Incorporation documents for co-applicants based on their own type
+      if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+        proposal.coApplicants.forEach((co, idx) => {
+          if (co.type === 'Partnership') {
+            docTypes.push(`Partnership deed of ${co.name || 'CoApplicant ' + (idx + 1)}`);
+          } else if (co.type === 'LLP') {
+            docTypes.push(`LLP Agreement of ${co.name || 'CoApplicant ' + (idx + 1)}`);
+          } else if (co.type === 'Private Limited' || co.type === 'Public Limited') {
+            docTypes.push(`Certificate of Incorporation of ${co.name || 'CoApplicant ' + (idx + 1)}`);
+            docTypes.push(`List of Shareholders of ${co.name || 'CoApplicant ' + (idx + 1)}`);
+            docTypes.push(`List of Directors of ${co.name || 'CoApplicant ' + (idx + 1)}`);
+          }
+        });
       }
       break;
       
@@ -3249,6 +3288,8 @@ function getDocumentTypesForCategory(category, proposal) {
         proposal.coApplicants.forEach(co => {
           if ((co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') && co.name) {
             docTypes.push(`Personal Credit Report of ${co.name}`);
+          } else if (co.name) {
+            docTypes.push(`Business Credit Report of ${co.name}`);
           }
         });
       }
@@ -3263,7 +3304,7 @@ function getDocumentTypesForCategory(category, proposal) {
       docTypes.push(`ITR of Preceding previous year of ${applicantName}`);
       if (proposal.coApplicants && proposal.coApplicants.length > 0) {
         proposal.coApplicants.forEach(co => {
-          if ((co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') && co.name) {
+          if (co.name) {
             docTypes.push(`ITR of Current Year of ${co.name}`);
             docTypes.push(`ITR of Previous Year of ${co.name}`);
             docTypes.push(`ITR of Preceding previous year of ${co.name}`);
@@ -3277,7 +3318,7 @@ function getDocumentTypesForCategory(category, proposal) {
       docTypes.push(`Overdraft Bank Statement of ${applicantName}`);
       if (proposal.coApplicants && proposal.coApplicants.length > 0) {
         proposal.coApplicants.forEach(co => {
-          if ((co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') && co.name) {
+          if (co.name) {
             docTypes.push(`Bank Statement of ${co.name}`);
           }
         });
@@ -5525,6 +5566,105 @@ function extractPrivateLimitedDetails(fullText, tables = []) {
   return details;
 }
 
+// ===== File Compression Functions =====
+const COMPRESS_THRESHOLD = 50 * 1024 * 1024; // 50MB
+
+async function compressImage(filePath, originalSize) {
+  try {
+    const ext = path.extname(filePath).toLowerCase();
+    const metadata = await sharp(filePath).metadata();
+
+    let pipeline = sharp(filePath);
+
+    // Resize if width or height > 4000px (maintain aspect ratio)
+    if (metadata.width > 4000 || metadata.height > 4000) {
+      pipeline = pipeline.resize(4000, 4000, { fit: 'inside', withoutEnlargement: true });
+    }
+
+    const tempPath = filePath + '.compressed.tmp';
+
+    if (ext === '.jpg' || ext === '.jpeg') {
+      await pipeline.jpeg({ quality: 70 }).toFile(tempPath);
+    } else if (ext === '.png') {
+      await pipeline.png({ quality: 70, compressionLevel: 9 }).toFile(tempPath);
+    } else {
+      // Unsupported image type for compression
+      return { compressed: false, originalSize, newSize: originalSize };
+    }
+
+    const newSize = fs.statSync(tempPath).size;
+    const reductionPct = ((originalSize - newSize) / originalSize) * 100;
+
+    if (reductionPct >= 10) {
+      fs.renameSync(tempPath, filePath);
+      console.log(`📦 Image compressed: ${(originalSize / 1024 / 1024).toFixed(1)}MB → ${(newSize / 1024 / 1024).toFixed(1)}MB (${reductionPct.toFixed(1)}% reduction)`);
+      return { compressed: true, originalSize, newSize };
+    } else {
+      fs.unlinkSync(tempPath);
+      console.log(`📦 Image compression skipped (only ${reductionPct.toFixed(1)}% reduction)`);
+      return { compressed: false, originalSize, newSize: originalSize };
+    }
+  } catch (err) {
+    console.error('Image compression error:', err.message);
+    // Clean up temp file if exists
+    const tempPath = filePath + '.compressed.tmp';
+    if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    return { compressed: false, originalSize, newSize: originalSize };
+  }
+}
+
+async function compressPDF(filePath, originalSize) {
+  return new Promise((resolve) => {
+    const pythonScript = path.join(__dirname, 'compress_pdf.py');
+    const pythonProcess = spawn('python', [pythonScript, filePath], { shell: true });
+    let stdout = '';
+    let stderr = '';
+
+    pythonProcess.stdout.on('data', (data) => { stdout += data.toString(); });
+    pythonProcess.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    pythonProcess.on('close', (code) => {
+      try {
+        const result = JSON.parse(stdout.trim());
+        if (result.compressed) {
+          console.log(`📦 PDF compressed: ${(result.originalSize / 1024 / 1024).toFixed(1)}MB → ${(result.newSize / 1024 / 1024).toFixed(1)}MB (${result.reductionPct}% reduction)`);
+        } else {
+          console.log(`📦 PDF compression skipped (${result.reductionPct || 0}% reduction)`);
+        }
+        resolve({ compressed: result.compressed, originalSize: result.originalSize, newSize: result.newSize });
+      } catch (e) {
+        console.error('PDF compression parse error:', e.message, 'stdout:', stdout, 'stderr:', stderr);
+        resolve({ compressed: false, originalSize, newSize: originalSize });
+      }
+    });
+
+    pythonProcess.on('error', (err) => {
+      console.error('PDF compression spawn error:', err.message);
+      resolve({ compressed: false, originalSize, newSize: originalSize });
+    });
+  });
+}
+
+async function compressFileIfNeeded(filePath, fileSize, mimetype) {
+  if (fileSize <= COMPRESS_THRESHOLD) {
+    return { compressed: false, newSize: fileSize };
+  }
+
+  const ext = path.extname(filePath).toLowerCase();
+  console.log(`📦 File exceeds 50MB (${(fileSize / 1024 / 1024).toFixed(1)}MB), attempting compression: ${path.basename(filePath)}`);
+
+  if (mimetype === 'application/pdf' || ext === '.pdf') {
+    const result = await compressPDF(filePath, fileSize);
+    return { compressed: result.compressed, newSize: result.newSize };
+  } else if (['.jpg', '.jpeg', '.png'].includes(ext)) {
+    const result = await compressImage(filePath, fileSize);
+    return { compressed: result.compressed, newSize: result.newSize };
+  } else {
+    console.log(`📦 No compression available for file type: ${ext}`);
+    return { compressed: false, newSize: fileSize };
+  }
+}
+
 // Background file processing function
 async function processFilesInBackground(files, proposalId, fileDetails) {
   console.log(`🔄 Starting background processing for ${files.length} files...`);
@@ -6186,6 +6326,14 @@ app.post('/stage2/:proposalId/upload', (req, res) => {
       }
     }
     
+    // Compress large files (>50MB) before further processing
+    for (const file of allFiles) {
+      const result = await compressFileIfNeeded(file.path, file.size, file.mimetype);
+      if (result.compressed) {
+        file.size = result.newSize;
+      }
+    }
+
     // Check for duplicate filenames
     const duplicates = [];
     const uploadedFileNames = allFiles.map(f => f.originalname);
@@ -6489,7 +6637,8 @@ app.post('/api/decrypt-pdf', async (req, res) => {
         let stderr = '';
         qpdfProcess.stderr.on('data', (data) => { stderr += data.toString(); });
         qpdfProcess.on('close', (code) => {
-          if (code === 0) {
+          if (code === 0 || (code === 3 && fs.existsSync(tempPath))) {
+            // code 0 = success, code 3 = success with warnings (e.g. minor PDF structure issues)
             fs.renameSync(tempPath, filepath);
             res.json({ success: true, message: 'PDF decrypted successfully' });
           } else {
