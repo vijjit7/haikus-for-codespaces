@@ -4786,7 +4786,94 @@
                     
                     // EMI Verification logic (same as Stage 2)
                     const emiFoundInAccountsStage3 = {};
-                    
+
+                    // Helper to format number in Indian numbering system (e.g., 175759 -> 1,75,759)
+                    const formatIndian = (num) => {
+                        const s = String(Math.abs(Math.round(num)));
+                        if (s.length <= 3) return s;
+                        let result = s.slice(-3);
+                        let remaining = s.slice(0, -3);
+                        while (remaining.length > 0) {
+                            result = remaining.slice(-2) + ',' + result;
+                            remaining = remaining.slice(0, -2);
+                        }
+                        return num < 0 ? '-' + result : result;
+                    };
+
+                    // Generate all possible search variants for an amount
+                    const getAmountVariants = (amount, tolerance = 2) => {
+                        const variants = [];
+                        const amountsToCheck = [amount];
+                        for (let t = 1; t <= tolerance; t++) {
+                            amountsToCheck.push(amount + t);
+                            amountsToCheck.push(amount - t);
+                        }
+                        amountsToCheck.forEach(amt => {
+                            const intVal = Math.round(amt);
+                            variants.push(String(intVal));
+                            variants.push(intVal + '.00');
+                            const indianFmt = formatIndian(intVal);
+                            variants.push(indianFmt);
+                            variants.push(indianFmt + '.00');
+                            const westernFmt = intVal.toLocaleString('en-US');
+                            variants.push(westernFmt);
+                            variants.push(westernFmt + '.00');
+                        });
+                        return [...new Set(variants)];
+                    };
+
+                    // Clean bank statement text for better matching
+                    const cleanBankText = (text) => {
+                        let cleaned = text.replace(/(\d)\s*[\n\r]\s*(\.\d)/g, '$1$2');
+                        cleaned = cleaned.replace(/[ \t]+/g, ' ');
+                        return cleaned;
+                    };
+
+                    // Lender alias map — maps common debt profile bank names to aliases found in bank statements
+                    const lenderAliases = {
+                        'fullerton': ['ficcl', 'ficl', 'fullerton india', 'smfg india', 'smfg'],
+                        'abfl': ['aditya birla', 'birla finance', 'birla', 'abfl', 'aditya birla finance'],
+                        'hdb': ['hdbfs', 'hdb financial', 'hdb fin'],
+                        'sundaram': ['sundaram finance', 'sundaram bnp', 'sundaram home', 'shfl'],
+                        'hiranandani': ['hfl', 'hiranandani financial', 'hiranandani fin'],
+                        'piramal': ['pchfl', 'piramal capital', 'piramal housing', 'piramal fin', 'piramal enterprise'],
+                        'orix': ['orix leasing', 'orix india', 'orix fin'],
+                        'shriram': ['shriram', 'stfc', 'shriram transport', 'shriram finance', 'shriram city', 'shr ram'],
+                        'shr ram': ['shriram', 'stfc', 'shriram transport', 'shriram finance', 'shriram city'],
+                        'axis': ['axis bank', 'axis finance', 'axis leasing'],
+                        'al': ['axis', 'axis leasing', 'axis finance', 'axis bank'],
+                        'bajaj': ['bajaj finance', 'bajaj finserv', 'bfl', 'bajaj fin'],
+                        'tata': ['tata capital', 'tata motors finance', 'tmf', 'tata fin'],
+                        'mahindra': ['mahindra finance', 'mmfsl', 'mahindra & mahindra'],
+                        'kotak': ['kotak mahindra', 'kotak bank', 'kotak prime'],
+                        'hdfc': ['hdfc bank', 'hdfc ltd', 'hdfc home', 'hdfc credila'],
+                        'icici': ['icici bank', 'icici home', 'icici prudential'],
+                        'iifl': ['iifl finance', 'iifl home', 'india infoline'],
+                        'muthoot': ['muthoot finance', 'muthoot fincorp', 'muthoot capital'],
+                        'manappuram': ['manappuram finance', 'manappuram gold'],
+                        'chola': ['cholamandalam', 'chola finance', 'cifcl', 'chola inv'],
+                        'l&t': ['l&t finance', 'l&t housing', 'ltfh', 'l&t fin'],
+                        'hero': ['hero fincorp', 'hero housing', 'hero fin'],
+                        'fedbank': ['federal bank', 'fedbank financial', 'fedfina'],
+                        'indostar': ['indostar capital', 'indostar'],
+                        'can fin': ['can fin homes', 'canfin'],
+                    };
+
+                    // Build expanded bank name search terms from debt profile bank name
+                    const getExpandedBankTerms = (bankName) => {
+                        const terms = [];
+                        const bankLower = (bankName || '').toLowerCase().trim();
+                        const parts = bankLower.split(/[\s\-\(\)\/]+/).filter(p => p.length >= 2);
+                        terms.push(...parts);
+                        if (bankLower.length >= 2) terms.push(bankLower);
+                        for (const [key, aliases] of Object.entries(lenderAliases)) {
+                            if (bankLower.includes(key) || parts.some(p => p === key)) {
+                                terms.push(...aliases);
+                            }
+                        }
+                        return [...new Set(terms)];
+                    };
+
                     // Helper function to check if EMI exists in context
                     const checkEmiInContextStage3 = (text, emiAmount, loanBankName) => {
                         const emiStr = String(emiAmount);
@@ -4896,100 +4983,6 @@
                         { month: 1, year: 2025, label: 'Feb', fullLabel: 'Feb 2025' }
                     ];
                     
-                    // Helper to format number in Indian numbering system (e.g., 175759 -> 1,75,759)
-                    const formatIndian = (num) => {
-                        const s = String(Math.abs(Math.round(num)));
-                        if (s.length <= 3) return s;
-                        let result = s.slice(-3);
-                        let remaining = s.slice(0, -3);
-                        while (remaining.length > 0) {
-                            result = remaining.slice(-2) + ',' + result;
-                            remaining = remaining.slice(0, -2);
-                        }
-                        return num < 0 ? '-' + result : result;
-                    };
-
-                    // Generate all possible search variants for an amount
-                    const getAmountVariants = (amount, tolerance = 2) => {
-                        const variants = [];
-                        const amountsToCheck = [amount];
-                        
-                        for (let t = 1; t <= tolerance; t++) {
-                            amountsToCheck.push(amount + t);
-                            amountsToCheck.push(amount - t);
-                        }
-                        
-                        amountsToCheck.forEach(amt => {
-                            const intVal = Math.round(amt);
-                            variants.push(String(intVal));
-                            variants.push(intVal + '.00');
-                            const indianFmt = formatIndian(intVal);
-                            variants.push(indianFmt);
-                            variants.push(indianFmt + '.00');
-                            const westernFmt = intVal.toLocaleString('en-US');
-                            variants.push(westernFmt);
-                            variants.push(westernFmt + '.00');
-                        });
-                        
-                        // Remove duplicates
-                        return [...new Set(variants)];
-                    };
-
-                    // Clean bank statement text for better matching
-                    const cleanBankText = (text) => {
-                        let cleaned = text.replace(/(\d)\s*[\n\r]\s*(\.\d)/g, '$1$2');
-                        cleaned = cleaned.replace(/[ \t]+/g, ' ');
-                        return cleaned;
-                    };
-
-                    // Lender alias map — maps common debt profile bank names to aliases found in bank statements
-                    const lenderAliases = {
-                        'fullerton': ['ficcl', 'ficl', 'fullerton india', 'smfg india', 'smfg'],
-                        'abfl': ['aditya birla', 'birla finance', 'birla', 'abfl', 'aditya birla finance'],
-                        'hdb': ['hdbfs', 'hdb financial', 'hdb fin'],
-                        'sundaram': ['sundaram finance', 'sundaram bnp', 'sundaram home', 'shfl'],
-                        'hiranandani': ['hfl', 'hiranandani financial', 'hiranandani fin'],
-                        'piramal': ['pchfl', 'piramal capital', 'piramal housing', 'piramal fin', 'piramal enterprise'],
-                        'orix': ['orix leasing', 'orix india', 'orix fin'],
-                        'shriram': ['shriram', 'stfc', 'shriram transport', 'shriram finance', 'shriram city', 'shr ram'],
-                        'shr ram': ['shriram', 'stfc', 'shriram transport', 'shriram finance', 'shriram city'],
-                        'axis': ['axis bank', 'axis finance', 'axis leasing'],
-                        'al': ['axis', 'axis leasing', 'axis finance', 'axis bank'],
-                        'bajaj': ['bajaj finance', 'bajaj finserv', 'bfl', 'bajaj fin'],
-                        'tata': ['tata capital', 'tata motors finance', 'tmf', 'tata fin'],
-                        'mahindra': ['mahindra finance', 'mmfsl', 'mahindra & mahindra'],
-                        'kotak': ['kotak mahindra', 'kotak bank', 'kotak prime'],
-                        'hdfc': ['hdfc bank', 'hdfc ltd', 'hdfc home', 'hdfc credila'],
-                        'icici': ['icici bank', 'icici home', 'icici prudential'],
-                        'iifl': ['iifl finance', 'iifl home', 'india infoline'],
-                        'muthoot': ['muthoot finance', 'muthoot fincorp', 'muthoot capital'],
-                        'manappuram': ['manappuram finance', 'manappuram gold'],
-                        'chola': ['cholamandalam', 'chola finance', 'cifcl', 'chola inv'],
-                        'l&t': ['l&t finance', 'l&t housing', 'ltfh', 'l&t fin'],
-                        'hero': ['hero fincorp', 'hero housing', 'hero fin'],
-                        'fedbank': ['federal bank', 'fedbank financial', 'fedfina'],
-                        'indostar': ['indostar capital', 'indostar'],
-                        'can fin': ['can fin homes', 'canfin'],
-                    };
-
-                    // Build expanded bank name search terms from debt profile bank name
-                    const getExpandedBankTerms = (bankName) => {
-                        const terms = [];
-                        const bankLower = (bankName || '').toLowerCase().trim();
-                        // Add original parts (allow 2+ chars for short names like AL, HDB)
-                        const parts = bankLower.split(/[\s\-\(\)\/]+/).filter(p => p.length >= 2);
-                        terms.push(...parts);
-                        // Add full name
-                        if (bankLower.length >= 2) terms.push(bankLower);
-                        // Look up aliases
-                        for (const [key, aliases] of Object.entries(lenderAliases)) {
-                            if (bankLower.includes(key) || parts.some(p => p === key)) {
-                                terms.push(...aliases);
-                            }
-                        }
-                        return [...new Set(terms)];
-                    };
-
                     // Function to find EMI dates in bank statements
                     function findEmiDatesInStatements(emiAmount, bankName, bankingDocs) {
                         const emiDates = [];
