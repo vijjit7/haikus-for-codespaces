@@ -1980,62 +1980,117 @@
                                             return text.replace(/(\d)\s*[\n\r]\s*(\.\d)/g, '$1$2').replace(/[ \t]+/g, ' ');
                                         };
                                         
-                                        // Find EMI dates in bank statements
+                                        // Lender alias map for CAM memo EMI tracking
+                                        const camLenderAliases = {
+                                            'fullerton': ['ficcl', 'ficl', 'fullerton india', 'smfg india', 'smfg'],
+                                            'abfl': ['aditya birla', 'birla finance', 'birla', 'abfl', 'aditya birla finance'],
+                                            'hdb': ['hdbfs', 'hdb financial', 'hdb fin'],
+                                            'sundaram': ['sundaram finance', 'sundaram bnp', 'sundaram home', 'shfl'],
+                                            'hiranandani': ['hfl', 'hiranandani financial', 'hiranandani fin'],
+                                            'piramal': ['pchfl', 'piramal capital', 'piramal housing', 'piramal fin', 'piramal enterprise'],
+                                            'orix': ['orix leasing', 'orix india', 'orix fin'],
+                                            'shriram': ['shriram', 'stfc', 'shriram transport', 'shriram finance', 'shriram city', 'shr ram'],
+                                            'shr ram': ['shriram', 'stfc', 'shriram transport', 'shriram finance', 'shriram city'],
+                                            'axis': ['axis bank', 'axis finance', 'axis leasing'],
+                                            'al': ['axis', 'axis leasing', 'axis finance', 'axis bank'],
+                                            'bajaj': ['bajaj finance', 'bajaj finserv', 'bfl', 'bajaj fin'],
+                                            'tata': ['tata capital', 'tata motors finance', 'tmf', 'tata fin'],
+                                            'mahindra': ['mahindra finance', 'mmfsl', 'mahindra & mahindra'],
+                                            'kotak': ['kotak mahindra', 'kotak bank', 'kotak prime'],
+                                            'hdfc': ['hdfc bank', 'hdfc ltd', 'hdfc home', 'hdfc credila'],
+                                            'icici': ['icici bank', 'icici home', 'icici prudential'],
+                                            'iifl': ['iifl finance', 'iifl home', 'india infoline'],
+                                            'muthoot': ['muthoot finance', 'muthoot fincorp', 'muthoot capital'],
+                                            'manappuram': ['manappuram finance', 'manappuram gold'],
+                                            'chola': ['cholamandalam', 'chola finance', 'cifcl', 'chola inv'],
+                                            'l&t': ['l&t finance', 'l&t housing', 'ltfh', 'l&t fin'],
+                                            'hero': ['hero fincorp', 'hero housing', 'hero fin'],
+                                            'fedbank': ['federal bank', 'fedbank financial', 'fedfina'],
+                                            'indostar': ['indostar capital', 'indostar'],
+                                            'can fin': ['can fin homes', 'canfin'],
+                                        };
+                                        const camGetExpandedBankTerms = (bankName) => {
+                                            const terms = [];
+                                            const bankLower = (bankName || '').toLowerCase().trim();
+                                            const parts = bankLower.split(/[\s\-\(\)\/]+/).filter(p => p.length >= 2);
+                                            terms.push(...parts);
+                                            if (bankLower.length >= 2) terms.push(bankLower);
+                                            for (const [key, aliases] of Object.entries(camLenderAliases)) {
+                                                if (bankLower.includes(key) || parts.some(p => p === key)) {
+                                                    terms.push(...aliases);
+                                                }
+                                            }
+                                            return [...new Set(terms)];
+                                        };
+
+                                        // Find EMI dates in bank statements (bidirectional context search)
                                         const camFindEmiDates = (emiAmount, bankName, docs) => {
                                             const emiDates = [];
                                             if (!emiAmount || !docs) return emiDates;
                                             const emiVariants = camGetAmountVariants(Math.round(emiAmount), 2);
-                                            const bankNameParts = (bankName || '').toLowerCase().split(/[\s\-]+/).filter(p => p.length > 2);
-                                            const emiKeywords = ['ach d-', 'ach-d', 'ach/', 'nach', 'ecs', 'emi', 'loan', 'auto debit', 'cms/', 'cmp', 'mandate', 'adibi', 'trf/', 'fin ltd', 'capital', 'finance', 'birla', 'clix', 'icici', 'unity'];
+                                            const bankTerms = camGetExpandedBankTerms(bankName);
+                                            const emiKeywords = ['ach d-', 'ach-d', 'ach/', 'nach', 'ecs', 'ecs/', 'emi', 'loan', 'auto debit', 'auto-debit', 'instalment', 'installment', 'equated monthly', 'cms/', 'cmp', 'mandate', 'adibi', 'trf/', 'fin ltd', 'capital', 'finance', 'birla', 'clix', 'icici', 'unity', 'nbfc', 'hfc', 'si-', 'si/', 'si :', 'neft', 'rtgs', 'debit-', 'dr-'];
                                             const dateRegexNum = /(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/g;
                                             const dateRegexNamed = /(\d{1,2})[\/\-\.](\w{3})[\/\-\.](\d{4})/gi;
                                             const camMonthMap = {jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11};
                                             const roundedEmi = Math.round(emiAmount);
-                                            const wideTolerance = Math.round(roundedEmi * 0.015); // 1.5% for rate revisions
+                                            const wideTolerance = Math.round(roundedEmi * 0.015);
 
-                                            // Helper: extract date from context text
-                                            const extractDateFromContext = (contextBefore) => {
+                                            // Helper: extract dates from context text
+                                            const extractDates = (ctxText) => {
                                                 const allDates = [];
                                                 let m;
                                                 const regNum = new RegExp(dateRegexNum.source, 'g');
-                                                while ((m = regNum.exec(contextBefore)) !== null) {
-                                                    allDates.push({day: parseInt(m[1]), month: parseInt(m[2]) - 1, year: parseInt(m[3]), pos: m.index});
+                                                while ((m = regNum.exec(ctxText)) !== null) {
+                                                    const d = parseInt(m[1]), mo = parseInt(m[2]) - 1, y = parseInt(m[3]);
+                                                    if (d >= 1 && d <= 31 && mo >= 0 && mo <= 11 && y >= 2024 && y <= 2026) {
+                                                        allDates.push({day: d, month: mo, year: y, pos: m.index});
+                                                    }
                                                 }
                                                 const regNamed = new RegExp(dateRegexNamed.source, 'gi');
-                                                while ((m = regNamed.exec(contextBefore)) !== null) {
+                                                while ((m = regNamed.exec(ctxText)) !== null) {
                                                     const mi = camMonthMap[m[2].toLowerCase()];
                                                     if (mi !== undefined && !allDates.some(d => Math.abs(d.pos - m.index) < 5)) {
-                                                        allDates.push({day: parseInt(m[1]), month: mi, year: parseInt(m[3]), pos: m.index});
+                                                        const d = parseInt(m[1]), y = parseInt(m[3]);
+                                                        if (d >= 1 && d <= 31 && y >= 2024 && y <= 2026) {
+                                                            allDates.push({day: d, month: mi, year: y, pos: m.index});
+                                                        }
                                                     }
                                                 }
-                                                allDates.sort((a, b) => a.pos - b.pos);
-                                                if (allDates.length > 0) {
-                                                    const last = allDates[allDates.length - 1];
-                                                    if (last.day >= 1 && last.day <= 31 && last.month >= 0 && last.month <= 11 && last.year >= 2024 && last.year <= 2026) {
-                                                        return last;
-                                                    }
-                                                }
-                                                return null;
+                                                return allDates.sort((a, b) => a.pos - b.pos);
                                             };
 
                                             docs.forEach(doc => {
                                                 if (!doc.extractedText) return;
                                                 const text = camCleanBankText(doc.extractedText).toLowerCase();
 
-                                                // Pass 1: Exact amount match (±2)
+                                                // Find all amount positions and deduplicate
+                                                const positions = [];
                                                 emiVariants.forEach(variant => {
-                                                    let idx = text.indexOf(variant.toLowerCase());
+                                                    const vl = variant.toLowerCase();
+                                                    let idx = text.indexOf(vl);
                                                     while (idx !== -1) {
-                                                        const contextBefore = text.substring(Math.max(0, idx - 200), idx);
-                                                        const hasKeyword = emiKeywords.some(kw => contextBefore.includes(kw)) ||
-                                                                           bankNameParts.some(part => contextBefore.includes(part));
-                                                        if (hasKeyword) {
-                                                            const dt = extractDateFromContext(contextBefore);
-                                                            if (dt && !emiDates.some(d => d.day === dt.day && d.month === dt.month && d.year === dt.year)) {
-                                                                emiDates.push({day: dt.day, month: dt.month, year: dt.year});
-                                                            }
+                                                        if (!positions.some(p => Math.abs(p.pos - idx) < 5)) {
+                                                            positions.push({pos: idx, len: vl.length});
                                                         }
-                                                        idx = text.indexOf(variant.toLowerCase(), idx + 1);
+                                                        idx = text.indexOf(vl, idx + 1);
+                                                    }
+                                                });
+
+                                                // Pass 1: Bidirectional context (300 chars each way)
+                                                positions.forEach(({pos, len}) => {
+                                                    const ctxBefore = text.substring(Math.max(0, pos - 300), pos);
+                                                    const ctxAfter = text.substring(pos + len, Math.min(text.length, pos + len + 300));
+                                                    const fullCtx = ctxBefore + ctxAfter;
+                                                    const hasKw = emiKeywords.some(kw => fullCtx.includes(kw));
+                                                    const hasBank = bankTerms.length > 0 && bankTerms.some(term => fullCtx.includes(term));
+                                                    if (hasKw || hasBank) {
+                                                        const datesBefore = extractDates(ctxBefore);
+                                                        const datesAfter = extractDates(ctxAfter);
+                                                        let dt = datesBefore.length > 0 ? datesBefore[datesBefore.length - 1] : (datesAfter.length > 0 ? datesAfter[0] : null);
+                                                        if (dt && !emiDates.some(d => d.day === dt.day && d.month === dt.month && d.year === dt.year)) {
+                                                            emiDates.push({day: dt.day, month: dt.month, year: dt.year});
+                                                        }
                                                     }
                                                 });
 
@@ -2047,11 +2102,15 @@
                                                         const numVal = parseInt(numMatch[1].replace(/,/g, ''));
                                                         const diff = Math.abs(numVal - roundedEmi);
                                                         if (diff > 2 && diff <= wideTolerance) {
-                                                            const contextBefore = text.substring(Math.max(0, numMatch.index - 200), numMatch.index);
-                                                            const hasKeyword = emiKeywords.some(kw => contextBefore.includes(kw)) ||
-                                                                               bankNameParts.some(part => contextBefore.includes(part));
-                                                            if (hasKeyword) {
-                                                                const dt = extractDateFromContext(contextBefore);
+                                                            const ctxBefore = text.substring(Math.max(0, numMatch.index - 300), numMatch.index);
+                                                            const ctxAfter = text.substring(numMatch.index + numMatch[0].length, Math.min(text.length, numMatch.index + numMatch[0].length + 300));
+                                                            const fullCtx = ctxBefore + ctxAfter;
+                                                            const hasKw = emiKeywords.some(kw => fullCtx.includes(kw)) ||
+                                                                          (bankTerms.length > 0 && bankTerms.some(term => fullCtx.includes(term)));
+                                                            if (hasKw) {
+                                                                const datesBefore = extractDates(ctxBefore);
+                                                                const datesAfter = extractDates(ctxAfter);
+                                                                let dt = datesBefore.length > 0 ? datesBefore[datesBefore.length - 1] : (datesAfter.length > 0 ? datesAfter[0] : null);
                                                                 if (dt && !emiDates.some(d => d.day === dt.day && d.month === dt.month && d.year === dt.year)) {
                                                                     emiDates.push({day: dt.day, month: dt.month, year: dt.year});
                                                                 }
@@ -4721,41 +4780,50 @@
                         const emiStr = String(emiAmount);
                         const emiFormatted = emiAmount.toLocaleString('en-IN');
                         const emiWithDecimals = emiFormatted + '.00';
-                        
-                        const emiKeywords = ['emi', 'loan', 'equated monthly', 'instalment', 'installment', 'nach', 'ecs', 'auto debit', 'si:', 'standing instruction', 'ach d-', 'ach-d'];
-                        
-                        const bankNameLower = (loanBankName || '').toLowerCase().trim();
-                        const bankNameParts = bankNameLower.split(/[\s\-]+/).filter(p => p.length > 2);
-                        
+                        const indianFmt = formatIndian(emiAmount);
+                        const indianFmtDec = indianFmt + '.00';
+
+                        const emiKeywords = ['emi', 'loan', 'equated monthly', 'instalment', 'installment', 'nach', 'ecs', 'auto debit', 'auto-debit', 'si:', 'standing instruction', 'ach d-', 'ach-d', 'ach/', 'mandate', 'nbfc', 'hfc', 'neft', 'rtgs', 'cms/', 'cmp', 'fin ltd', 'capital', 'finance'];
+
+                        // Use expanded bank terms with aliases
+                        const bankTerms = getExpandedBankTerms(loanBankName);
+
                         const lines = text.split(/[\n\r]+/);
-                        
+
+                        // Check: keyword/bank line within 6 lines of amount (bidirectional)
                         for (let i = 0; i < lines.length; i++) {
                             const lineLower = lines[i].toLowerCase();
                             const hasEmiKeyword = emiKeywords.some(kw => lineLower.includes(kw));
-                            const hasBankName = bankNameParts.length > 0 && bankNameParts.some(part => lineLower.includes(part));
-                            
-                            if (hasEmiKeyword || hasBankName) {
-                                for (let j = i; j < Math.min(i + 6, lines.length); j++) {
+                            const hasBankTerm = bankTerms.length > 0 && bankTerms.some(term => lineLower.includes(term));
+
+                            if (hasEmiKeyword || hasBankTerm) {
+                                // Look 6 lines forward AND backward for amount
+                                const startJ = Math.max(0, i - 6);
+                                const endJ = Math.min(i + 6, lines.length - 1);
+                                for (let j = startJ; j <= endJ; j++) {
                                     const checkLine = lines[j].toLowerCase();
-                                    const hasEmiAmount = checkLine.includes(emiStr) || 
+                                    const hasEmiAmount = checkLine.includes(emiStr) ||
                                                          checkLine.includes(emiFormatted.toLowerCase()) ||
                                                          checkLine.includes(emiWithDecimals.toLowerCase()) ||
+                                                         checkLine.includes(indianFmt.toLowerCase()) ||
+                                                         checkLine.includes(indianFmtDec.toLowerCase()) ||
                                                          checkLine.includes((emiAmount - 1).toString()) ||
                                                          checkLine.includes((emiAmount + 1).toString());
-                                    
+
                                     if (hasEmiAmount) {
                                         return true;
                                     }
                                 }
                             }
                         }
-                        
-                        // Fallback check
+
+                        // Fallback check: amount exists anywhere + keyword/bank exists anywhere
                         const textLower = text.toLowerCase();
-                        if (textLower.includes(emiWithDecimals.toLowerCase()) || textLower.includes(emiFormatted.toLowerCase())) {
+                        const hasAmount = textLower.includes(emiWithDecimals.toLowerCase()) || textLower.includes(emiFormatted.toLowerCase()) || textLower.includes(indianFmt.toLowerCase()) || textLower.includes(indianFmtDec.toLowerCase());
+                        if (hasAmount) {
                             const hasAnyEmiKeyword = emiKeywords.some(kw => textLower.includes(kw));
-                            const hasAnyBankName = bankNameParts.some(part => textLower.includes(part));
-                            if (hasAnyEmiKeyword || hasAnyBankName) {
+                            const hasAnyBankTerm = bankTerms.some(term => textLower.includes(term));
+                            if (hasAnyEmiKeyword || hasAnyBankTerm) {
                                 return true;
                             }
                         }
@@ -4862,24 +4930,95 @@
                         return cleaned;
                     };
 
+                    // Lender alias map — maps common debt profile bank names to aliases found in bank statements
+                    const lenderAliases = {
+                        'fullerton': ['ficcl', 'ficl', 'fullerton india', 'smfg india', 'smfg'],
+                        'abfl': ['aditya birla', 'birla finance', 'birla', 'abfl', 'aditya birla finance'],
+                        'hdb': ['hdbfs', 'hdb financial', 'hdb fin'],
+                        'sundaram': ['sundaram finance', 'sundaram bnp', 'sundaram home', 'shfl'],
+                        'hiranandani': ['hfl', 'hiranandani financial', 'hiranandani fin'],
+                        'piramal': ['pchfl', 'piramal capital', 'piramal housing', 'piramal fin', 'piramal enterprise'],
+                        'orix': ['orix leasing', 'orix india', 'orix fin'],
+                        'shriram': ['shriram', 'stfc', 'shriram transport', 'shriram finance', 'shriram city', 'shr ram'],
+                        'shr ram': ['shriram', 'stfc', 'shriram transport', 'shriram finance', 'shriram city'],
+                        'axis': ['axis bank', 'axis finance', 'axis leasing'],
+                        'al': ['axis', 'axis leasing', 'axis finance', 'axis bank'],
+                        'bajaj': ['bajaj finance', 'bajaj finserv', 'bfl', 'bajaj fin'],
+                        'tata': ['tata capital', 'tata motors finance', 'tmf', 'tata fin'],
+                        'mahindra': ['mahindra finance', 'mmfsl', 'mahindra & mahindra'],
+                        'kotak': ['kotak mahindra', 'kotak bank', 'kotak prime'],
+                        'hdfc': ['hdfc bank', 'hdfc ltd', 'hdfc home', 'hdfc credila'],
+                        'icici': ['icici bank', 'icici home', 'icici prudential'],
+                        'iifl': ['iifl finance', 'iifl home', 'india infoline'],
+                        'muthoot': ['muthoot finance', 'muthoot fincorp', 'muthoot capital'],
+                        'manappuram': ['manappuram finance', 'manappuram gold'],
+                        'chola': ['cholamandalam', 'chola finance', 'cifcl', 'chola inv'],
+                        'l&t': ['l&t finance', 'l&t housing', 'ltfh', 'l&t fin'],
+                        'hero': ['hero fincorp', 'hero housing', 'hero fin'],
+                        'fedbank': ['federal bank', 'fedbank financial', 'fedfina'],
+                        'indostar': ['indostar capital', 'indostar'],
+                        'can fin': ['can fin homes', 'canfin'],
+                    };
+
+                    // Build expanded bank name search terms from debt profile bank name
+                    const getExpandedBankTerms = (bankName) => {
+                        const terms = [];
+                        const bankLower = (bankName || '').toLowerCase().trim();
+                        // Add original parts (allow 2+ chars for short names like AL, HDB)
+                        const parts = bankLower.split(/[\s\-\(\)\/]+/).filter(p => p.length >= 2);
+                        terms.push(...parts);
+                        // Add full name
+                        if (bankLower.length >= 2) terms.push(bankLower);
+                        // Look up aliases
+                        for (const [key, aliases] of Object.entries(lenderAliases)) {
+                            if (bankLower.includes(key) || parts.some(p => p === key)) {
+                                terms.push(...aliases);
+                            }
+                        }
+                        return [...new Set(terms)];
+                    };
+
                     // Function to find EMI dates in bank statements
                     function findEmiDatesInStatements(emiAmount, bankName, bankingDocs) {
                         const emiDates = [];
                         if (!emiAmount || !bankingDocs) return emiDates;
-                        
+
                         const emiVariants = getAmountVariants(Math.round(emiAmount), 2);
-                        
-                        // Bank name parts for matching
-                        const bankNameLower = (bankName || '').toLowerCase();
-                        const bankNameParts = bankNameLower.split(/[\s\-]+/).filter(p => p.length > 2);
-                        
+
+                        // Bank name terms (with aliases)
+                        const bankTerms = getExpandedBankTerms(bankName);
+
                         // EMI keywords (expanded list)
-                        const emiKeywords = ['ach d-', 'ach-d', 'ach/', 'nach', 'ecs', 'emi', 'loan', 'auto debit', 'instalment', 'installment', 'equated monthly', 'cms/', 'cmp', 'mandate', 'adibi', 'trf/', 'fin ltd', 'capital', 'finance', 'birla', 'clix', 'icici', 'unity'];
-                        
+                        const emiKeywords = ['ach d-', 'ach-d', 'ach/', 'nach', 'nач', 'ecs', 'ecs/', 'emi', 'loan', 'auto debit', 'auto-debit', 'instalment', 'installment', 'equated monthly', 'cms/', 'cmp', 'mandate', 'adibi', 'trf/', 'fin ltd', 'capital', 'finance', 'birla', 'clix', 'icici', 'unity', 'nbfc', 'hfc', 'si-', 'si/', 'si :', 'neft', 'rtgs', 'debit-', 'dr-'];
+
                         // Date patterns: dd/mm/yyyy, dd-mm-yyyy, dd.mm.yyyy and dd-Mon-yyyy
                         const dateRegexNumeric = /(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/g;
                         const monthNamesMapEmi = {jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11};
                         const dateRegexNamed = /(\d{1,2})[\/\-\.](\w{3})[\/\-\.](\d{4})/gi;
+
+                        // Helper: extract dates from context text
+                        const extractDatesFromContext = (contextText) => {
+                            const allDates = [];
+                            let dateMatch;
+                            const regexNum = new RegExp(dateRegexNumeric.source, 'g');
+                            while ((dateMatch = regexNum.exec(contextText)) !== null) {
+                                const d = parseInt(dateMatch[1]), m = parseInt(dateMatch[2]) - 1, y = parseInt(dateMatch[3]);
+                                if (d >= 1 && d <= 31 && m >= 0 && m <= 11 && y >= 2024 && y <= 2026) {
+                                    allDates.push({ day: d, month: m, year: y, pos: dateMatch.index, dateStr: dateMatch[0] });
+                                }
+                            }
+                            const regexNamed = new RegExp(dateRegexNamed.source, 'gi');
+                            while ((dateMatch = regexNamed.exec(contextText)) !== null) {
+                                const monthIdx = monthNamesMapEmi[dateMatch[2].toLowerCase()];
+                                if (monthIdx !== undefined && !allDates.some(dt => Math.abs(dt.pos - dateMatch.index) < 5)) {
+                                    const d = parseInt(dateMatch[1]), y = parseInt(dateMatch[3]);
+                                    if (d >= 1 && d <= 31 && y >= 2024 && y <= 2026) {
+                                        allDates.push({ day: d, month: monthIdx, year: y, pos: dateMatch.index, dateStr: dateMatch[0] });
+                                    }
+                                }
+                            }
+                            return allDates.sort((a, b) => a.pos - b.pos);
+                        };
 
                         bankingDocs.forEach(doc => {
                             if (!doc.extractedText) return;
@@ -4891,42 +5030,40 @@
                                 const varLower = variant.toLowerCase();
                                 let idx = text.indexOf(varLower);
                                 while (idx !== -1) {
-                                    emiPositions.push({pos: idx, variant: variant});
+                                    emiPositions.push({pos: idx, len: varLower.length});
                                     idx = text.indexOf(varLower, idx + 1);
                                 }
                             });
-
-                            // Helper: extract last date from context
-                            const extractClosestDate = (contextBefore) => {
-                                const allDates = [];
-                                let dateMatch;
-                                const regexNum = new RegExp(dateRegexNumeric.source, 'g');
-                                while ((dateMatch = regexNum.exec(contextBefore)) !== null) {
-                                    allDates.push({ day: parseInt(dateMatch[1]), month: parseInt(dateMatch[2]) - 1, year: parseInt(dateMatch[3]), pos: dateMatch.index, dateStr: dateMatch[0] });
+                            // Deduplicate overlapping positions
+                            const uniquePositions = [];
+                            emiPositions.sort((a, b) => a.pos - b.pos);
+                            emiPositions.forEach(ep => {
+                                if (!uniquePositions.some(u => Math.abs(u.pos - ep.pos) < 5)) {
+                                    uniquePositions.push(ep);
                                 }
-                                const regexNamed = new RegExp(dateRegexNamed.source, 'gi');
-                                while ((dateMatch = regexNamed.exec(contextBefore)) !== null) {
-                                    const monthIdx = monthNamesMapEmi[dateMatch[2].toLowerCase()];
-                                    if (monthIdx !== undefined && !allDates.some(d => Math.abs(d.pos - dateMatch.index) < 5)) {
-                                        allDates.push({ day: parseInt(dateMatch[1]), month: monthIdx, year: parseInt(dateMatch[3]), pos: dateMatch.index, dateStr: dateMatch[0] });
+                            });
+
+                            // Pass 1: Bidirectional context search (300 chars before + 300 after)
+                            uniquePositions.forEach(({pos: emiPos, len: emiLen}) => {
+                                const ctxBefore = text.substring(Math.max(0, emiPos - 300), emiPos);
+                                const ctxAfter = text.substring(emiPos + emiLen, Math.min(text.length, emiPos + emiLen + 300));
+                                const fullContext = ctxBefore + ctxAfter;
+
+                                const hasEmiKeyword = emiKeywords.some(kw => fullContext.includes(kw));
+                                const hasBankTerm = bankTerms.length > 0 && bankTerms.some(term => fullContext.includes(term));
+
+                                if (hasEmiKeyword || hasBankTerm) {
+                                    // Try to find date: prefer BEFORE the amount, fall back to AFTER
+                                    const datesBefore = extractDatesFromContext(ctxBefore);
+                                    const datesAfter = extractDatesFromContext(ctxAfter);
+
+                                    let dt = null;
+                                    if (datesBefore.length > 0) {
+                                        dt = datesBefore[datesBefore.length - 1]; // last date before amount (closest)
+                                    } else if (datesAfter.length > 0) {
+                                        dt = datesAfter[0]; // first date after amount (closest)
                                     }
-                                }
-                                allDates.sort((a, b) => a.pos - b.pos);
-                                if (allDates.length > 0) {
-                                    const last = allDates[allDates.length - 1];
-                                    if (last.day >= 1 && last.day <= 31 && last.month >= 0 && last.month <= 11 && last.year >= 2024 && last.year <= 2026) return last;
-                                }
-                                return null;
-                            };
 
-                            // Pass 1: Exact amount match (±2)
-                            emiPositions.forEach(({pos: emiPos}) => {
-                                const contextStart = Math.max(0, emiPos - 200);
-                                const contextBefore = text.substring(contextStart, emiPos);
-                                const hasEmiKeyword = emiKeywords.some(kw => contextBefore.includes(kw));
-                                const hasBankName = bankNameParts.length > 0 && bankNameParts.some(part => contextBefore.includes(part));
-                                if (hasEmiKeyword || hasBankName) {
-                                    const dt = extractClosestDate(contextBefore);
                                     if (dt && !emiDates.some(ed => ed.day === dt.day && ed.month === dt.month && ed.year === dt.year)) {
                                         emiDates.push({ day: dt.day, month: dt.month, year: dt.year, dateStr: dt.dateStr });
                                     }
@@ -4943,11 +5080,15 @@
                                     const numVal = parseInt(numMatch[1].replace(/,/g, ''));
                                     const diff = Math.abs(numVal - roundedEmi);
                                     if (diff > 2 && diff <= wideTolerance) {
-                                        const contextBefore = text.substring(Math.max(0, numMatch.index - 200), numMatch.index);
-                                        const hasKw = emiKeywords.some(kw => contextBefore.includes(kw)) ||
-                                                      (bankNameParts.length > 0 && bankNameParts.some(part => contextBefore.includes(part)));
+                                        const ctxBefore = text.substring(Math.max(0, numMatch.index - 300), numMatch.index);
+                                        const ctxAfter = text.substring(numMatch.index + numMatch[0].length, Math.min(text.length, numMatch.index + numMatch[0].length + 300));
+                                        const fullCtx = ctxBefore + ctxAfter;
+                                        const hasKw = emiKeywords.some(kw => fullCtx.includes(kw)) ||
+                                                      (bankTerms.length > 0 && bankTerms.some(term => fullCtx.includes(term)));
                                         if (hasKw) {
-                                            const dt = extractClosestDate(contextBefore);
+                                            const datesBefore = extractDatesFromContext(ctxBefore);
+                                            const datesAfter = extractDatesFromContext(ctxAfter);
+                                            let dt = datesBefore.length > 0 ? datesBefore[datesBefore.length - 1] : (datesAfter.length > 0 ? datesAfter[0] : null);
                                             if (dt && !emiDates.some(ed => ed.day === dt.day && ed.month === dt.month && ed.year === dt.year)) {
                                                 emiDates.push({ day: dt.day, month: dt.month, year: dt.year, dateStr: dt.dateStr });
                                             }
@@ -4956,7 +5097,7 @@
                                 }
                             }
                         });
-                        
+
                         return emiDates;
                     }
                     
