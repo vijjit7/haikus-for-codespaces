@@ -225,6 +225,9 @@
                 </h2>
                 <div id="reqDocsContent" style="display: none; margin-top: 15px;">
                 
+                <%/* Normalize co-applicant types: default empty/missing type to 'Individual' */%>
+                <% if (proposal.coApplicants) { proposal.coApplicants.forEach(co => { if (!co.type) co.type = 'Individual'; }); } %>
+
                 <!-- Personal ID -->
                 <div class="doc-category">
                     <h3 class="category-title">Personal ID - only for individual applicant or coapplicants</h3>
@@ -279,13 +282,25 @@
                         <% if (proposal.applicantType === 'Partnership' || proposal.applicantType === 'LLP') { %>
                         <li>Firm Registration Certificate of <%= proposal.applicantName || 'Applicant Name' %></li>
                         <% } %>
-                        <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
-                            <% proposal.coApplicants.forEach((co, idx) => { %>
+                    </ul>
+                </div>
+                <% } %>
+                <% if (proposal.coApplicants && proposal.coApplicants.some(co => co.type !== 'Individual' && co.type !== 'Individual Salaried')) { %>
+                <div class="doc-category">
+                    <h3 class="category-title">Business ID - Co-Applicants</h3>
+                    <ul class="doc-list">
+                        <% proposal.coApplicants.forEach((co, idx) => { %>
+                            <% if (co.type !== 'Individual' && co.type !== 'Individual Salaried') { %>
+                                <% if (co.type !== 'Proprietorship') { %>
+                                <li>PAN Card of <%= co.name %> (Non Individual)</li>
+                                <% } %>
+                                <li>GST Certificate of <%= co.name %></li>
+                                <li>UDYAM Certificate of <%= co.name %></li>
                                 <% if (co.type === 'Partnership' || co.type === 'LLP') { %>
                                 <li>Firm Registration Certificate of <%= co.name %></li>
                                 <% } %>
-                            <% }); %>
-                        <% } %>
+                            <% } %>
+                        <% }); %>
                     </ul>
                 </div>
                 <% } %>
@@ -311,16 +326,36 @@
                             <li>Articles of Association</li>
                             <li>List of Shareholders of <%= proposal.applicantName %></li>
                             <li>List of Directors of <%= proposal.applicantName %></li>
-                            <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
-                                <% proposal.coApplicants.forEach((co, idx) => { %>
-                                    <% if (co.type !== 'Individual' && co.type !== 'Individual Salaried') { %>
-                                        <li>List of Shareholders of <%= co.name || 'CoApplicant ' + (idx + 1) %></li>
-                                        <li>List of Directors of <%= co.name || 'CoApplicant ' + (idx + 1) %></li>
-                                    <% } %>
-                                <% }); %>
-                            <% } %>
                         </ul>
                     </div>
+                    <% } %>
+                    <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
+                        <% proposal.coApplicants.forEach((co, idx) => { %>
+                            <% if (co.type === 'Partnership') { %>
+                            <div class="doc-subcategory">
+                                <h4>For <%= co.name || 'CoApplicant ' + (idx + 1) %> (Partnership)</h4>
+                                <ul class="doc-list">
+                                    <li>Partnership deed of <%= co.name || 'CoApplicant ' + (idx + 1) %></li>
+                                </ul>
+                            </div>
+                            <% } else if (co.type === 'LLP') { %>
+                            <div class="doc-subcategory">
+                                <h4>For <%= co.name || 'CoApplicant ' + (idx + 1) %> (LLP)</h4>
+                                <ul class="doc-list">
+                                    <li>LLP Agreement of <%= co.name || 'CoApplicant ' + (idx + 1) %></li>
+                                </ul>
+                            </div>
+                            <% } else if (co.type === 'Private Limited' || co.type === 'Public Limited') { %>
+                            <div class="doc-subcategory">
+                                <h4>For <%= co.name || 'CoApplicant ' + (idx + 1) %> (<%= co.type %>)</h4>
+                                <ul class="doc-list">
+                                    <li>Certificate of Incorporation of <%= co.name || 'CoApplicant ' + (idx + 1) %></li>
+                                    <li>List of Shareholders of <%= co.name || 'CoApplicant ' + (idx + 1) %></li>
+                                    <li>List of Directors of <%= co.name || 'CoApplicant ' + (idx + 1) %></li>
+                                </ul>
+                            </div>
+                            <% } %>
+                        <% }); %>
                     <% } %>
                 </div>
 
@@ -330,10 +365,16 @@
                     <ul class="doc-list">
                         <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
                             <% proposal.coApplicants.forEach((co, idx) => { %>
-                                <li>Personal Credit Report of <%= co.name %> (only for individuals)</li>
+                                <% if (co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') { %>
+                                    <li>Personal Credit Report of <%= co.name %></li>
+                                <% } else { %>
+                                    <li>Business Credit Report of <%= co.name %></li>
+                                <% } %>
                             <% }); %>
                         <% } %>
-                        <li>Business Credit Report of <%= proposal.applicantName %> (Non Individual)</li>
+                        <% if (proposal.applicantType !== 'Individual' && proposal.applicantType !== 'Individual Salaried') { %>
+                        <li>Business Credit Report of <%= proposal.applicantName %></li>
+                        <% } %>
                     </ul>
                 </div>
 
@@ -690,6 +731,13 @@
                             );
                         }
                         
+                        // Normalize co-applicant types: default empty/missing type to 'Individual'
+                        if (proposal.coApplicants) {
+                            proposal.coApplicants.forEach(co => {
+                                if (!co.type) co.type = 'Individual';
+                            });
+                        }
+
                         // All document types by category (for dropdown options)
                         const allDocTypesByCategory = {
                             personalId: [],
@@ -750,20 +798,21 @@
                             if (proposal.applicantType === 'Partnership' || proposal.applicantType === 'LLP') {
                                 allDocTypesByCategory.businessId.push('Firm Registration Certificate of ' + (proposal.applicantName || 'Applicant Name'));
                             }
-
-                            // Business documents for Proprietorship co-applicants
-                            if (proposal.coApplicants && proposal.coApplicants.length > 0) {
-                                proposal.coApplicants.forEach((co, idx) => {
-                                    if (co.type === 'Proprietorship') {
-                                        allDocTypesByCategory.businessId.push('GST Certificate of ' + co.name);
-                                        allDocTypesByCategory.businessId.push('UDYAM Certificate of ' + co.name);
+                        }
+                        // Business documents for non-individual co-applicants (regardless of main applicant type)
+                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                            proposal.coApplicants.forEach((co, idx) => {
+                                if (co.type !== 'Individual' && co.type !== 'Individual Salaried') {
+                                    if (co.type !== 'Proprietorship') {
+                                        allDocTypesByCategory.businessId.push('PAN Card of ' + co.name + ' (Non Individual)');
                                     }
-                                    // Firm Registration Certificate for Partnership or LLP co-applicants
+                                    allDocTypesByCategory.businessId.push('GST Certificate of ' + co.name);
+                                    allDocTypesByCategory.businessId.push('UDYAM Certificate of ' + co.name);
                                     if (co.type === 'Partnership' || co.type === 'LLP') {
                                         allDocTypesByCategory.businessId.push('Firm Registration Certificate of ' + co.name);
                                     }
-                                });
-                            }
+                                }
+                            });
                         }
                         
                         // Incorporation
@@ -777,11 +826,15 @@
                             allDocTypesByCategory.incorporation.push('List of Shareholders of ' + proposal.applicantName);
                             allDocTypesByCategory.incorporation.push('List of Directors of ' + proposal.applicantName);
                         }
-                        // Add shareholder and director list for non-individual co-applicants (Private Limited only)
-                        if ((proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') &&
-                            proposal.coApplicants && proposal.coApplicants.length > 0) {
+                        // Incorporation documents for co-applicants based on their own type
+                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type !== 'Individual' && co.type !== 'Individual Salaried') {
+                                if (co.type === 'Partnership') {
+                                    allDocTypesByCategory.incorporation.push('Partnership deed of ' + (co.name || 'CoApplicant ' + (idx + 1)));
+                                } else if (co.type === 'LLP') {
+                                    allDocTypesByCategory.incorporation.push('LLP Agreement of ' + (co.name || 'CoApplicant ' + (idx + 1)));
+                                } else if (co.type === 'Private Limited' || co.type === 'Public Limited') {
+                                    allDocTypesByCategory.incorporation.push('Certificate of Incorporation of ' + (co.name || 'CoApplicant ' + (idx + 1)));
                                     allDocTypesByCategory.incorporation.push('List of Shareholders of ' + (co.name || 'CoApplicant ' + (idx + 1)));
                                     allDocTypesByCategory.incorporation.push('List of Directors of ' + (co.name || 'CoApplicant ' + (idx + 1)));
                                 }
@@ -793,6 +846,8 @@
                             proposal.coApplicants.forEach((co, idx) => {
                                 if (co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') {
                                     allDocTypesByCategory.creditReports.push('Personal Credit Report of ' + co.name);
+                                } else {
+                                    allDocTypesByCategory.creditReports.push('Business Credit Report of ' + co.name);
                                 }
                             });
                         }
@@ -812,14 +867,12 @@
                         allDocTypesByCategory.financials.push('Tax Audit Report of FY2024-25');
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') {
-                                    allDocTypesByCategory.financials.push('ITR of ' + currentFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1)));
-                                    allDocTypesByCategory.financials.push('ITR of ' + previousFY + ' of ' + (co.name || 'coApplicant' + (idx + 1) + ' name'));
-                                    allDocTypesByCategory.financials.push('ITR of ' + precedingFY + ' of ' + (co.name || 'coApplicant' + (idx + 1) + ' name'));
-                                    allDocTypesByCategory.financials.push('Form 26AS of ' + currentFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1)));
-                                    allDocTypesByCategory.financials.push('Form 26AS of ' + previousFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1)));
-                                    allDocTypesByCategory.financials.push('Form 26AS of ' + precedingFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1)));
-                                }
+                                allDocTypesByCategory.financials.push('ITR of ' + currentFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1)));
+                                allDocTypesByCategory.financials.push('ITR of ' + previousFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1)));
+                                allDocTypesByCategory.financials.push('ITR of ' + precedingFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1)));
+                                allDocTypesByCategory.financials.push('Form 26AS of ' + currentFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1)));
+                                allDocTypesByCategory.financials.push('Form 26AS of ' + previousFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1)));
+                                allDocTypesByCategory.financials.push('Form 26AS of ' + precedingFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1)));
                             });
                         }
 
@@ -846,12 +899,10 @@
                         allDocTypesByCategory.banking.push('Overdraft Bank Statement of ' + proposal.applicantName);
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') {
-                                    allDocTypesByCategory.banking.push('Bank Statement of ' + (co.name || 'Coapplicant Name' + (idx + 1)));
-                                }
+                                allDocTypesByCategory.banking.push('Bank Statement of ' + (co.name || 'CoApplicant ' + (idx + 1)));
                             });
                         }
-                        
+
                         // Turnover
                         allDocTypesByCategory.turnover.push('GST 3B returns for last 12 months');
                         allDocTypesByCategory.turnover.push('GST 1 returns for last 12 months');
@@ -957,22 +1008,25 @@
                                 if (!isDocClassified(firmRegCert)) pendingByCategory.businessId.push(firmRegCert);
                             }
 
-                            // Business documents for Proprietorship co-applicants
-                            if (proposal.coApplicants && proposal.coApplicants.length > 0) {
-                                proposal.coApplicants.forEach((co, idx) => {
-                                    if (co.type === 'Proprietorship') {
-                                        const coGst = 'GST Certificate of ' + co.name;
-                                        const coUdyam = 'UDYAM Certificate of ' + co.name;
-                                        if (!isDocClassified(coGst)) pendingByCategory.businessId.push(coGst);
-                                        if (!isDocClassified(coUdyam)) pendingByCategory.businessId.push(coUdyam);
+                        }
+                        // Business documents for non-individual co-applicants (regardless of main applicant type)
+                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
+                            proposal.coApplicants.forEach((co, idx) => {
+                                if (co.type !== 'Individual' && co.type !== 'Individual Salaried') {
+                                    if (co.type !== 'Proprietorship') {
+                                        const coBizPan = 'PAN Card of ' + co.name + ' (Non Individual)';
+                                        if (!isDocClassified(coBizPan)) pendingByCategory.businessId.push(coBizPan);
                                     }
-                                    // Firm Registration Certificate for Partnership or LLP co-applicants
+                                    const coGst = 'GST Certificate of ' + co.name;
+                                    const coUdyam = 'UDYAM Certificate of ' + co.name;
+                                    if (!isDocClassified(coGst)) pendingByCategory.businessId.push(coGst);
+                                    if (!isDocClassified(coUdyam)) pendingByCategory.businessId.push(coUdyam);
                                     if (co.type === 'Partnership' || co.type === 'LLP') {
                                         const coFirmRegCert = 'Firm Registration Certificate of ' + co.name;
                                         if (!isDocClassified(coFirmRegCert)) pendingByCategory.businessId.push(coFirmRegCert);
                                     }
-                                });
-                            }
+                                }
+                            });
                         }
 
                         // Incorporation - Always show for Partnership to display required details
@@ -994,13 +1048,20 @@
                             if (!isDocClassified(shareholderList)) pendingByCategory.incorporation.push(shareholderList);
                             if (!isDocClassified(directorList)) pendingByCategory.incorporation.push(directorList);
                         }
-                        // Add shareholder and director list for non-individual co-applicants (Private Limited only)
-                        if ((proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') &&
-                            proposal.coApplicants && proposal.coApplicants.length > 0) {
+                        // Incorporation documents for co-applicants based on their own type
+                        if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type !== 'Individual' && co.type !== 'Individual Salaried') {
+                                if (co.type === 'Partnership') {
+                                    const coPartnerDeed = 'Partnership deed of ' + (co.name || 'CoApplicant ' + (idx + 1));
+                                    if (!isDocClassified(coPartnerDeed)) pendingByCategory.incorporation.push(coPartnerDeed);
+                                } else if (co.type === 'LLP') {
+                                    const coLlpAgreement = 'LLP Agreement of ' + (co.name || 'CoApplicant ' + (idx + 1));
+                                    if (!isDocClassified(coLlpAgreement)) pendingByCategory.incorporation.push(coLlpAgreement);
+                                } else if (co.type === 'Private Limited' || co.type === 'Public Limited') {
+                                    const coCert = 'Certificate of Incorporation of ' + (co.name || 'CoApplicant ' + (idx + 1));
                                     const coShareholderList = 'List of Shareholders of ' + (co.name || 'CoApplicant ' + (idx + 1));
                                     const coDirectorList = 'List of Directors of ' + (co.name || 'CoApplicant ' + (idx + 1));
+                                    if (!isDocClassified(coCert)) pendingByCategory.incorporation.push(coCert);
                                     if (!isDocClassified(coShareholderList)) pendingByCategory.incorporation.push(coShareholderList);
                                     if (!isDocClassified(coDirectorList)) pendingByCategory.incorporation.push(coDirectorList);
                                 }
@@ -1013,6 +1074,9 @@
                                 if (co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') {
                                     const creditReport = 'Personal Credit Report of ' + co.name;
                                     if (!isDocClassified(creditReport)) pendingByCategory.creditReports.push(creditReport);
+                                } else {
+                                    const bizCreditReport = 'Business Credit Report of ' + co.name;
+                                    if (!isDocClassified(bizCreditReport)) pendingByCategory.creditReports.push(bizCreditReport);
                                 }
                             });
                         }
@@ -1045,20 +1109,18 @@
 
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
-                                if (co.type === 'Individual' || co.type === 'Individual Salaried' || co.type === 'Proprietorship') {
-                                    const coItrCurrent = 'ITR of ' + currentFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1));
-                                    const coItrPrevious = 'ITR of ' + previousFY + ' of ' + (co.name || 'coApplicant' + (idx + 1) + ' name');
-                                    const coItrPreceding = 'ITR of ' + precedingFY + ' of ' + (co.name || 'coApplicant' + (idx + 1) + ' name');
-                                    const coForm26asCurrent = 'Form 26AS of ' + currentFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1));
-                                    const coForm26asPrevious = 'Form 26AS of ' + previousFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1));
-                                    const coForm26asPreceding = 'Form 26AS of ' + precedingFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1));
-                                    if (!isDocClassified(coItrCurrent)) pendingByCategory.financials.push(coItrCurrent);
-                                    if (!isDocClassified(coItrPrevious)) pendingByCategory.financials.push(coItrPrevious);
-                                    if (!isDocClassified(coItrPreceding)) pendingByCategory.financials.push(coItrPreceding);
-                                    if (!isDocClassified(coForm26asCurrent)) pendingByCategory.financials.push(coForm26asCurrent);
-                                    if (!isDocClassified(coForm26asPrevious)) pendingByCategory.financials.push(coForm26asPrevious);
-                                    if (!isDocClassified(coForm26asPreceding)) pendingByCategory.financials.push(coForm26asPreceding);
-                                }
+                                const coItrCurrent = 'ITR of ' + currentFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1));
+                                const coItrPrevious = 'ITR of ' + previousFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1));
+                                const coItrPreceding = 'ITR of ' + precedingFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1));
+                                const coForm26asCurrent = 'Form 26AS of ' + currentFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1));
+                                const coForm26asPrevious = 'Form 26AS of ' + previousFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1));
+                                const coForm26asPreceding = 'Form 26AS of ' + precedingFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1));
+                                if (!isDocClassified(coItrCurrent)) pendingByCategory.financials.push(coItrCurrent);
+                                if (!isDocClassified(coItrPrevious)) pendingByCategory.financials.push(coItrPrevious);
+                                if (!isDocClassified(coItrPreceding)) pendingByCategory.financials.push(coItrPreceding);
+                                if (!isDocClassified(coForm26asCurrent)) pendingByCategory.financials.push(coForm26asCurrent);
+                                if (!isDocClassified(coForm26asPrevious)) pendingByCategory.financials.push(coForm26asPrevious);
+                                if (!isDocClassified(coForm26asPreceding)) pendingByCategory.financials.push(coForm26asPreceding);
                             });
                         }
 
