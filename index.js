@@ -33,6 +33,7 @@ const FormData = require('form-data');
 const xlsx = require('xlsx');
 const { PDFDocument } = require('pdf-lib');
 const sharp = require('sharp');
+const { saveToGridFS, readFromGridFS, streamFromGridFS, deleteFromGridFS, deleteAllByProposal, existsInGridFS, withTempFile } = require('./gridfs');
 
 // Claude Agent API Endpoint
 app.post('/api/claude', (req, res) => {
@@ -100,15 +101,8 @@ ensureMongoDBRunning().then(() => {
 mongoose.connection.on('disconnected', () => console.log('MongoDB disconnected at', new Date().toISOString()));
 mongoose.connection.on('reconnected', () => console.log('MongoDB reconnected at', new Date().toISOString()));
 mongoose.connection.on('error', err => console.error('MongoDB connection error:', err.message));
-// Multer storage for Excel uploads
-const debtProfileStorage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/');
-  },
-  filename: function (req, file, cb) {
-    cb(null, 'debt_profile_' + Date.now() + '_' + file.originalname);
-  }
-});
+// Multer storage for Excel uploads (memoryStorage for GridFS)
+const debtProfileStorage = multer.memoryStorage();
 
 // Debt Profile Pending page
 app.get('/debt-profile/pending', async (req, res) => {
@@ -260,7 +254,7 @@ app.post('/upload-debt-profile', debtProfileUpload.single('excelFile'), async (r
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'No file uploaded' });
     }
-    const workbook = xlsx.readFile(req.file.path);
+    const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
     const data = xlsx.utils.sheet_to_json(sheet, { defval: '' });
@@ -387,10 +381,11 @@ app.post('/stage2/:proposalId/extract-debt-profile', async (req, res) => {
 
     // Process Excel files — try all sheets to find loan data
     for (const doc of excelDocs) {
-      const filePath = path.join(UPLOADS_DIR, proposalId, doc.filename);
-      if (fs.existsSync(filePath)) {
+      const fileExists = await existsInGridFS(doc.filename);
+      if (fileExists) {
         try {
-          const workbook = xlsx.readFile(filePath);
+          const fileBuffer = await readFromGridFS(doc.filename);
+          const workbook = xlsx.read(fileBuffer, { type: 'buffer' });
           console.log('\n========================================');
           console.log('📊 PROCESSING EXCEL FILE:', doc.originalName || doc.filename);
           console.log('Available sheets:', workbook.SheetNames.join(', '));
@@ -572,13 +567,12 @@ app.post('/stage2/:proposalId/extract-other-income', async (req, res) => {
     }
 
     let allRentals = [];
-    const proposalDir = path.join(UPLOADS_DIR, proposalId);
 
     for (const doc of otherIncomeDocs) {
       try {
-        const filePath = path.join(proposalDir, doc.filename);
-        if (!fs.existsSync(filePath)) {
-          console.log('File not found, skipping:', doc.filename);
+        const fileExists = await existsInGridFS(doc.filename);
+        if (!fileExists) {
+          console.log('File not found in GridFS, skipping:', doc.filename);
           continue;
         }
 
@@ -588,12 +582,16 @@ app.post('/stage2/:proposalId/extract-other-income', async (req, res) => {
 
         let fullText = '';
         const ext = path.extname(doc.filename).toLowerCase();
+        const fileBuffer = await readFromGridFS(doc.filename);
 
         // Re-OCR images directly from file (stored text may be truncated)
         if (['.jpg', '.jpeg', '.png'].includes(ext)) {
           console.log('🖼️ Running OCR on image:', doc.originalName);
-          const ocrResult = await extractTextFromImage(filePath);
-          if (ocrResult.success && ocrResult.text) {
+          let ocrResult;
+          await withTempFile(fileBuffer, doc.filename, async (tempPath) => {
+            ocrResult = await extractTextFromImage(tempPath);
+          });
+          if (ocrResult && ocrResult.success && ocrResult.text) {
             fullText = ocrResult.text;
             console.log(`✓ OCR extracted ${ocrResult.charCount} characters`);
             // Update stored text with full version
@@ -604,29 +602,31 @@ app.post('/stage2/:proposalId/extract-other-income', async (req, res) => {
               await updateProposal(proposalId, { documents: latestProposal.documents });
             }
           } else {
-            console.log('OCR failed for:', doc.originalName, ocrResult.error);
+            console.log('OCR failed for:', doc.originalName, ocrResult ? ocrResult.error : 'unknown');
             continue;
           }
         }
         // Re-extract PDFs directly from file
         else if (ext === '.pdf') {
           console.log('📄 Extracting text from PDF:', doc.originalName);
-          const pdfResult = await extractPDFWithTableDetection(filePath, false);
-          fullText = pdfResult.text || '';
+          await withTempFile(fileBuffer, doc.filename, async (tempPath) => {
+            const pdfResult = await extractPDFWithTableDetection(tempPath, false);
+            fullText = pdfResult.text || '';
 
-          // Vision OCR fallback for scanned PDFs
-          if (!fullText || fullText.trim().length < 200) {
-            console.log('Short/empty text, trying Vision OCR...');
-            try {
-              const ocrResult = await extractAllPagesWithVisionOCR(filePath);
-              if (ocrResult.success && ocrResult.text) {
-                fullText = fullText ? fullText + '\n\n' + ocrResult.text : ocrResult.text;
-                console.log(`✓ Vision OCR extracted ${ocrResult.text.length} characters`);
+            // Vision OCR fallback for scanned PDFs
+            if (!fullText || fullText.trim().length < 200) {
+              console.log('Short/empty text, trying Vision OCR...');
+              try {
+                const ocrResult = await extractAllPagesWithVisionOCR(tempPath);
+                if (ocrResult.success && ocrResult.text) {
+                  fullText = fullText ? fullText + '\n\n' + ocrResult.text : ocrResult.text;
+                  console.log(`✓ Vision OCR extracted ${ocrResult.text.length} characters`);
+                }
+              } catch (ocrErr) {
+                console.error('Vision OCR error:', ocrErr.message);
               }
-            } catch (ocrErr) {
-              console.error('Vision OCR error:', ocrErr.message);
             }
-          }
+          });
 
           if (!fullText || fullText.trim().length < 50) {
             console.log('Insufficient text from PDF, skipping:', doc.originalName);
@@ -728,14 +728,17 @@ app.post('/stage2/:proposalId/extract-turnover', async (req, res) => {
       const doc = proposal.documents[i];
       if (doc.category !== 'turnover' || !doc.filename.toLowerCase().endsWith('.pdf')) continue;
 
-      const filePath = path.join(UPLOADS_DIR, proposalId, doc.filename);
-      if (fs.existsSync(filePath)) {
+      const fileExists = await existsInGridFS(doc.filename);
+      if (fileExists) {
         try {
-          const pdfResult = await extractPDFWithTableDetection(filePath);
-          proposal.documents[i].extractedText = pdfResult.text; // Full text
-          proposal.documents[i].pages = pdfResult.numPages;
-          extractedCount++;
-          console.log(`✓ Re-extracted turnover document: ${doc.originalName} (${pdfResult.text.length} chars)`);
+          const fileBuffer = await readFromGridFS(doc.filename);
+          await withTempFile(fileBuffer, doc.filename, async (filePath) => {
+            const pdfResult = await extractPDFWithTableDetection(filePath);
+            proposal.documents[i].extractedText = pdfResult.text; // Full text
+            proposal.documents[i].pages = pdfResult.numPages;
+            extractedCount++;
+            console.log(`✓ Re-extracted turnover document: ${doc.originalName} (${pdfResult.text.length} chars)`);
+          });
         } catch (pdfErr) {
           console.error(`Error extracting PDF ${doc.filename}:`, pdfErr);
         }
@@ -857,26 +860,9 @@ const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/
 app.use(express.static('public'));
 app.set('view engine', 'ejs');
 
-// Configure multer for file uploads
-const UPLOADS_DIR = path.join(__dirname, 'uploads');
-if (!fs.existsSync(UPLOADS_DIR)) {
-  fs.mkdirSync(UPLOADS_DIR);
-}
-
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const proposalId = req.body.proposalId || req.params.proposalId;
-    const proposalDir = path.join(UPLOADS_DIR, proposalId);
-    if (!fs.existsSync(proposalDir)) {
-      fs.mkdirSync(proposalDir, { recursive: true });
-    }
-    cb(null, proposalDir);
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
+// Configure multer for file uploads (memoryStorage for GridFS)
+const UPLOADS_DIR = path.join(__dirname, 'uploads'); // kept for migration only
+const storage = multer.memoryStorage();
 
 const upload = multer({ 
   storage: storage,
@@ -940,18 +926,8 @@ async function updateProposal(proposalId, updates) {
 
 // ========== STAGE 4: WhatsApp Chat Parser + Banker Matching ==========
 
-// Multer config for policy file uploads (txt, pdf, jpg, jpeg, png)
-const policyUploadStorage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const chatDir = path.join(UPLOADS_DIR, 'chat_imports');
-    if (!fs.existsSync(chatDir)) fs.mkdirSync(chatDir, { recursive: true });
-    cb(null, chatDir);
-  },
-  filename: function (req, file, cb) {
-    const rand = Math.random().toString(36).substring(2, 8);
-    cb(null, 'policy_' + Date.now() + '_' + rand + '_' + file.originalname);
-  }
-});
+// Multer config for policy file uploads (memoryStorage for GridFS)
+const policyUploadStorage = multer.memoryStorage();
 const ALLOWED_POLICY_EXTS = ['.txt', '.pdf', '.jpg', '.jpeg', '.png'];
 const policyUpload = multer({
   storage: policyUploadStorage,
@@ -5685,60 +5661,55 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
       let pageCount = null;
       let extractedDetails = null;
       
-      // Process PDFs
+      // Process PDFs (use withTempFile since extraction scripts need file paths)
       if (file.mimetype === 'application/pdf') {
         try {
           console.log(`📄 Processing PDF: ${file.originalname}`);
-          // Use 3-tier fallback extraction
-          const pdfResult = await extractPDFWithTableDetection(file.path);
-          fullText = pdfResult.text;
-          extractedText = pdfResult.text.substring(0, 500);
-          pageCount = pdfResult.numPages;
-          
-          // Store extracted tables for later use
-          file.extractedTables = pdfResult.tables;
-          file.structuredContent = pdfResult.structuredContent;
-          
-          console.log(`✓ Extracted ${pdfResult.tables.length} tables from ${file.originalname}`);
+          await withTempFile(file.buffer, file.filename, async (tempPath) => {
+            // Use 3-tier fallback extraction
+            const pdfResult = await extractPDFWithTableDetection(tempPath);
+            fullText = pdfResult.text;
+            extractedText = pdfResult.text.substring(0, 500);
+            pageCount = pdfResult.numPages;
+
+            // Store extracted tables for later use
+            file.extractedTables = pdfResult.tables;
+            file.structuredContent = pdfResult.structuredContent;
+
+            console.log(`✓ Extracted ${pdfResult.tables.length} tables from ${file.originalname}`);
+
+            // Tier 4: Vision OCR fallback for scanned PDFs
+            const isEmptyText = !fullText || fullText.trim().length === 0;
+            const isShortFinancialText = fileDetail.category === 'financials' && fullText && fullText.trim().length > 0 && fullText.trim().length < 2000 && pageCount > 1;
+            if (isEmptyText || isShortFinancialText) {
+              const ocrCategories = ['personalId', 'creditReports', 'financials', 'incorporation'];
+              if (ocrCategories.includes(fileDetail.category)) {
+                console.log(`⚠ ${isShortFinancialText ? 'Short text (' + fullText.trim().length + ' chars) for multi-page' : 'Empty text for'} ${fileDetail.category} PDF, trying Vision OCR fallback...`);
+                try {
+                  let ocrResult;
+                  if (fileDetail.category === 'financials' || fileDetail.category === 'incorporation') {
+                    ocrResult = await extractAllPagesWithVisionOCR(tempPath);
+                  } else {
+                    ocrResult = await extractTextFromScannedPDF(tempPath);
+                  }
+                  if (ocrResult.success && ocrResult.text) {
+                    if (isShortFinancialText) {
+                      fullText = fullText.trim() + '\n\n' + ocrResult.text;
+                    } else {
+                      fullText = ocrResult.text;
+                    }
+                    extractedText = fullText.substring(0, 500);
+                    if (ocrResult.numPages) pageCount = ocrResult.numPages;
+                    console.log(`✓ Vision OCR extracted ${ocrResult.charCount || ocrResult.text.length} characters from scanned PDF`);
+                  }
+                } catch (ocrErr) {
+                  console.error('Vision OCR fallback error:', ocrErr.message);
+                }
+              }
+            }
+          });
         } catch (err) {
           console.error('PDF parsing error:', err);
-        }
-
-        // Tier 4: Vision OCR fallback for scanned PDFs
-        // For personalId/creditReports: trigger when text is empty
-        // For financials: trigger when text is too short for a multi-page ITR (scanned PDFs often
-        //   only have a text layer on the acknowledgement page, ~500 chars, while the actual
-        //   financial data is on subsequent scanned image pages)
-        const isEmptyText = !fullText || fullText.trim().length === 0;
-        const isShortFinancialText = fileDetail.category === 'financials' && fullText && fullText.trim().length > 0 && fullText.trim().length < 2000 && pageCount > 1;
-        if (isEmptyText || isShortFinancialText) {
-          const ocrCategories = ['personalId', 'creditReports', 'financials', 'incorporation'];
-          if (ocrCategories.includes(fileDetail.category)) {
-            console.log(`⚠ ${isShortFinancialText ? 'Short text (' + fullText.trim().length + ' chars) for multi-page' : 'Empty text for'} ${fileDetail.category} PDF, trying Vision OCR fallback...`);
-            try {
-              // Use multi-page OCR for financials and incorporation docs (may span multiple pages)
-              // Use single-page OCR for personalId/creditReports
-              let ocrResult;
-              if (fileDetail.category === 'financials' || fileDetail.category === 'incorporation') {
-                ocrResult = await extractAllPagesWithVisionOCR(file.path);
-              } else {
-                ocrResult = await extractTextFromScannedPDF(file.path);
-              }
-              if (ocrResult.success && ocrResult.text) {
-                // For financials with short existing text, prepend it to OCR text
-                if (isShortFinancialText) {
-                  fullText = fullText.trim() + '\n\n' + ocrResult.text;
-                } else {
-                  fullText = ocrResult.text;
-                }
-                extractedText = fullText.substring(0, 500);
-                if (ocrResult.numPages) pageCount = ocrResult.numPages;
-                console.log(`✓ Vision OCR extracted ${ocrResult.charCount || ocrResult.text.length} characters from scanned PDF`);
-              }
-            } catch (ocrErr) {
-              console.error('Vision OCR fallback error:', ocrErr.message);
-            }
-          }
         }
       }
       // Process images (JPG/PNG) with Vision OCR
@@ -5748,26 +5719,28 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
                /\.(jpe?g|png)$/i.test(file.originalname || file.filename || '')) {
         try {
           console.log(`🖼️ Processing image: ${file.originalname}`);
-          const ocrResult = await extractTextFromImage(file.path);
-          
-          if (ocrResult.success && ocrResult.text) {
-            fullText = ocrResult.text;
-            extractedText = ocrResult.text.substring(0, 500);
-            console.log(`✓ OCR extracted ${ocrResult.charCount} characters from ${file.originalname}`);
-          } else {
-            console.error('Image OCR failed:', ocrResult.error);
-          }
+          await withTempFile(file.buffer, file.filename, async (tempPath) => {
+            const ocrResult = await extractTextFromImage(tempPath);
+
+            if (ocrResult.success && ocrResult.text) {
+              fullText = ocrResult.text;
+              extractedText = ocrResult.text.substring(0, 500);
+              console.log(`✓ OCR extracted ${ocrResult.charCount} characters from ${file.originalname}`);
+            } else {
+              console.error('Image OCR failed:', ocrResult.error);
+            }
+          });
         } catch (err) {
           console.error('Image OCR error:', err);
         }
       }
-      
+
       // Process Excel files (extract text and auto-extract debt profile)
       const fileExt = path.extname(file.originalname).toLowerCase();
       if (fileExt === '.xlsx' || fileExt === '.xls') {
         try {
           console.log(`📊 Processing Excel: ${file.originalname}`);
-          const workbook = xlsx.readFile(file.path);
+          const workbook = xlsx.read(file.buffer, { type: 'buffer' });
           const sheetName = workbook.SheetNames[0];
           const sheet = workbook.Sheets[sheetName];
           // Convert to text for storage
@@ -6146,11 +6119,8 @@ app.post('/proposals/:proposalId/delete', async (req, res) => {
     const result = await Proposal.deleteOne({ id: proposalId });
 
     if (result.deletedCount > 0) {
-      // Delete uploaded files for this proposal
-      const proposalDir = path.join(UPLOADS_DIR, proposalId);
-      if (fs.existsSync(proposalDir)) {
-        fs.rmSync(proposalDir, { recursive: true, force: true });
-      }
+      // Delete all uploaded files for this proposal from GridFS
+      await deleteAllByProposal(proposalId);
 
       res.json({ success: true, message: 'Proposal deleted successfully' });
     } else {
@@ -6195,23 +6165,6 @@ app.get('/stage2/:proposalId', async (req, res) => {
       seenNames.add(file.originalName);
       return true;
     });
-  } else {
-    // Fallback: read from file system
-    const proposalDir = path.join(UPLOADS_DIR, req.params.proposalId);
-    if (fs.existsSync(proposalDir)) {
-      uploadedFiles = fs.readdirSync(proposalDir).map(filename => {
-        const filePath = path.join(proposalDir, filename);
-        const stats = fs.statSync(filePath);
-        return {
-          id: filename,
-          filename: filename,
-          originalName: filename.split('-').slice(2).join('-'),
-          category: '',
-          size: (stats.size / 1024).toFixed(2) + ' KB',
-          uploadedAt: stats.mtime
-        };
-      });
-    }
   }
 
   // Fetch debt profile data from MongoDB for this proposal
@@ -6249,123 +6202,126 @@ app.post('/stage2/:proposalId/upload', (req, res) => {
     const proposal = await getProposalById(proposalId);
     const existingDocuments = proposal.documents || [];
     
-    // Process files - extract zip files if any
+    // Process files - extract zip/rar files if any (all in-memory)
     const allFiles = [];
-    const proposalDir = path.join(UPLOADS_DIR, proposalId);
-    
+
     for (const file of files) {
       const fileExt = path.extname(file.originalname).toLowerCase();
-      
+      // Generate filename since memoryStorage doesn't set it
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+
       if (fileExt === '.zip') {
-        // Extract zip file
+        // Extract zip file from buffer
         try {
-          const zip = new AdmZip(file.path);
+          const zip = new AdmZip(file.buffer);
           const zipEntries = zip.getEntries();
 
           zipEntries.forEach(entry => {
             if (!entry.isDirectory && !entry.entryName.startsWith('__MACOSX') && !entry.name.startsWith('.')) {
-              // Extract file
+              const entryBuffer = entry.getData();
               const extractedFileName = `${Date.now()}-${entry.name}`;
-              const extractedPath = path.join(proposalDir, extractedFileName);
-
-              // Write extracted file
-              fs.writeFileSync(extractedPath, entry.getData());
-
-              // Get file stats
-              const stats = fs.statSync(extractedPath);
 
               allFiles.push({
                 filename: extractedFileName,
                 originalname: entry.name,
-                path: extractedPath,
-                size: stats.size,
+                buffer: entryBuffer,
+                size: entryBuffer.length,
                 mimetype: entry.name.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream'
               });
             }
           });
-
-          // Delete the zip file after extraction
-          fs.unlinkSync(file.path);
         } catch (err) {
           console.error('Zip extraction error:', err);
-          // If extraction fails, keep the zip file as is
-          allFiles.push(file);
+          const fallbackName = file.fieldname + '-' + uniqueSuffix + fileExt;
+          allFiles.push({ filename: fallbackName, originalname: file.originalname, buffer: file.buffer, size: file.buffer.length, mimetype: file.mimetype });
         }
       } else if (fileExt === '.rar') {
-        // Extract rar file
+        // Extract rar file from buffer
         try {
-          const rarData = fs.readFileSync(file.path);
-          const extractor = await createExtractorFromData({ data: rarData });
+          const extractor = await createExtractorFromData({ data: new Uint8Array(file.buffer) });
           const extracted = extractor.extract();
           for (const entry of extracted.files) {
             if (!entry.fileHeader.flags.directory) {
               const entryName = path.basename(entry.fileHeader.name);
               if (entryName.startsWith('.') || entry.fileHeader.name.startsWith('__MACOSX')) continue;
+              const entryBuffer = Buffer.from(entry.extraction);
               const extractedFileName = `${Date.now()}-${entryName}`;
-              const extractedPath = path.join(proposalDir, extractedFileName);
-              fs.writeFileSync(extractedPath, Buffer.from(entry.extraction));
-              const stats = fs.statSync(extractedPath);
               allFiles.push({
                 filename: extractedFileName,
                 originalname: entryName,
-                path: extractedPath,
-                size: stats.size,
+                buffer: entryBuffer,
+                size: entryBuffer.length,
                 mimetype: entryName.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream'
               });
             }
           }
-          // Delete the rar file after extraction
-          fs.unlinkSync(file.path);
         } catch (err) {
           console.error('RAR extraction error:', err);
-          allFiles.push(file);
+          const fallbackName = file.fieldname + '-' + uniqueSuffix + fileExt;
+          allFiles.push({ filename: fallbackName, originalname: file.originalname, buffer: file.buffer, size: file.buffer.length, mimetype: file.mimetype });
         }
       } else {
         // Regular file
-        allFiles.push(file);
+        const generatedName = file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname);
+        allFiles.push({
+          filename: generatedName,
+          originalname: file.originalname,
+          buffer: file.buffer,
+          size: file.buffer.length,
+          mimetype: file.mimetype
+        });
       }
     }
-    
-    // Compress large files (>50MB) before further processing
+
+    // Compress large files (>50MB) using temp files
     for (const file of allFiles) {
-      const result = await compressFileIfNeeded(file.path, file.size, file.mimetype);
-      if (result.compressed) {
-        file.size = result.newSize;
+      if (file.size > COMPRESS_THRESHOLD) {
+        try {
+          const compressedBuffer = await withTempFile(file.buffer, file.filename, async (tempPath) => {
+            const result = await compressFileIfNeeded(tempPath, file.size, file.mimetype);
+            if (result.compressed) {
+              file.size = result.newSize;
+              return fs.readFileSync(tempPath);
+            }
+            return null;
+          });
+          if (compressedBuffer) {
+            file.buffer = compressedBuffer;
+          }
+        } catch (compErr) {
+          console.error('Compression error:', compErr.message);
+        }
       }
     }
 
     // Check for duplicate filenames
     const duplicates = [];
     const uploadedFileNames = allFiles.map(f => f.originalname);
-    
+
     uploadedFileNames.forEach(fileName => {
       const isDuplicate = existingDocuments.some(doc => doc.originalName === fileName);
       if (isDuplicate) {
         duplicates.push(fileName);
       }
     });
-    
+
     if (duplicates.length > 0) {
-      // Delete the uploaded files since they're duplicates
-      allFiles.forEach(file => {
-        if (fs.existsSync(file.path)) {
-          fs.unlinkSync(file.path);
-        }
-      });
-      
-      return res.status(400).json({ 
-        success: false, 
+      return res.status(400).json({
+        success: false,
         error: `Duplicate files detected: ${duplicates.join(', ')}. These documents have already been uploaded.`,
         duplicates: duplicates
       });
     }
-    
-    // Create basic file details immediately without processing
+
+    // Save files to GridFS and create file details
     const fileDetails = [];
     for (const file of allFiles) {
       // Auto-categorize based on filename only (quick)
       const autoCategory = autoCategorizeDocument(file.originalname, '');
-      
+
+      // Save to GridFS with proposal metadata
+      await saveToGridFS(file.buffer, file.filename, { proposalId, originalName: file.originalname });
+
       fileDetails.push({
         id: file.filename,
         filename: file.filename,
@@ -6379,17 +6335,17 @@ app.post('/stage2/:proposalId/upload', (req, res) => {
         uploadedAt: new Date().toISOString()
       });
     }
-    
+
     // Update proposal with document info (reuse the proposal object we already fetched)
     if (!proposal.documents) {
       proposal.documents = [];
     }
     proposal.documents.push(...fileDetails);
     await updateProposal(proposalId, { documents: proposal.documents });
-    
+
     // Send immediate response
     res.json({ success: true, files: fileDetails, message: 'Files uploaded successfully. Processing in background...' });
-    
+
     // Process files in background (don't await)
     processFilesInBackground(allFiles, proposalId, fileDetails).catch(err => {
       console.error('Background processing error:', err);
@@ -6406,130 +6362,58 @@ app.post('/stage2/:proposalId/delete-multiple-documents', async (req, res) => {
   try {
     const proposalId = req.params.proposalId;
     const { fileIds } = req.body;
-    
-    if (!fileIds || !Array.isArray(fileIds) || fileIds.length === 0) {
-      return res.status(400).json({ success: false, error: 'File IDs array is required' });
-    }
-    
-    // Get proposal
-    const proposal = await getProposalById(proposalId);
-    if (!proposal) {
-      return res.status(404).json({ success: false, error: 'Proposal not found' });
-    }
-    
-    if (!proposal.documents || !Array.isArray(proposal.documents)) {
-      return res.status(400).json({ success: false, error: 'No documents found in proposal' });
-    }
-    
-    let deletedCount = 0;
-    const errors = [];
-    
-    // Process each file ID
-    fileIds.forEach(fileId => {
-      const docIndex = proposal.documents.findIndex(doc => doc.id === fileId || doc.filename === fileId);
-      
-      if (docIndex !== -1) {
-        const document = proposal.documents[docIndex];
-        
-        // Delete physical file
-        const filePath = path.join(UPLOADS_DIR, proposalId, document.filename);
-        
-        if (fs.existsSync(filePath)) {
-          try {
-            fs.unlinkSync(filePath);
-            deletedCount++;
-          } catch (err) {
-            errors.push(`Failed to delete file: ${document.originalName}`);
-          }
-        }
-        
-        // Remove from proposal documents array
-        proposal.documents.splice(docIndex, 1);
-      } else {
-        errors.push(`Document not found: ${fileId}`);
-      }
-    });
-    
-    // Update proposal
-    await updateProposal(proposalId, { documents: proposal.documents });
-    
-    if (errors.length > 0) {
-      return res.json({ 
-        success: true, 
-        deletedCount, 
-        message: `Deleted ${deletedCount} documents with ${errors.length} errors`,
-        errors 
-      });
-    }
-    
-    res.json({ success: true, deletedCount, message: `Successfully deleted ${deletedCount} documents` });
-  } catch (error) {
-    console.error('Bulk delete error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
 
-// Delete multiple documents endpoint
-app.post('/stage2/:proposalId/delete-multiple-documents', async (req, res) => {
-  try {
-    const proposalId = req.params.proposalId;
-    const { fileIds } = req.body;
-    
     if (!fileIds || !Array.isArray(fileIds) || fileIds.length === 0) {
       return res.status(400).json({ success: false, error: 'File IDs array is required' });
     }
-    
+
     // Get proposal
     const proposal = await getProposalById(proposalId);
     if (!proposal) {
       return res.status(404).json({ success: false, error: 'Proposal not found' });
     }
-    
+
     if (!proposal.documents || !Array.isArray(proposal.documents)) {
       return res.status(400).json({ success: false, error: 'No documents found in proposal' });
     }
-    
+
     let deletedCount = 0;
     const errors = [];
-    
+
     // Process each file ID
-    fileIds.forEach(fileId => {
+    for (const fileId of fileIds) {
       const docIndex = proposal.documents.findIndex(doc => doc.id === fileId || doc.filename === fileId);
-      
+
       if (docIndex !== -1) {
         const document = proposal.documents[docIndex];
-        
-        // Delete physical file
-        const filePath = path.join(UPLOADS_DIR, proposalId, document.filename);
-        
-        if (fs.existsSync(filePath)) {
-          try {
-            fs.unlinkSync(filePath);
-            deletedCount++;
-          } catch (err) {
-            errors.push(`Failed to delete file: ${document.originalName}`);
-          }
+
+        // Delete file from GridFS
+        try {
+          await deleteFromGridFS(document.filename);
+          deletedCount++;
+        } catch (err) {
+          errors.push(`Failed to delete file: ${document.originalName}`);
         }
-        
+
         // Remove from proposal documents array
         proposal.documents.splice(docIndex, 1);
       } else {
         errors.push(`Document not found: ${fileId}`);
       }
-    });
-    
+    }
+
     // Update proposal
     await updateProposal(proposalId, { documents: proposal.documents });
-    
+
     if (errors.length > 0) {
-      return res.json({ 
-        success: true, 
-        deletedCount, 
+      return res.json({
+        success: true,
+        deletedCount,
         message: `Deleted ${deletedCount} documents with ${errors.length} errors`,
-        errors 
+        errors
       });
     }
-    
+
     res.json({ success: true, deletedCount, message: `Successfully deleted ${deletedCount} documents` });
   } catch (error) {
     console.error('Bulk delete error:', error);
@@ -6572,24 +6456,22 @@ app.post('/stage2/:proposalId/delete-document', async (req, res) => {
     }
     
     const document = proposal.documents[docIndex];
-    
-    // Delete physical file
-    const filePath = path.join(UPLOADS_DIR, proposalId, document.filename);
-    console.log('Attempting to delete file:', filePath);
-    
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-      console.log('File deleted successfully');
-    } else {
-      console.log('File not found on disk');
+
+    // Delete file from GridFS
+    console.log('Attempting to delete file from GridFS:', document.filename);
+    try {
+      await deleteFromGridFS(document.filename);
+      console.log('File deleted from GridFS successfully');
+    } catch (delErr) {
+      console.log('GridFS delete error (may not exist):', delErr.message);
     }
-    
+
     // Remove from proposal documents array
     proposal.documents.splice(docIndex, 1);
     await updateProposal(proposalId, { documents: proposal.documents });
-    
+
     console.log('Document removed from proposal. Remaining:', proposal.documents.length);
-    
+
     res.json({ success: true, message: 'Document deleted successfully' });
   } catch (error) {
     console.error('Delete error:', error);
@@ -6597,21 +6479,37 @@ app.post('/stage2/:proposalId/delete-document', async (req, res) => {
   }
 });
 
-// Serve uploaded files
-app.get('/uploads/:proposalId/:filename', (req, res) => {
-  const { proposalId, filename } = req.params;
-  const filepath = path.join(__dirname, 'uploads', proposalId, filename);
+// Serve uploaded files from GridFS
+app.get('/uploads/:proposalId/:filename', async (req, res) => {
+  try {
+    const { filename } = req.params;
+    const exists = await existsInGridFS(filename);
+    if (!exists) {
+      return res.status(404).send('File not found');
+    }
 
-  // Check if file exists
-  if (!fs.existsSync(filepath)) {
-    return res.status(404).send('File not found');
+    // Set Content-Type based on extension
+    const ext = path.extname(filename).toLowerCase();
+    const mimeTypes = {
+      '.pdf': 'application/pdf',
+      '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.doc': 'application/msword',
+      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.xls': 'application/vnd.ms-excel',
+      '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      '.zip': 'application/zip', '.rar': 'application/x-rar-compressed'
+    };
+    if (mimeTypes[ext]) res.set('Content-Type', mimeTypes[ext]);
+
+    await streamFromGridFS(filename, res);
+  } catch (err) {
+    console.error('File serve error:', err.message);
+    res.status(404).send('File not found');
   }
-
-  // Send the file
-  res.sendFile(filepath);
 });
 
-// Decrypt password-protected PDF and save without password
+// Decrypt password-protected PDF and save without password (GridFS)
 app.post('/api/decrypt-pdf', async (req, res) => {
   try {
     const { proposalId, filename, password } = req.body;
@@ -6620,70 +6518,76 @@ app.post('/api/decrypt-pdf', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Missing required fields' });
     }
 
-    const filepath = path.join(__dirname, 'uploads', proposalId, filename);
-
-    if (!fs.existsSync(filepath)) {
+    const exists = await existsInGridFS(filename);
+    if (!exists) {
       return res.status(404).json({ success: false, error: 'File not found' });
     }
 
-    // Try qpdf first (available on Linux/Railway), fall back to Python PyMuPDF (Windows dev)
-    const tempPath = filepath + '.decrypted.tmp';
-    const useQpdf = process.platform !== 'win32';
+    // Read file from GridFS, decrypt via temp file, save back
+    const fileBuffer = await readFromGridFS(filename);
 
-    if (useQpdf) {
-      // Use qpdf (installed via apt in Dockerfile)
-      return new Promise((resolve) => {
-        const qpdfProcess = spawn('qpdf', ['--password=' + password, '--decrypt', filepath, tempPath]);
-        let stderr = '';
-        qpdfProcess.stderr.on('data', (data) => { stderr += data.toString(); });
-        qpdfProcess.on('close', (code) => {
-          if (code === 0 || (code === 3 && fs.existsSync(tempPath))) {
-            // code 0 = success, code 3 = success with warnings (e.g. minor PDF structure issues)
-            fs.renameSync(tempPath, filepath);
-            res.json({ success: true, message: 'PDF decrypted successfully' });
-          } else {
-            if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-            if (stderr.includes('invalid password')) {
-              res.status(401).json({ success: false, error: 'Incorrect password' });
+    await withTempFile(fileBuffer, filename, async (tempPath) => {
+      const tempDecrypted = tempPath + '.decrypted.tmp';
+      const useQpdf = process.platform !== 'win32';
+
+      if (useQpdf) {
+        await new Promise((resolve, reject) => {
+          const qpdfProcess = spawn('qpdf', ['--password=' + password, '--decrypt', tempPath, tempDecrypted]);
+          let stderr = '';
+          qpdfProcess.stderr.on('data', (data) => { stderr += data.toString(); });
+          qpdfProcess.on('close', (code) => {
+            if (code === 0 || (code === 3 && fs.existsSync(tempDecrypted))) {
+              resolve();
             } else {
-              res.status(500).json({ success: false, error: stderr.trim() || 'Failed to decrypt PDF' });
+              if (fs.existsSync(tempDecrypted)) fs.unlinkSync(tempDecrypted);
+              if (stderr.includes('invalid password')) {
+                reject(new Error('INCORRECT_PASSWORD'));
+              } else {
+                reject(new Error(stderr.trim() || 'Failed to decrypt PDF'));
+              }
             }
-          }
-          resolve();
+          });
+          qpdfProcess.on('error', (err) => reject(new Error('qpdf not available: ' + err.message)));
         });
-        qpdfProcess.on('error', (err) => {
-          res.status(500).json({ success: false, error: 'qpdf not available: ' + err.message });
-          resolve();
-        });
-      });
-    } else {
-      // Windows: use Python PyMuPDF
-      const pythonScript = path.join(__dirname, 'decrypt_pdf.py');
-      return new Promise((resolve) => {
-        const pythonProcess = spawn('python', [pythonScript, filepath, password], { shell: true });
-        let stderr = '';
-        pythonProcess.stderr.on('data', (data) => { stderr += data.toString(); });
-        pythonProcess.on('close', (code) => {
-          if (code === 0) {
-            res.json({ success: true, message: 'PDF decrypted successfully' });
-          } else {
-            const errorMsg = stderr.trim();
-            if (errorMsg.includes('Incorrect password')) {
-              res.status(401).json({ success: false, error: 'Incorrect password' });
+      } else {
+        const pythonScript = path.join(__dirname, 'decrypt_pdf.py');
+        await new Promise((resolve, reject) => {
+          const pythonProcess = spawn('python', [pythonScript, tempPath, password], { shell: true });
+          let stderr = '';
+          pythonProcess.stderr.on('data', (data) => { stderr += data.toString(); });
+          pythonProcess.on('close', (code) => {
+            if (code === 0) {
+              // Python script modifies file in-place, so decrypted file is at tempPath
+              resolve();
             } else {
-              res.status(500).json({ success: false, error: errorMsg || 'Failed to decrypt PDF' });
+              const errorMsg = stderr.trim();
+              if (errorMsg.includes('Incorrect password')) {
+                reject(new Error('INCORRECT_PASSWORD'));
+              } else {
+                reject(new Error(errorMsg || 'Failed to decrypt PDF'));
+              }
             }
-          }
-          resolve();
+          });
+          pythonProcess.on('error', (err) => reject(new Error('Failed to run decryption: ' + err.message)));
         });
-        pythonProcess.on('error', (err) => {
-          res.status(500).json({ success: false, error: 'Failed to run decryption: ' + err.message });
-          resolve();
-        });
-      });
-    }
+      }
+
+      // Read decrypted file and save back to GridFS
+      const decryptedPath = useQpdf ? tempDecrypted : tempPath;
+      const decryptedBuffer = fs.readFileSync(decryptedPath);
+      if (useQpdf && fs.existsSync(tempDecrypted)) fs.unlinkSync(tempDecrypted);
+
+      // Delete old and save new
+      await deleteFromGridFS(filename);
+      await saveToGridFS(decryptedBuffer, filename, { proposalId });
+    });
+
+    res.json({ success: true, message: 'PDF decrypted successfully' });
   } catch (error) {
     console.error('PDF decryption error:', error);
+    if (error.message === 'INCORRECT_PASSWORD') {
+      return res.status(401).json({ success: false, error: 'Incorrect password' });
+    }
     res.status(500).json({ success: false, error: error.message || 'Failed to decrypt PDF' });
   }
 });
@@ -6767,17 +6671,17 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
     }
     
     let processedCount = 0;
-    const proposalDir = path.join(UPLOADS_DIR, proposalId);
     const extractionResults = [];
-    
+    let updated = false;
+
     // Process each incorporation document
     for (let i = 0; i < proposal.documents.length; i++) {
       const doc = proposal.documents[i];
 
       if (doc.category === 'incorporation') {
-        const filePath = path.join(proposalDir, doc.filename);
+        const fileExists = await existsInGridFS(doc.filename);
 
-        if (fs.existsSync(filePath) && doc.originalName.toLowerCase().endsWith('.pdf')) {
+        if (fileExists && doc.originalName.toLowerCase().endsWith('.pdf')) {
           // For Private Limited companies, prioritize "List of Directors & Shareholders" document
           // Fallback to AOA only if the dedicated document is not available
           if (proposal.applicantType === 'Private Limited' || proposal.applicantType === 'Public Limited') {
@@ -6820,6 +6724,8 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
           }
 
           try {
+            const fileBuffer = await readFromGridFS(doc.filename);
+            await withTempFile(fileBuffer, doc.filename, async (filePath) => {
             // Use table-aware extraction for reprocessing
             const pdfResult = await extractPDFWithTableDetection(filePath);
             let fullText = pdfResult.text;
@@ -6928,6 +6834,7 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
             
             console.log('Updated extractedDetails for:', doc.originalName);
             processedCount++;
+            }); // end withTempFile
           } catch (err) {
             console.error('Error reprocessing', doc.originalName, err);
             extractionResults.push({
@@ -7033,9 +6940,9 @@ app.post('/stage2/:proposalId/reprocess-collateral', async (req, res) => {
 
     for (const doc of collateralDocs) {
       try {
-        const filePath = path.join(UPLOADS_DIR, proposalId, doc.filename);
-        if (!fs.existsSync(filePath)) {
-          console.log(`⚠ File not found: ${doc.filename}`);
+        const fileExists = await existsInGridFS(doc.filename);
+        if (!fileExists) {
+          console.log(`⚠ File not found in GridFS: ${doc.filename}`);
           continue;
         }
 
@@ -7043,23 +6950,26 @@ app.post('/stage2/:proposalId/reprocess-collateral', async (req, res) => {
         let fullText = doc.extractedText || '';
         let tables = [];
         if (doc.filename.endsWith('.pdf')) {
-          const pdfResult = await extractPDFWithTableDetection(filePath);
-          fullText = pdfResult.text;
-          tables = pdfResult.tables || [];
+          const fileBuffer = await readFromGridFS(doc.filename);
+          await withTempFile(fileBuffer, doc.filename, async (filePath) => {
+            const pdfResult = await extractPDFWithTableDetection(filePath);
+            fullText = pdfResult.text;
+            tables = pdfResult.tables || [];
 
-          // Vision OCR fallback for scanned PDFs
-          if (!fullText || fullText.trim().length < 500) {
-            console.log(`⚠ Short text (${fullText.length} chars) for collateral doc, trying Vision OCR...`);
-            try {
-              const ocrResult = await extractAllPagesWithVisionOCR(filePath);
-              if (ocrResult.success && ocrResult.text && ocrResult.text.length > fullText.length) {
-                fullText = ocrResult.text;
-                console.log(`✓ Vision OCR improved text: ${fullText.length} chars`);
+            // Vision OCR fallback for scanned PDFs
+            if (!fullText || fullText.trim().length < 500) {
+              console.log(`⚠ Short text (${fullText.length} chars) for collateral doc, trying Vision OCR...`);
+              try {
+                const ocrResult = await extractAllPagesWithVisionOCR(filePath);
+                if (ocrResult.success && ocrResult.text && ocrResult.text.length > fullText.length) {
+                  fullText = ocrResult.text;
+                  console.log(`✓ Vision OCR improved text: ${fullText.length} chars`);
+                }
+              } catch (ocrErr) {
+                console.error('Vision OCR error:', ocrErr.message);
               }
-            } catch (ocrErr) {
-              console.error('Vision OCR error:', ocrErr.message);
             }
-          }
+          });
 
           // Update stored text
           const docIdx = proposal.documents.findIndex(d => d.filename === doc.filename);
@@ -7141,21 +7051,26 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
     }
     
     let processedCount = 0;
-    const proposalDir = path.join(UPLOADS_DIR, proposalId);
     const extractionResults = [];
-    
+
     // Process each banking document
     for (let i = 0; i < proposal.documents.length; i++) {
       const doc = proposal.documents[i];
-      
+
       if (doc.category === 'banking') {
-        const filePath = path.join(proposalDir, doc.filename);
-        
-        if (fs.existsSync(filePath) && doc.originalName.toLowerCase().endsWith('.pdf')) {
+        const fileExists = await existsInGridFS(doc.filename);
+
+        if (fileExists && doc.originalName.toLowerCase().endsWith('.pdf')) {
           try {
+            const fileBuffer = await readFromGridFS(doc.filename);
+            let fullText = '';
+            let pdfResult;
+            let bankStatementDetails;
+
+            await withTempFile(fileBuffer, doc.filename, async (filePath) => {
             // Use table-aware extraction for bank statements
-            const pdfResult = await extractPDFWithTableDetection(filePath);
-            const fullText = pdfResult.text;
+            pdfResult = await extractPDFWithTableDetection(filePath);
+            fullText = pdfResult.text;
             
             console.log('\n========================================');
             console.log('🏦 EXTRACTING BANK STATEMENT:', doc.originalName);
@@ -7169,7 +7084,6 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
             
             // Try Document AI for bank statement extraction
             const aiResult = await extractWithDocumentAI(fullText, 'bank-statement', pdfResult.tables || []);
-            let bankStatementDetails;
             
             if (aiResult.success && aiResult.data) {
               console.log('✓ Document AI extraction successful for:', doc.originalName);
@@ -7247,6 +7161,8 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
             console.log(JSON.stringify(bankStatementDetails, null, 2));
             console.log('========================================\n');
 
+            }); // end withTempFile
+
             proposal.documents[i].extractedDetails = bankStatementDetails;
             proposal.documents[i].extractedText = fullText; // Save full text for EMI verification
             proposal.documents[i].pages = pdfResult.numPages;
@@ -7258,7 +7174,7 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
               method: pdfResult.method || 'pymupdf',
               ...bankStatementDetails
             });
-            
+
             processedCount++;
           } catch (err) {
             console.error('Error processing bank statement', doc.originalName, err);
@@ -7396,7 +7312,6 @@ app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
     }
 
     let processedCount = 0;
-    const proposalDir = path.join(UPLOADS_DIR, proposalId);
     const extractionResults = [];
 
     // Process each financial document
@@ -7404,14 +7319,18 @@ app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
       const doc = proposal.documents[i];
 
       if (doc.category === 'financials') {
-        const filePath = path.join(proposalDir, doc.filename);
+        const fileExists = await existsInGridFS(doc.filename);
 
-        if (fs.existsSync(filePath) && doc.originalName.toLowerCase().endsWith('.pdf')) {
+        if (fileExists && doc.originalName.toLowerCase().endsWith('.pdf')) {
           try {
+            const fileBuffer = await readFromGridFS(doc.filename);
+            let fullText = '';
+            let pdfResult;
+
+            await withTempFile(fileBuffer, doc.filename, async (filePath) => {
             // Extract full text from PDF (table extraction disabled for speed)
-            const pdfResult = await extractPDFWithTableDetection(filePath, false);
-            let fullText = pdfResult.text;
-            const tables = [];
+            pdfResult = await extractPDFWithTableDetection(filePath, false);
+            fullText = pdfResult.text;
 
             console.log('\n========================================');
             console.log('📊 EXTRACTING FINANCIAL DOC:', doc.originalName);
@@ -7434,6 +7353,7 @@ app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
                 console.error('Vision OCR fallback error:', ocrErr.message);
               }
             }
+            });
 
             // Check for each component with strict keyword matching
             const textLower = fullText.toLowerCase();
@@ -7575,8 +7495,8 @@ app.post('/stage2/:proposalId/reprocess-personal-docs', async (req, res) => {
     const results = [];
 
     for (const doc of docsToProcess) {
-      const filePath = path.join(__dirname, 'uploads', proposalId, doc.filename);
-      if (!fs.existsSync(filePath)) {
+      const fileExists = await existsInGridFS(doc.filename);
+      if (!fileExists) {
         results.push({ file: doc.originalName, status: 'skipped', reason: 'File not found' });
         continue;
       }
@@ -7584,34 +7504,37 @@ app.post('/stage2/:proposalId/reprocess-personal-docs', async (req, res) => {
       try {
         let fullText = '';
         const isImage = /\.(jpe?g|png)$/i.test(doc.originalName || doc.filename || '');
+        const fileBuffer = await readFromGridFS(doc.filename);
 
-        if (isImage) {
-          // Image file — use Vision OCR directly
-          console.log(`Using Vision OCR for image: ${doc.originalName}`);
-          const ocrResult = await extractTextFromImage(filePath);
-          if (ocrResult.success && ocrResult.text) {
-            fullText = ocrResult.text;
-          }
-        } else {
-          // Try standard PDF extraction first
-          try {
-            const pdfResult = await extractPDFWithTableDetection(filePath);
-            fullText = pdfResult.text || '';
-            if (pdfResult.numPages) doc.pages = pdfResult.numPages;
-          } catch (e) {
-            console.log('Standard extraction failed for', doc.originalName);
-          }
-
-          // If empty, try Vision OCR for scanned PDFs
-          if (!fullText || fullText.trim().length === 0) {
-            console.log(`Using Vision OCR for scanned PDF: ${doc.originalName}`);
-            const ocrResult = await extractTextFromScannedPDF(filePath);
+        await withTempFile(fileBuffer, doc.filename, async (filePath) => {
+          if (isImage) {
+            // Image file — use Vision OCR directly
+            console.log(`Using Vision OCR for image: ${doc.originalName}`);
+            const ocrResult = await extractTextFromImage(filePath);
             if (ocrResult.success && ocrResult.text) {
               fullText = ocrResult.text;
-              if (ocrResult.numPages) doc.pages = ocrResult.numPages;
+            }
+          } else {
+            // Try standard PDF extraction first
+            try {
+              const pdfResult = await extractPDFWithTableDetection(filePath);
+              fullText = pdfResult.text || '';
+              if (pdfResult.numPages) doc.pages = pdfResult.numPages;
+            } catch (e) {
+              console.log('Standard extraction failed for', doc.originalName);
+            }
+
+            // If empty, try Vision OCR for scanned PDFs
+            if (!fullText || fullText.trim().length === 0) {
+              console.log(`Using Vision OCR for scanned PDF: ${doc.originalName}`);
+              const ocrResult = await extractTextFromScannedPDF(filePath);
+              if (ocrResult.success && ocrResult.text) {
+                fullText = ocrResult.text;
+                if (ocrResult.numPages) doc.pages = ocrResult.numPages;
+              }
             }
           }
-        }
+        });
 
         if (!fullText || fullText.trim().length === 0) {
           results.push({ file: doc.originalName, status: 'failed', reason: 'No text extracted' });
@@ -8205,27 +8128,21 @@ app.get('/stage3/:proposalId/download-zip', async (req, res) => {
       otherDocuments: 'Other Documents'
     };
 
-    // Diagnose mode: return JSON showing which files exist on disk vs in DB
+    // Diagnose mode: return JSON showing which files exist in GridFS
     if (req.query.diagnose === 'true') {
-      const proposalDir = path.join(UPLOADS_DIR, req.params.proposalId);
-      const dirExists = fs.existsSync(proposalDir);
-      const diskFiles = dirExists ? fs.readdirSync(proposalDir) : [];
-      const fileStatus = docs.map(doc => {
-        const filePath = path.join(UPLOADS_DIR, req.params.proposalId, doc.filename);
-        return {
+      const fileStatus = [];
+      for (const doc of docs) {
+        const exists = await existsInGridFS(doc.filename);
+        fileStatus.push({
           category: doc.category,
           originalName: doc.originalName,
           filename: doc.filename,
-          existsOnDisk: fs.existsSync(filePath)
-        };
-      });
+          existsInGridFS: exists
+        });
+      }
       return res.json({
         proposalId: req.params.proposalId,
-        uploadsDir: UPLOADS_DIR,
-        proposalDirExists: dirExists,
         totalDocsInDB: docs.length,
-        filesOnDisk: diskFiles.length,
-        diskFiles: diskFiles,
         fileStatus: fileStatus
       });
     }
@@ -8237,41 +8154,33 @@ app.get('/stage3/:proposalId/download-zip', async (req, res) => {
     const missingFiles = [];
     const usedPaths = new Set();
 
-    docs.forEach(doc => {
-      const filePath = path.join(UPLOADS_DIR, req.params.proposalId, doc.filename);
-      if (!fs.existsSync(filePath)) {
+    for (const doc of docs) {
+      try {
+        const fileBuffer = await readFromGridFS(doc.filename);
+        const folder = categoryLabels[doc.category] || 'Other';
+        let fileName = doc.originalName || doc.filename;
+        // Handle duplicate originalNames within the same category
+        let zipPath = folder + '/' + fileName;
+        if (usedPaths.has(zipPath)) {
+          const ext = path.extname(fileName);
+          const base = path.basename(fileName, ext);
+          let counter = 2;
+          while (usedPaths.has(folder + '/' + base + '_' + counter + ext)) counter++;
+          fileName = base + '_' + counter + ext;
+          zipPath = folder + '/' + fileName;
+        }
+        usedPaths.add(zipPath);
+        zip.addFile(zipPath, fileBuffer);
+        addedCount++;
+      } catch (err) {
         missingCount++;
         missingFiles.push({ category: doc.category, filename: doc.filename, originalName: doc.originalName });
-        return;
       }
-      const folder = categoryLabels[doc.category] || 'Other';
-      let fileName = doc.originalName || doc.filename;
-      // Handle duplicate originalNames within the same category
-      let zipPath = folder + '/' + fileName;
-      if (usedPaths.has(zipPath)) {
-        const ext = path.extname(fileName);
-        const base = path.basename(fileName, ext);
-        let counter = 2;
-        while (usedPaths.has(folder + '/' + base + '_' + counter + ext)) counter++;
-        fileName = base + '_' + counter + ext;
-        zipPath = folder + '/' + fileName;
-      }
-      usedPaths.add(zipPath);
-      zip.addFile(zipPath, fs.readFileSync(filePath));
-      addedCount++;
-    });
+    }
 
-    console.log(`ZIP download: ${addedCount} files added, ${missingCount} files missing on disk`);
+    console.log(`ZIP download: ${addedCount} files added, ${missingCount} files missing in GridFS`);
     if (missingFiles.length > 0) {
       console.log('Missing files:', JSON.stringify(missingFiles, null, 2));
-      const proposalDir = path.join(UPLOADS_DIR, req.params.proposalId);
-      if (fs.existsSync(proposalDir)) {
-        const diskFiles = fs.readdirSync(proposalDir);
-        console.log(`Files on disk in ${proposalDir}: ${diskFiles.length} files`);
-        console.log('Disk files:', diskFiles.join(', '));
-      } else {
-        console.log('Proposal directory does NOT exist on disk:', proposalDir);
-      }
     }
 
     const applicant = (proposal.applicantName || proposal.customerName || 'proposal').replace(/[^a-zA-Z0-9 ]/g, '').trim().replace(/\s+/g, '_');
@@ -8297,42 +8206,47 @@ app.post('/stage3/:proposalId/reextract-financials', async (req, res) => {
     }
 
     let processedCount = 0;
-    const proposalDir = path.join(UPLOADS_DIR, proposalId);
 
     for (let i = 0; i < proposal.documents.length; i++) {
       const doc = proposal.documents[i];
       if (doc.category !== 'financials') continue;
 
-      const filePath = path.join(proposalDir, doc.filename);
-      if (!fs.existsSync(filePath) || !doc.originalName.toLowerCase().endsWith('.pdf')) continue;
+      const fileExists = await existsInGridFS(doc.filename);
+      if (!fileExists || !doc.originalName.toLowerCase().endsWith('.pdf')) continue;
 
       try {
         console.log('\n========================================');
         console.log('RE-EXTRACTING FINANCIAL DOC:', doc.originalName);
         console.log('========================================');
 
-        const pdfResult = await extractPDFWithTableDetection(filePath, false);
-        let fullText = pdfResult.text;
+        const fileBuffer = await readFromGridFS(doc.filename);
+        let fullText = '';
+        let pdfResult;
 
-        // Vision OCR for scanned/image PDFs
-        const charsPerPage = fullText.length / (pdfResult.numPages || 1);
-        const isShortText = fullText.trim().length > 0 && fullText.trim().length < 2000 && pdfResult.numPages > 1;
-        if ((pdfResult.numPages > 3 && charsPerPage < 200) || isShortText) {
-          console.log('Attempting multi-page Vision OCR...');
-          try {
-            const ocrResult = await extractAllPagesWithVisionOCR(filePath);
-            if (ocrResult.success && ocrResult.text.length > fullText.length) {
-              if (isShortText && fullText.trim().length > 0) {
-                fullText = fullText + '\n\n' + ocrResult.text;
-              } else {
-                fullText = ocrResult.text;
+        await withTempFile(fileBuffer, doc.filename, async (filePath) => {
+          pdfResult = await extractPDFWithTableDetection(filePath, false);
+          fullText = pdfResult.text;
+
+          // Vision OCR for scanned/image PDFs
+          const charsPerPage = fullText.length / (pdfResult.numPages || 1);
+          const isShortText = fullText.trim().length > 0 && fullText.trim().length < 2000 && pdfResult.numPages > 1;
+          if ((pdfResult.numPages > 3 && charsPerPage < 200) || isShortText) {
+            console.log('Attempting multi-page Vision OCR...');
+            try {
+              const ocrResult = await extractAllPagesWithVisionOCR(filePath);
+              if (ocrResult.success && ocrResult.text.length > fullText.length) {
+                if (isShortText && fullText.trim().length > 0) {
+                  fullText = fullText + '\n\n' + ocrResult.text;
+                } else {
+                  fullText = ocrResult.text;
+                }
+                console.log('Vision OCR improved extraction:', fullText.length, 'chars');
               }
-              console.log('Vision OCR improved extraction:', fullText.length, 'chars');
+            } catch (ocrErr) {
+              console.error('Vision OCR error:', ocrErr.message);
             }
-          } catch (ocrErr) {
-            console.error('Vision OCR error:', ocrErr.message);
           }
-        }
+        });
 
         proposal.documents[i].extractedText = fullText;
         proposal.documents[i].pages = pdfResult.numPages;
@@ -8867,13 +8781,12 @@ app.post('/admin/import-chat', policyUpload.array('policyFiles', 100), async (re
       const ext = path.extname(file.originalname).toLowerCase();
       const isBinary = ['.pdf', '.jpg', '.jpeg', '.png'].includes(ext);
 
-      // Compute file hash: binary for images/PDFs, utf8 string for txt
+      // Compute file hash from buffer (memoryStorage)
       let fileHash;
       if (isBinary) {
-        const fileBuffer = fs.readFileSync(file.path);
-        fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+        fileHash = crypto.createHash('sha256').update(file.buffer).digest('hex');
       } else {
-        const fileContent = fs.readFileSync(file.path, 'utf8');
+        const fileContent = file.buffer.toString('utf8');
         fileHash = computeFileHash(fileContent);
       }
 
@@ -8898,7 +8811,7 @@ app.post('/admin/import-chat', policyUpload.array('policyFiles', 100), async (re
       const importDoc = await ChatImport.create({
         filename: file.originalname,
         file_hash_sha256: fileHash,
-        file_size_bytes: file.size,
+        file_size_bytes: file.buffer.length,
         import_type: importType,
         status: 'uploading',
         processing_log: ['File uploaded: ' + file.originalname + ' (' + importType + ')']
@@ -8908,11 +8821,15 @@ app.post('/admin/import-chat', policyUpload.array('policyFiles', 100), async (re
 
       // Dispatch to appropriate processor
       if (ext === '.txt') {
-        const fileContent = fs.readFileSync(file.path, 'utf8');
+        const fileContent = file.buffer.toString('utf8');
         processLargeChat(importDoc._id, fileContent);
       } else {
+        // Write buffer to temp file for OCR processing (runs in background)
+        const os = require('os');
+        const tempPath = path.join(os.tmpdir(), `chat_import_${Date.now()}_${file.originalname}`);
+        fs.writeFileSync(tempPath, file.buffer);
         const fileType = ext === '.pdf' ? 'pdf' : 'image';
-        processDocumentImport(importDoc._id, file.path, fileType);
+        processDocumentImport(importDoc._id, tempPath, fileType);
       }
 
       imports.push({ id: importDoc._id, filename: file.originalname });
@@ -9429,7 +9346,7 @@ app.post('/admin/bank-contacts/extract', policyUpload.single('chatFile'), async 
     let chatText = '';
 
     if (req.file) {
-      chatText = fs.readFileSync(req.file.path, 'utf8');
+      chatText = req.file.buffer.toString('utf8');
     } else if (req.body && req.body.text) {
       chatText = req.body.text;
     } else {
@@ -9654,6 +9571,59 @@ app.get('/migrate-proposals', async (req, res) => {
     res.json({ success: true, imported, total: proposals.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Migrate existing files from uploads/ directory to GridFS (one-time migration)
+app.get('/migrate-files-to-gridfs', async (req, res) => {
+  try {
+    const uploadsDir = path.join(__dirname, 'uploads');
+    if (!fs.existsSync(uploadsDir)) {
+      return res.json({ success: true, message: 'No uploads directory found, nothing to migrate' });
+    }
+
+    let migratedCount = 0;
+    let skippedCount = 0;
+    let errorCount = 0;
+
+    const entries = fs.readdirSync(uploadsDir);
+    for (const entry of entries) {
+      const entryPath = path.join(uploadsDir, entry);
+      const stat = fs.statSync(entryPath);
+
+      if (stat.isDirectory()) {
+        // This is a proposal directory
+        const proposalId = entry;
+        const files = fs.readdirSync(entryPath);
+
+        for (const filename of files) {
+          try {
+            const exists = await existsInGridFS(filename);
+            if (exists) {
+              skippedCount++;
+              continue;
+            }
+
+            const filePath = path.join(entryPath, filename);
+            const fileBuffer = fs.readFileSync(filePath);
+            await saveToGridFS(fileBuffer, filename, { proposalId, originalName: filename });
+            migratedCount++;
+            console.log(`Migrated: ${proposalId}/${filename}`);
+          } catch (err) {
+            errorCount++;
+            console.error(`Error migrating ${entry}/${filename}:`, err.message);
+          }
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Migration complete: ${migratedCount} files migrated, ${skippedCount} already in GridFS, ${errorCount} errors`
+    });
+  } catch (err) {
+    console.error('Migration error:', err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
