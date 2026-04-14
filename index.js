@@ -3122,8 +3122,144 @@ function autoCategorizeDocument(filename, extractedText = '') {
     return 'collateral';
   }
   
+  // ---- Text-based categorization (when filename doesn't match) ----
+  if (lowerText) {
+    // GST Returns (GSTR-3B / GSTR-1)
+    if (lowerText.includes('gstr-3b') || lowerText.includes('gstr 3b') || lowerText.includes('form gstr-3b') || lowerText.includes('gstr3b')) {
+      return 'turnover';
+    }
+    if (lowerText.includes('gstr-1') || lowerText.includes('gstr 1') || lowerText.includes('form gstr-1') || lowerText.includes('gstr1')) {
+      return 'turnover';
+    }
+    if (lowerText.includes('goods and services tax') && (lowerText.includes('return') || lowerText.includes('turnover'))) {
+      return 'turnover';
+    }
+
+    // GST Certificate
+    if (lowerText.includes('goods and services tax') && lowerText.includes('certificate') && !lowerText.includes('return')) {
+      return 'businessId';
+    }
+    if (lowerText.includes('gstin') && lowerText.includes('registration') && !lowerText.includes('return')) {
+      return 'businessId';
+    }
+
+    // ITR / Financial documents
+    if (lowerText.includes('income tax return') || lowerText.includes('acknowledgement number') && lowerText.includes('itr')) {
+      return 'financials';
+    }
+    if (lowerText.includes('form 26as') || lowerText.includes('tax credit statement')) {
+      return 'financials';
+    }
+    if (lowerText.includes('computation of income') || lowerText.includes('profit and loss') || lowerText.includes('balance sheet')) {
+      return 'financials';
+    }
+
+    // Bank Statements
+    if (lowerText.includes('account statement') || lowerText.includes('bank statement') || lowerText.includes('statement of account')) {
+      return 'banking';
+    }
+
+    // PAN Card
+    if (lowerText.includes('permanent account number') || lowerText.includes('income tax department') && lowerText.includes('pan')) {
+      return 'personalId';
+    }
+
+    // Aadhaar
+    if (lowerText.includes('unique identification authority') || lowerText.includes('aadhaar') || lowerText.includes('aadhar')) {
+      return 'personalId';
+    }
+
+    // Credit Report
+    if (lowerText.includes('cibil') || lowerText.includes('credit score') || lowerText.includes('credit information report') || lowerText.includes('equifax') || lowerText.includes('experian') || lowerText.includes('crif')) {
+      return 'creditReports';
+    }
+
+    // UDYAM / MSME
+    if (lowerText.includes('udyam registration') || lowerText.includes('udyam certificate') || lowerText.includes('msme certificate')) {
+      return 'businessId';
+    }
+  }
+
   // Default: uncategorized
   return '';
+}
+
+// AI-based document categorization using OpenRouter GPT-4o-mini
+async function aiCategorizeDocument(extractedText, filename) {
+  if (!process.env.OPENROUTER_API_KEY || !extractedText) {
+    return '';
+  }
+
+  const prompt = `You are a document categorizer for a loan application system in India.
+
+Based on the document content below, determine which ONE category this document belongs to:
+
+1. personalId — PAN Card, Aadhar Card, Passport, Voter ID, Driving License, Passport-size Photo
+2. businessId — GST Registration Certificate, Labour License, UDYAM/MSME Certificate, Firm Registration, Non-individual PAN, Shop & Establishment, FSSAI License
+3. incorporation — Partnership Deed, MOA, AOA, Certificate of Incorporation, Shareholder List, Director List, Board Resolution
+4. creditReports — CIBIL report, Experian report, Equifax report, CRIF report, Credit Information Report
+5. salaryDocuments — Payslips, Salary Slips, Form 16, Offer Letters, Appointment Letters
+6. financials — Income Tax Return (ITR), Form 26AS, Tax Audit Report, Profit & Loss Statement, Balance Sheet, Computation of Income
+7. banking — Bank Statements, Account Statements, Passbook
+8. turnover — GST 3B Returns, GSTR-3B, GST R1 Returns, GSTR-1, GST Annual Return
+9. debtProfile — Loan Sanction Letters, EMI Schedules, Loan Account Statements, Outstanding Loan Details
+10. otherIncome — Rental Agreement, Lease Deed, Rent Receipts, Dividend Statements
+11. collateral — Title Documents, Property Tax Receipts, Encumbrance Certificate, 7/12 Extract, 8A Extract, Sale Deed, Property Documents
+
+Document filename: ${filename}
+Document content (first 2000 characters):
+${extractedText.substring(0, 2000)}
+
+Respond with ONLY the category key (e.g., "financials", "banking", "turnover") from the list above. If you cannot determine the category, respond with "UNKNOWN".`;
+
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'HTTP-Referer': 'https://github.com/copilot',
+        'X-Title': 'Document Categorizer'
+      },
+      body: JSON.stringify({
+        model: 'openai/gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 50,
+        temperature: 0.1
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const result = data.choices[0]?.message?.content?.trim().toLowerCase() || '';
+
+    const validCategories = [
+      'personalId', 'businessId', 'incorporation', 'creditReports',
+      'salaryDocuments', 'financials', 'banking', 'turnover',
+      'debtProfile', 'otherIncome', 'collateral'
+    ];
+
+    // Exact match (case-insensitive)
+    const match = validCategories.find(c => c.toLowerCase() === result.replace(/[^a-z]/g, ''));
+    if (match) {
+      return match;
+    }
+
+    // Partial match — check if AI response contains a valid category
+    for (const cat of validCategories) {
+      if (result.includes(cat.toLowerCase())) {
+        return cat;
+      }
+    }
+
+    return '';
+  } catch (error) {
+    console.error('AI categorization API error:', error.message);
+    return '';
+  }
 }
 
 // Auto-classify document to specific document type within a category
@@ -6016,6 +6152,42 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
           // Only set auto-category if user hasn't manually categorized
           if (currentDoc.manualCategory) {
             console.log(`⏭️ Keeping manual category "${currentDoc.category}" for "${file.originalname}"`);
+          } else if (!currentDoc.category && fullText) {
+            // Re-run categorization using extracted text for uncategorized docs
+            let textCategory = autoCategorizeDocument(file.originalname, fullText);
+            if (textCategory) {
+              console.log(`🔍 Text-based re-categorization: "${file.originalname}" → ${textCategory}`);
+            }
+
+            // If text patterns fail, try AI categorization as fallback
+            if (!textCategory) {
+              try {
+                textCategory = await aiCategorizeDocument(fullText, file.originalname);
+                if (textCategory) {
+                  console.log(`🤖 AI categorization: "${file.originalname}" → ${textCategory}`);
+                }
+              } catch (aiCatErr) {
+                console.error('AI categorization error:', aiCatErr.message);
+              }
+            }
+
+            if (textCategory) {
+              currentDoc.category = textCategory;
+              currentDoc.autoCategorized = true;
+              fileDetail.category = textCategory;
+              // Re-run classification with new category
+              try {
+                const reclassProposal = await getProposalById(proposalId);
+                const reclass = await autoClassifyDocument(file.originalname, fullText, textCategory, reclassProposal);
+                if (reclass) {
+                  currentDoc.classification = reclass;
+                  autoClassification = reclass;
+                  console.log(`📋 Re-classified "${file.originalname}" as: ${reclass}`);
+                }
+              } catch (reclassErr) {
+                console.error('Re-classification error:', reclassErr.message);
+              }
+            }
           }
 
           saveProposal.documents[docIndex] = currentDoc;
@@ -7710,6 +7882,9 @@ app.post('/stage2/:proposalId/reprocess-personal-docs', async (req, res) => {
 
 // Fallback pattern matching for bank statement details
 function extractBankStatementDetailsFallback(text, filename = '') {
+  // Normalize Unicode dashes/minus signs to regular hyphens (Cosmos Bank etc. use − U+2212)
+  text = text.replace(/[\u2212\u2013\u2014]/g, '-');
+
   const result = {
     bankName: 'N/A',
     accountHolder: 'N/A',
@@ -7740,6 +7915,7 @@ function extractBankStatementDetailsFallback(text, filename = '') {
     'HDFC BANK', 'ICICI BANK', 'AXIS BANK', 'CANARA BANK',
     'FEDERAL BANK', 'BANDHAN BANK', 'INDUSIND BANK', 'YES BANK',
     'RBL BANK', 'IDBI BANK', 'DCB BANK', 'KOTAK BANK',
+    'IDFC FIRST BANK', 'IDFC BANK', 'AU SMALL FINANCE BANK',
     'CENTRAL BANK', 'UNION BANK', 'PNB', 'SBI', 'IOB', 'TMB'
   ];
 
@@ -7761,6 +7937,7 @@ function extractBankStatementDetailsFallback(text, filename = '') {
     { pattern: /rblbank\.com/i, name: 'RBL BANK' },
     { pattern: /idbibank\.in/i, name: 'IDBI BANK' },
     { pattern: /unionbankofindia\.co\.in/i, name: 'UNION BANK OF INDIA' },
+    { pattern: /idfcfirstbank\.com|dfcfir\.st/i, name: 'IDFC FIRST BANK' },
   ];
 
   for (const { pattern, name } of bankUrlPatterns) {
@@ -7775,13 +7952,13 @@ function extractBankStatementDetailsFallback(text, filename = '') {
   if (result.bankName === 'N/A') {
     const headerPatterns = [
       // Pattern: "Account Statement" or "Statement of Account" with bank name nearby
-      /(?:Account\s*Statement|Statement\s*of\s*Account|Bank\s*Statement)[\s\S]{0,50}?(HDFC BANK|ICICI BANK|STATE BANK OF INDIA|SBI|AXIS BANK|KOTAK MAHINDRA BANK|KOTAK BANK|PUNJAB NATIONAL BANK|PNB|CANARA BANK|BANK OF BARODA|INDIAN OVERSEAS BANK|IOB|FEDERAL BANK|BANDHAN BANK|INDUSIND BANK|YES BANK|RBL BANK|IDBI BANK|UNION BANK|CENTRAL BANK)/i,
+      /(?:Account\s*Statement|Statement\s*of\s*Account|Bank\s*Statement)[\s\S]{0,50}?(IDFC FIRST BANK|HDFC BANK|ICICI BANK|STATE BANK OF INDIA|SBI|AXIS BANK|KOTAK MAHINDRA BANK|KOTAK BANK|PUNJAB NATIONAL BANK|PNB|CANARA BANK|BANK OF BARODA|INDIAN OVERSEAS BANK|IOB|FEDERAL BANK|BANDHAN BANK|INDUSIND BANK|YES BANK|RBL BANK|IDBI BANK|UNION BANK|CENTRAL BANK)/i,
       // Pattern: Bank name at the very start (first 200 chars - likely letterhead)
-      /^[\s\S]{0,200}?(HDFC BANK|ICICI BANK|STATE BANK OF INDIA|AXIS BANK|KOTAK MAHINDRA BANK|PUNJAB NATIONAL BANK|CANARA BANK|BANK OF BARODA|INDIAN OVERSEAS BANK|FEDERAL BANK|BANDHAN BANK|INDUSIND BANK|YES BANK|RBL BANK|IDBI BANK|UNION BANK|CENTRAL BANK)/i,
+      /^[\s\S]{0,200}?(IDFC FIRST BANK|HDFC BANK|ICICI BANK|STATE BANK OF INDIA|AXIS BANK|KOTAK MAHINDRA BANK|PUNJAB NATIONAL BANK|CANARA BANK|BANK OF BARODA|INDIAN OVERSEAS BANK|FEDERAL BANK|BANDHAN BANK|INDUSIND BANK|YES BANK|RBL BANK|IDBI BANK|UNION BANK|CENTRAL BANK)/i,
       // Pattern: "Bank Name:" label
       /Bank\s*Name[:\s]+([A-Za-z\s]+(?:Bank|BANK))/i,
       // Pattern: Branch name indicating the bank
-      /Branch[:\s]+[A-Za-z\s,]+[\s,]+(HDFC|ICICI|SBI|STATE BANK|AXIS|KOTAK|PUNJAB NATIONAL|CANARA|BANK OF BARODA|INDIAN OVERSEAS|FEDERAL|BANDHAN|INDUSIND|YES|RBL|IDBI|UNION|CENTRAL)(?:\s*BANK)?/i
+      /Branch[:\s]+[A-Za-z\s,]+[\s,]+(IDFC FIRST|IDFC|HDFC|ICICI|SBI|STATE BANK|AXIS|KOTAK|PUNJAB NATIONAL|CANARA|BANK OF BARODA|INDIAN OVERSEAS|FEDERAL|BANDHAN|INDUSIND|YES|RBL|IDBI|UNION|CENTRAL)(?:\s*BANK)?/i
     ];
 
     for (const pattern of headerPatterns) {
@@ -7790,7 +7967,8 @@ function extractBankStatementDetailsFallback(text, filename = '') {
         let bankName = (match[1] || match[0]).trim();
         // Normalize to standard bank names
         const bankUpper = bankName.toUpperCase();
-        if (bankUpper.includes('HDFC')) result.bankName = 'HDFC BANK';
+        if (bankUpper.includes('IDFC')) result.bankName = 'IDFC FIRST BANK';
+        else if (bankUpper.includes('HDFC')) result.bankName = 'HDFC BANK';
         else if (bankUpper.includes('ICICI')) result.bankName = 'ICICI BANK';
         else if (bankUpper.includes('SBI') || bankUpper.includes('STATE BANK')) result.bankName = 'STATE BANK OF INDIA';
         else if (bankUpper.includes('AXIS')) result.bankName = 'AXIS BANK';
@@ -7830,7 +8008,7 @@ function extractBankStatementDetailsFallback(text, filename = '') {
 
   // If still not found, detect bank from IFSC code prefix (very reliable)
   if (result.bankName === 'N/A') {
-    const ifscMatch = headerText.match(/IFSC\s*(?:Code)?[:\s]*([A-Z]{4})\d{7}/i);
+    const ifscMatch = headerText.match(/IFSC\s*(?:(?:Code|\/\s*MICR)\s*)?[:\s]*([A-Z]{4})\d{7}/i);
     if (ifscMatch) {
       const ifscPrefix = ifscMatch[1].toUpperCase();
       const ifscBankMap = {
@@ -7846,7 +8024,9 @@ function extractBankStatementDetailsFallback(text, filename = '') {
         'IDIB': 'INDIAN BANK', 'UCBA': 'UCO BANK',
         'TMBL': 'TAMILNAD MERCANTILE BANK', 'KVBL': 'KARUR VYSYA BANK',
         'KARB': 'KARNATAKA BANK', 'CIUB': 'CITY UNION BANK',
-        'SIBL': 'SOUTH INDIAN BANK', 'DCBL': 'DCB BANK'
+        'SIBL': 'SOUTH INDIAN BANK', 'DCBL': 'DCB BANK',
+        'IDFB': 'IDFC FIRST BANK', 'COSB': 'COSMOS CO-OPERATIVE BANK',
+        'SRCB': 'SARASWAT CO-OPERATIVE BANK', 'JAKA': 'JAMMU AND KASHMIR BANK'
       };
       if (ifscBankMap[ifscPrefix]) {
         result.bankName = ifscBankMap[ifscPrefix];
@@ -7856,12 +8036,12 @@ function extractBankStatementDetailsFallback(text, filename = '') {
   
   // Account number patterns - look for full or masked account numbers
   const accountPatterns = [
-    // Full account number with label (e.g., "Account Number : 00000020005843572")
-    /(?:Account\s*(?:No|Number|#)[:\s]*|A\/c\s*No[:\s]*|Acct\s*No[:\s]*)(\d{9,18})/i,
+    // Full account number with label (e.g., "Account Number : 00000020005843572" or "Loan Account No.: 39541976")
+    /(?:(?:Loan\s*)?Account\s*(?:No|Number|#)[.:\s]*|A\/c\s*No[.:\s]*|Acct\s*No[.:\s]*)(\d{8,18})/i,
     // Masked account number (e.g., "XXXXXXX3572" or "XXXX1234")
     /(?:Account\s*(?:No|Number|#)?[:\s]*)?([X]{3,}\d{3,6})/i,
-    // Full account number without label
-    /(\d{9,18})/
+    // Full account number without label (not surrounded by letters - excludes tracking numbers like RD388515151IN)
+    /(?<![A-Za-z])(\d{9,18})(?![A-Za-z])/
   ];
   
   for (const pattern of accountPatterns) {
@@ -7891,7 +8071,8 @@ function extractBankStatementDetailsFallback(text, filename = '') {
   // Account holder patterns - limit to avoid capturing address
   const holderPatterns = [
     // SBI format: "Welcome:\nNAME" or "Welcome: NAME" (name on next line after Welcome:)
-    /Welcome[:\s]*\n\s*([A-Z][A-Za-z\s&.]{2,50}?)(?:\s*\n)/i,
+    // Negative lookahead excludes "Welcome to the..." greeting phrases
+    /Welcome[:\s]*\n\s*(?!to\s+the\s)([A-Z][A-Za-z\s&.]{2,50}?)(?:\s*\n)/i,
     // SBI format: "Welcome Mr./Mrs./Miss. NAME"
     /Welcome\s+(?:Mr\.|Mrs\.|Ms\.?|Miss\.?|M\/S\.?)\s*([A-Z][A-Za-z\s&.]+?)(?:\s*\.?\s*(?:As\s*on|$|\n))/i,
     // Explicit label: "Account Holder: NAME" or "Customer Name: NAME"
@@ -7905,9 +8086,12 @@ function extractBankStatementDetailsFallback(text, filename = '') {
     /(?:^|\n)(?:MR|MRS|MS|M\/S)\s*\n\s*([A-Z][A-Za-z\s&.]+?)\s*\n\s*(?:H[\s-]*NO|Plot|Door|No\.|House|Flat|Building|Street|Road|\d+[\s-]+\d+)/im,
     // Salutation on same line: "Mr. NAME ADDRESS_BOUNDARY"
     /(?:Mr\.|Mrs\.|Ms\.|Miss\.|M\/S)[.\s]+([A-Z][A-Za-z\s&.]+?)(?:\s+(?:Plot|Door|No\.|House|Flat|Building|Street|Road|Lane|Address|\d|,|\n))/i,
-    /(?:Mr\.|Mrs\.|Ms\.|Miss\.|M\/S)[.\s]+([A-Z][A-Za-z\s&.]{2,50})/i,
+    /(?:Mr\.|Mrs\.|Ms\.|Miss\.|M\/S)[.\s]+([A-Z][A-Za-z &.]{2,50})/i,
     // Axis Bank / generic format: Name on the very first non-empty line, followed by "Joint Holder"
-    /^\s*([A-Z][A-Z\s&.]{2,60}?)\s*\n\s*(?:Joint\s*Holder)/im
+    /^\s*([A-Z][A-Z\s&.]{2,60}?)\s*\n\s*(?:Joint\s*Holder)/im,
+    // Address block format: ALL-CAPS name on own line, followed by address (IDFC, Bajaj, etc.)
+    // e.g., "RADHA KRISHNA RAVI\n\nVILLA 168..." or "JOHN DOE\nFLAT 12..."
+    /(?:^|\n)\s*([A-Z][A-Z\s]{4,50}?)\s*\n+\s*(?:VILLA|FLAT|HOUSE|PLOT|DOOR|H[\s-]*NO|NO\.\s*\d|\d+[\s,\/-]+\d+|#\d)/m
   ];
 
   // Only search in the header area (first 1500 chars) to avoid matching names in transactions
@@ -7948,7 +8132,9 @@ function extractBankStatementDetailsFallback(text, filename = '') {
   const periodPatterns = [
     /(?:Statement\s*Period|Period)[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s*(?:to|[-–])\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
     /(?:From)[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s*(?:To)[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
-    /Statement\s*From[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s*(?:to|To)[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i
+    /Statement\s*From[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s*(?:to|To)[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+    // "Statement of Account for the period of 01-01-2025 to 16-02-2026" (Cosmos, IDFC, co-op banks)
+    /(?:Statement\s*of\s*Account|Account\s*Statement)[\s\S]{0,30}?(?:period\s*(?:of|from)?|from)[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s*(?:to)\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i
   ];
   
   for (const pattern of periodPatterns) {
