@@ -6695,11 +6695,7 @@ app.post('/stage2/:proposalId/delete-document', async (req, res) => {
 // Serve uploaded files from GridFS
 app.get('/uploads/:proposalId/:filename', async (req, res) => {
   try {
-    const { filename } = req.params;
-    const exists = await existsInGridFS(filename);
-    if (!exists) {
-      return res.status(404).send('File not found');
-    }
+    const { proposalId, filename } = req.params;
 
     // Set Content-Type based on extension
     const ext = path.extname(filename).toLowerCase();
@@ -6715,7 +6711,29 @@ app.get('/uploads/:proposalId/:filename', async (req, res) => {
     };
     if (mimeTypes[ext]) res.set('Content-Type', mimeTypes[ext]);
 
-    await streamFromGridFS(filename, res);
+    const exists = await existsInGridFS(filename);
+    if (exists) {
+      return await streamFromGridFS(filename, res);
+    }
+
+    // Fallback: file may predate the GridFS migration and still live on disk.
+    // Serve it from the filesystem and self-heal by copying it into GridFS so
+    // it survives future restarts/redeploys (where the local disk is wiped).
+    const diskCandidates = [
+      path.join(UPLOADS_DIR, String(proposalId), filename),
+      path.join(UPLOADS_DIR, filename)
+    ];
+    const diskPath = diskCandidates.find(c => { try { return fs.existsSync(c); } catch { return false; } });
+    if (diskPath) {
+      const buffer = fs.readFileSync(diskPath);
+      saveToGridFS(buffer, filename, { proposalId, originalName: filename })
+        .then(() => console.log(`Self-healed to GridFS from disk: ${filename}`))
+        .catch(e => console.warn(`GridFS self-heal failed for ${filename}:`, e.message));
+      return res.send(buffer);
+    }
+
+    console.warn(`File not found in GridFS or on disk: ${proposalId}/${filename}`);
+    return res.status(404).send('File not found');
   } catch (err) {
     console.error('File serve error:', err.message);
     res.status(404).send('File not found');
