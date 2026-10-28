@@ -6697,7 +6697,9 @@ app.get('/uploads/:proposalId/:filename', async (req, res) => {
   try {
     const { proposalId, filename } = req.params;
 
-    // Set Content-Type based on extension
+    // Content-Type by extension — applied only when actually serving bytes, so
+    // error responses keep their default type (a 404 sent as application/pdf
+    // makes the browser's PDF viewer report "Failed to load PDF document").
     const ext = path.extname(filename).toLowerCase();
     const mimeTypes = {
       '.pdf': 'application/pdf',
@@ -6709,10 +6711,10 @@ app.get('/uploads/:proposalId/:filename', async (req, res) => {
       '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       '.zip': 'application/zip', '.rar': 'application/x-rar-compressed'
     };
-    if (mimeTypes[ext]) res.set('Content-Type', mimeTypes[ext]);
 
     const exists = await existsInGridFS(filename);
     if (exists) {
+      if (mimeTypes[ext]) res.set('Content-Type', mimeTypes[ext]);
       return await streamFromGridFS(filename, res);
     }
 
@@ -6729,11 +6731,12 @@ app.get('/uploads/:proposalId/:filename', async (req, res) => {
       saveToGridFS(buffer, filename, { proposalId, originalName: filename })
         .then(() => console.log(`Self-healed to GridFS from disk: ${filename}`))
         .catch(e => console.warn(`GridFS self-heal failed for ${filename}:`, e.message));
+      if (mimeTypes[ext]) res.set('Content-Type', mimeTypes[ext]);
       return res.send(buffer);
     }
 
     console.warn(`File not found in GridFS or on disk: ${proposalId}/${filename}`);
-    return res.status(404).send('File not found');
+    return res.status(404).type('text').send('File not found');
   } catch (err) {
     console.error('File serve error:', err.message);
     res.status(404).send('File not found');
