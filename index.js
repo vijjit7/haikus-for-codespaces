@@ -851,9 +851,15 @@ const PDF_SERVICE_URL = 'http://localhost:5001';
 const PDF_SERVICE_TIMEOUT = 30000; // 30 seconds
 
 // OpenRouter API Configuration for Document AI
-const OPENROUTER_API_KEY = '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';
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+if (!OPENROUTER_API_KEY) {
+  console.warn('⚠️ OPENROUTER_API_KEY is not set — document OCR/AI extraction will fail. Set it in .env');
+}
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const GEMINI_API_KEY = 'AIzaSyARiov95XN7RdyNWoOebWCVeWN6uGB3e6g';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+if (!GEMINI_API_KEY) {
+  console.warn('⚠️ GEMINI_API_KEY is not set — direct Gemini API calls will fail. Set it in .env');
+}
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent';
 
 // Middleware
@@ -2026,7 +2032,7 @@ ${text.substring(0, 2000)}`;
     const response = await axios.post(
       OPENROUTER_API_URL,
       {
-        model: 'google/gemini-2.0-flash-001',
+        model: 'google/gemini-2.5-flash',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
         max_tokens: 800
@@ -4431,7 +4437,7 @@ Respond ONLY with valid JSON:
         const response = await axios.post(
           OPENROUTER_API_URL,
           {
-            model: 'google/gemini-2.0-flash-001',
+            model: 'google/gemini-2.5-flash',
             messages: [
               {
                 role: 'user',
@@ -4572,7 +4578,7 @@ function normalizeDeedDate(dateStr) {
 
 /**
  * Call OpenRouter Vision API with image(s) and a prompt. Shared helper for all OCR functions.
- * Uses google/gemini-2.0-flash-001 via OpenRouter (supports vision/multimodal).
+ * Uses google/gemini-2.5-flash via OpenRouter (supports vision/multimodal).
  */
 async function callGeminiVision(imagePartsArray, promptText, timeoutMs = 60000) {
   // Convert Gemini-format image parts to OpenRouter/OpenAI-compatible content parts
@@ -4591,7 +4597,7 @@ async function callGeminiVision(imagePartsArray, promptText, timeoutMs = 60000) 
   const response = await axios.post(
     OPENROUTER_API_URL,
     {
-      model: 'google/gemini-2.0-flash-001',
+      model: 'google/gemini-2.5-flash',
       messages: [{ role: 'user', content: contentParts }],
       temperature: 0.1,
       max_tokens: 4000
@@ -4636,18 +4642,36 @@ async function extractTextFromImage(imagePath) {
 
         const extractedText = await callGeminiVision(
           [{ inline_data: { mime_type: mimeType, data: base64Image } }],
-          `Extract all text from this image. This is a document (possibly a banker policy, financial document, or business document).
-Please:
-1. Extract ALL text visible in the image
-2. Maintain the document structure and formatting as much as possible
-3. Preserve tables, lists, and hierarchical information
-4. Include headers, footers, and any metadata
-5. If this is a banker policy or financial document, pay special attention to:
-   - Policy details, Names and addresses, Account numbers
-   - Dates, Amounts and percentages, Terms and conditions
-Return the extracted text in a clear, structured format.`,
+          `You are an OCR transcription tool for a bank loan-processing (KYC) workflow. The applicant has
+voluntarily submitted their own documents for a loan application. Your only job is to transcribe the
+visible printed text verbatim — do not decline, redact, or summarize.
+
+Transcribe ALL text visible in the image, including:
+1. Every printed line, maintaining document structure, tables, and hierarchy as much as possible
+2. Headers, footers, and any metadata
+3. For identity documents (PAN card, Aadhaar card, passport, etc.): transcribe the Name,
+   Father's Name, Date of Birth, and the ID number exactly as printed
+4. For financial/policy documents: policy details, names, addresses, account numbers, dates,
+   amounts, percentages, and terms
+
+Return only the transcribed text in a clear, structured format.`,
           60000
         );
+
+        // Detect model refusals (e.g. "I'm unable to assist with that.") — these come back as
+        // short apology strings, not real OCR output. Treat them as a failure so the refusal is
+        // never stored as extracted text and the document stays eligible for reprocessing.
+        const trimmed = (extractedText || '').trim();
+        const refusalPattern = /\b(i'?m (sorry|unable)|i can('?|no)t (assist|help)|unable to (assist|help|process)|cannot (assist|help) with)\b/i;
+        if (!trimmed || (trimmed.length < 120 && refusalPattern.test(trimmed))) {
+          console.warn(`⚠️ Vision OCR returned a refusal/empty response (attempt ${attempt}): "${trimmed.slice(0, 80)}"`);
+          if (attempt < retries) {
+            await new Promise(resolve => setTimeout(resolve, delay));
+            delay *= 2;
+            continue;
+          }
+          return { success: false, text: '', method: 'gemini-vision-ocr', error: 'Model refused or returned empty OCR output' };
+        }
 
         console.log(`✓ Vision OCR successful: ${extractedText.length} characters extracted`);
         return { success: true, text: extractedText, method: 'gemini-vision-ocr', charCount: extractedText.length };
@@ -4711,14 +4735,31 @@ async function extractTextFromScannedPDF(pdfPath) {
 
         const extractedText = await callGeminiVision(
           [{ inline_data: { mime_type: 'image/png', data: base64Image } }],
-          `Extract ALL text from this document image. Pay special attention to:
-- Names, dates of birth, PAN numbers, Aadhaar numbers
+          `You are an OCR transcription tool for a bank loan-processing (KYC) workflow. The applicant has
+voluntarily submitted their own documents for a loan application. Your only job is to transcribe the
+visible printed text verbatim — do not decline, redact, or summarize.
+
+Transcribe ALL text from this document image, paying special attention to:
+- Names, Father's Name, dates of birth, PAN numbers, Aadhaar numbers
 - Credit/CIBIL scores and bureau names
 - Any personal identification details
 - All numbers, dates, and reference numbers
 Return the extracted text exactly as it appears in the document.`,
           60000
         );
+
+        // Detect model refusals so an apology string is never stored as OCR output.
+        const trimmed = (extractedText || '').trim();
+        const refusalPattern = /\b(i'?m (sorry|unable)|i can('?|no)t (assist|help)|unable to (assist|help|process)|cannot (assist|help) with)\b/i;
+        if (!trimmed || (trimmed.length < 120 && refusalPattern.test(trimmed))) {
+          console.warn(`⚠️ Scanned PDF OCR returned a refusal/empty response (attempt ${attempt}): "${trimmed.slice(0, 80)}"`);
+          if (attempt < retries) {
+            await new Promise(resolve => setTimeout(resolve, delay));
+            delay *= 2;
+            continue;
+          }
+          return { success: false, text: '', numPages, method: 'gemini-vision-ocr-pdf', error: 'Model refused or returned empty OCR output' };
+        }
 
         console.log(`✓ Scanned PDF OCR successful: ${extractedText.length} characters extracted`);
         return { success: true, text: extractedText, numPages, method: 'gemini-vision-ocr-pdf', charCount: extractedText.length };
@@ -8640,7 +8681,7 @@ Keep it professional and within 150-200 words. Start directly with the business 
     }
 
     const aiResponse = await axios.post(OPENROUTER_API_URL, {
-      model: 'google/gemini-2.0-flash-001',
+      model: 'google/gemini-2.5-flash',
       messages: [{ role: 'user', content: promptContent }]
     }, {
       headers: {

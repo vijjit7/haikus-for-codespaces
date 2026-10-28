@@ -495,15 +495,20 @@
                                                             if (!coAppAge && proposal.documents) {
                                                                 const coAppName = (ca.name || '').toLowerCase();
                                                                 const coAppFirstName = coAppName.split(' ')[0];
-                                                                const coAppNameParts = coAppName.split(' ').filter(p => p.length > 2);
                                                                 const personalDocs = proposal.documents.filter(d => d.category === 'personalId');
                                                                 for (const doc of personalDocs) {
                                                                     if (!doc.extractedDetails || !doc.extractedDetails.dateOfBirth) continue;
                                                                     const docName = (doc.originalName || '').toLowerCase();
                                                                     const docClass = (doc.classification || '').toLowerCase();
-                                                                    const matchesName = docName.includes(coAppFirstName) ||
+                                                                    const docPerson = (doc.extractedDetails.personName || '').toLowerCase();
+                                                                    // Match on the co-applicant's distinctive FIRST name only.
+                                                                    // Matching on a shared surname (e.g. family co-applicants) would
+                                                                    // grab another person's document and assign the wrong DOB/age.
+                                                                    const matchesName = coAppFirstName && coAppFirstName.length > 1 && (
+                                                                        docName.includes(coAppFirstName) ||
                                                                         docClass.includes(coAppFirstName) ||
-                                                                        coAppNameParts.some(part => docClass.includes(part));
+                                                                        docPerson.includes(coAppFirstName)
+                                                                    );
                                                                     if (matchesName) {
                                                                         coAppDOB = doc.extractedDetails.dateOfBirth;
                                                                         coAppAge = calculateAge(coAppDOB);
