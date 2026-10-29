@@ -1227,14 +1227,14 @@
                                                 }
                                             });
 
-                                            // === FY 2025-26 Projected from GST ===
+                                            // === FY 2026-27 Projected from GST (ongoing year) ===
                                             const projTurnoverDocs = (proposal.documents || []).filter(d => d.category === 'turnover');
                                             let projGstTotal = 0;
                                             const projMonthSet = new Set();
                                             projTurnoverDocs.forEach(doc => {
                                                 const txt = doc.extractedText || '';
                                                 const yearMatch = txt.match(/Year\s+(\d{4}-\d{2})/);
-                                                if (yearMatch && yearMatch[1] === '2025-26') {
+                                                if (yearMatch && yearMatch[1] === '2026-27') {
                                                     const periodMatch = txt.match(/Period\s+([A-Za-z]+)/);
                                                     if (periodMatch) projMonthSet.add(periodMatch[1]);
                                                     let taxVal = 0, zeroVal = 0, exemptVal = 0, ecomVal = 0;
@@ -1284,7 +1284,7 @@
                                                         <th style="padding: 6px 8px; border: 1px solid #1a252f; text-align: right;">FY <%= fy %></th>
                                                     <% }); %>
                                                     <% if (hasProjected) { %>
-                                                        <th style="padding: 6px 8px; border: 1px solid #1a252f; text-align: right; background: #1a5276;">FY 2025-26<br><small>(Projected)</small></th>
+                                                        <th style="padding: 6px 8px; border: 1px solid #1a252f; text-align: right; background: #1a5276;">FY 2026-27<br><small>(Projected)</small></th>
                                                     <% } %>
                                                     <% if (sortedFYs.length >= 2) { %>
                                                         <th style="padding: 6px 8px; border: 1px solid #1a252f; text-align: right;">Growth %</th>
@@ -1555,14 +1555,16 @@
                                     <td style="padding: 10px; border: 1px solid #ddd;" class="cam-memo" data-section="gstReturns">
                                         <%
                                         // Extract P&L Sales for turnover summary in memo - same logic as analysis panel
+                                        // NOTE: slot names are legacy; they now hold the two most recent filed FYs
+                                        // (memoSales2324 => older historical FY2024-25, memoSales2425 => newer historical FY2025-26)
                                         let memoSales2324 = 0, memoSales2425 = 0;
                                         const memoFinancialDocs = proposal.documents ? proposal.documents.filter(d => d.category === 'financials') : [];
                                         memoFinancialDocs.forEach(doc => {
                                             const cls = (doc.classification || '').toLowerCase();
                                             const txt = doc.extractedText || '';
                                             let docFY = null;
-                                            if (cls.includes('fy2024-25') || cls.includes('fy 2024-25') || cls.includes('2024-25')) docFY = '2024-25';
-                                            else if (cls.includes('fy2023-24') || cls.includes('fy 2023-24') || cls.includes('2023-24')) docFY = '2023-24';
+                                            if (cls.includes('fy2025-26') || cls.includes('fy 2025-26') || cls.includes('2025-26')) docFY = '2025-26';
+                                            else if (cls.includes('fy2024-25') || cls.includes('fy 2024-25') || cls.includes('2024-25')) docFY = '2024-25';
                                             // Match business entity ITRs (same criteria as analysis panel)
                                             const memoApplicantName = (proposal.applicantName || '').toLowerCase();
                                             const isBizITR = (memoApplicantName && cls.includes(memoApplicantName.split(' ')[0])) ||
@@ -1620,12 +1622,12 @@
                                                     if (prevSalesAmt > 0) prevSalesAmt = Math.round(prevSalesAmt * memoUnitMul);
                                                 }
                                                 if (salesAmt > 0) {
-                                                    if (docFY === '2024-25' && salesAmt > memoSales2425) memoSales2425 = salesAmt;
-                                                    else if (docFY === '2023-24' && salesAmt > memoSales2324) memoSales2324 = salesAmt;
+                                                    if (docFY === '2025-26' && salesAmt > memoSales2425) memoSales2425 = salesAmt;
+                                                    else if (docFY === '2024-25' && salesAmt > memoSales2324) memoSales2324 = salesAmt;
                                                 }
                                                 // Previous year from comparative P&L columns
                                                 if (prevSalesAmt > 0) {
-                                                    if (docFY === '2024-25' && prevSalesAmt > memoSales2324) memoSales2324 = prevSalesAmt;
+                                                    if (docFY === '2025-26' && prevSalesAmt > memoSales2324) memoSales2324 = prevSalesAmt;
                                                 }
                                             }
                                         });
@@ -1685,9 +1687,9 @@
                                         const memoGstMonthSet = new Set();
                                         turnoverDocs.forEach(doc => {
                                             const txt = doc.extractedText || '';
-                                            // Check if FY 2025-26 (with filename fallback)
+                                            // Check if FY 2026-27 (with filename fallback)
                                             const { period: memoPeriod, year: memoYear } = extractGstPeriodYear(doc);
-                                            if (memoYear === '2025-26') {
+                                            if (memoYear === '2026-27') {
                                                 if (memoPeriod) memoGstMonthSet.add(memoPeriod);
                                                 // Extract all outward supplies components (same as analysis)
                                                 let taxableValue = 0, zeroRatedValue = 0, exemptedValue = 0, ecommerceSupplies = 0;
@@ -1713,9 +1715,9 @@
                                             <table style="width: 100%; border-collapse: collapse; font-size: 0.85em;">
                                                 <tr style="background: #27ae60; color: white;">
                                                     <th style="padding: 6px 8px; border: 1px solid #1e8449; text-align: left;">Year</th>
-                                                    <th style="padding: 6px 8px; border: 1px solid #1e8449; text-align: right;">FY2023-24</th>
                                                     <th style="padding: 6px 8px; border: 1px solid #1e8449; text-align: right;">FY2024-25</th>
-                                                    <th style="padding: 6px 8px; border: 1px solid #1e8449; text-align: right;">FY2025-26 (Proj)</th>
+                                                    <th style="padding: 6px 8px; border: 1px solid #1e8449; text-align: right;">FY2025-26</th>
+                                                    <th style="padding: 6px 8px; border: 1px solid #1e8449; text-align: right;">FY2026-27 (Proj)</th>
                                                 </tr>
                                                 <tr>
                                                     <td style="padding: 6px 8px; border: 1px solid #ddd; font-weight: 600;">Turnover</td>
@@ -1732,13 +1734,13 @@
                                             </table>
                                         </div>
                                         <%
-                                        // Build monthly GST data for FY 2025-26 for CAM table
+                                        // Build monthly GST data for FY 2026-27 for CAM table
                                         const camGstMonthly = [];
                                         const camMonthOrder = ['April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December', 'January', 'February', 'March'];
                                         turnoverDocs.forEach(doc => {
                                             const txt = doc.extractedText || '';
                                             const { period: camPeriod, year: camYear } = extractGstPeriodYear(doc);
-                                            if (camYear !== '2025-26') return;
+                                            if (camYear !== '2026-27') return;
                                             if (!camPeriod) return;
                                             const period = camPeriod;
                                             let taxableValue = 0, integratedTax = 0, centralTax = 0, stateTax = 0, cess = 0;
@@ -1778,7 +1780,7 @@
                                             }
                                         });
                                         camGstMonthly.sort((a, b) => camMonthOrder.indexOf(a.period) - camMonthOrder.indexOf(b.period));
-                                        // Calculate FY 2025-26 totals
+                                        // Calculate FY 2026-27 totals
                                         let camFyTaxable = 0, camFyOutward = 0, camFyIGST = 0, camFyCGST = 0, camFySGST = 0, camFyCess = 0, camFyTax = 0;
                                         camGstMonthly.forEach(m => {
                                             camFyTaxable += m.taxableValue;
@@ -1792,7 +1794,7 @@
                                         %>
                                         <% if (camGstMonthly.length > 0) { %>
                                         <div style="margin-top: 10px; margin-bottom: 10px;">
-                                            <div style="font-size: 0.8em; color: #666; margin-bottom: 5px; font-weight: 600;">Monthly GST Turnover - FY 2025-26</div>
+                                            <div style="font-size: 0.8em; color: #666; margin-bottom: 5px; font-weight: 600;">Monthly GST Turnover - FY 2026-27</div>
                                             <table style="width: 100%; border-collapse: collapse; font-size: 0.8em;">
                                                 <thead>
                                                     <tr style="background: #3498db; color: white;">
@@ -1849,7 +1851,7 @@
                                                                txt.match(/GSTIN[\s:]+([A-Z0-9]{15})/) ||
                                                                doc.originalName.match(/GSTR3B_([A-Z0-9]{15})_/);
                                             const { period: contribPeriod, year: contribYear } = extractGstPeriodYear(doc);
-                                            if (gstinMatch && contribYear === '2025-26') {
+                                            if (gstinMatch && contribYear === '2026-27') {
                                                 const gstin = gstinMatch[1];
                                                 if (!gstinContribution[gstin]) gstinContribution[gstin] = { total: 0, months: new Set() };
                                                 if (contribPeriod) gstinContribution[gstin].months.add(contribPeriod);
@@ -1885,7 +1887,7 @@
                                         %>
                                         <% if (hasMultipleStates) { %>
                                         <div style="margin-top: 10px; margin-bottom: 10px;">
-                                            <div style="font-size: 0.8em; color: #666; margin-bottom: 5px; font-weight: 600;">GST State-wise Contribution (FY2025-26 Projected)</div>
+                                            <div style="font-size: 0.8em; color: #666; margin-bottom: 5px; font-weight: 600;">GST State-wise Contribution (FY2026-27 Projected)</div>
                                             <table style="width: 100%; border-collapse: collapse; font-size: 0.85em;">
                                                 <tr style="background: #3498db; color: white;">
                                                     <th style="padding: 6px 8px; border: 1px solid #2980b9; text-align: left;">State</th>
@@ -4205,8 +4207,8 @@
                     %>
 
                     <%
-                    // Calculate GST turnover for FY2025-26 (latest year - to be annualized)
-                    // For FY2025-26, only use April 2025 onwards and count UNIQUE months
+                    // Calculate GST turnover for the latest (ongoing) FY - to be annualized
+                    // e.g. FY2026-27: only use April 2026 onwards and count UNIQUE months
                     const gstTurnoverByFY = {};
                     const uniqueMonthsByFY = {}; // Track unique months per FY
 
@@ -4241,6 +4243,9 @@
                     }
 
                     // P&L Sales figures - auto-extract from ITR documents
+                    // NOTE: slot names are legacy; they now hold the two most recent filed FYs plus
+                    // one comparative year (extractedSales2324 => FY2024-25 col1,
+                    // extractedSales2425 => FY2025-26 col2, extractedSales2223 => FY2023-24 comparative)
                     let extractedSales2324 = 0;
                     let extractedSales2425 = 0;
                     let extractedSales2223 = 0;
@@ -4253,9 +4258,9 @@
 
                         // Determine FY from classification
                         let docFY = null;
-                        if (classification.includes('fy2024-25') || classification.includes('fy 2024-25') || classification.includes('2024-25')) docFY = '2024-25';
+                        if (classification.includes('fy2025-26') || classification.includes('fy 2025-26') || classification.includes('2025-26')) docFY = '2025-26';
+                        else if (classification.includes('fy2024-25') || classification.includes('fy 2024-25') || classification.includes('2024-25')) docFY = '2024-25';
                         else if (classification.includes('fy2023-24') || classification.includes('fy 2023-24') || classification.includes('2023-24')) docFY = '2023-24';
-                        else if (classification.includes('fy2022-23') || classification.includes('fy 2022-23') || classification.includes('2022-23')) docFY = '2022-23';
 
                         // Only process business entity ITRs (check if classification contains applicant name or known business names)
                         const applicantName = (proposal.applicantName || '').toLowerCase();
@@ -4347,15 +4352,15 @@
 
                             // Current year extraction
                             if (salesAmount > 0) {
-                                if (docFY === '2024-25' && salesAmount > extractedSales2425) extractedSales2425 = salesAmount;
-                                else if (docFY === '2023-24' && salesAmount > extractedSales2324) extractedSales2324 = salesAmount;
-                                else if (docFY === '2022-23' && salesAmount > extractedSales2223) extractedSales2223 = salesAmount;
+                                if (docFY === '2025-26' && salesAmount > extractedSales2425) extractedSales2425 = salesAmount;
+                                else if (docFY === '2024-25' && salesAmount > extractedSales2324) extractedSales2324 = salesAmount;
+                                else if (docFY === '2023-24' && salesAmount > extractedSales2223) extractedSales2223 = salesAmount;
                             }
 
                             // Previous year extraction from same document (P&L often has comparative columns)
                             if (prevYearSalesAmount > 0) {
-                                if (docFY === '2024-25' && prevYearSalesAmount > extractedSales2324) extractedSales2324 = prevYearSalesAmount;
-                                else if (docFY === '2023-24' && prevYearSalesAmount > extractedSales2223) extractedSales2223 = prevYearSalesAmount;
+                                if (docFY === '2025-26' && prevYearSalesAmount > extractedSales2324) extractedSales2324 = prevYearSalesAmount;
+                                else if (docFY === '2024-25' && prevYearSalesAmount > extractedSales2223) extractedSales2223 = prevYearSalesAmount;
                             }
                         }
                     });
@@ -4378,20 +4383,20 @@
                     <!-- Projected Turnover Summary Table -->
                     <div style="margin-bottom: 30px;">
                         <h4 style="color: #2c3e50; margin-bottom: 15px; padding-bottom: 8px; border-bottom: 2px solid #27ae60;">Projected Turnover Summary</h4>
-                        <p style="font-size: 0.85em; color: #666; margin-bottom: 15px;">FY2023-24 & FY2024-25: Auto-extracted from ITR Trading Account | FY2025-26: Annualized from GST Returns</p>
+                        <p style="font-size: 0.85em; color: #666; margin-bottom: 15px;">FY2024-25 & FY2025-26: Auto-extracted from ITR Trading Account | FY2026-27: Annualized from GST Returns</p>
                         <div style="overflow-x: auto;">
                             <table style="width: 100%; border-collapse: collapse; font-size: 0.95em; max-width: 900px;">
                                 <thead>
                                     <tr style="background: #27ae60; color: white;">
                                         <th style="padding: 12px 15px; text-align: left; border: 1px solid #1e8449; width: 120px;">Years</th>
                                         <th style="padding: 12px 15px; text-align: right; border: 1px solid #1e8449;">
-                                            FY2023-24<br><span style="font-size: 0.8em; font-weight: normal;">(P&L Sales)</span>
-                                        </th>
-                                        <th style="padding: 12px 15px; text-align: right; border: 1px solid #1e8449;">
                                             FY2024-25<br><span style="font-size: 0.8em; font-weight: normal;">(P&L Sales)</span>
                                         </th>
                                         <th style="padding: 12px 15px; text-align: right; border: 1px solid #1e8449;">
-                                            FY2025-26<br><span style="font-size: 0.8em; font-weight: normal;">(Projected)</span>
+                                            FY2025-26<br><span style="font-size: 0.8em; font-weight: normal;">(P&L Sales)</span>
+                                        </th>
+                                        <th style="padding: 12px 15px; text-align: right; border: 1px solid #1e8449;">
+                                            FY2026-27<br><span style="font-size: 0.8em; font-weight: normal;">(Projected)</span>
                                         </th>
                                     </tr>
                                 </thead>
@@ -5274,7 +5279,7 @@
                     // === Compute eligibility auto-fill data ===
 
                     // Get the last 2 FYs from sorted FYs (already computed above in financials section)
-                    const eligFYs = sortedFYs.filter(fy => !fy.includes('2025-26')).slice(-2);
+                    const eligFYs = sortedFYs.filter(fy => !fy.includes('2026-27')).slice(-2);
                     const eligPrevFY = eligFYs.length >= 2 ? eligFYs[0] : (eligFYs[0] || '');
                     const eligLatestFY = eligFYs.length >= 2 ? eligFYs[1] : (eligFYs.length === 1 ? eligFYs[0] : '');
 
@@ -6022,7 +6027,7 @@
                         // Use GST turnover (annualized from latest FY, or P&L sales as fallback)
                         // gstTurnoverByFY, projectedTurnover, latestGstFY, gstFYs already computed in turnover section
                         const gstEligTurnover = projectedTurnover > 0 ? projectedTurnover : (plSales2425 > 0 ? plSales2425 : plSales2324);
-                        const gstEligSource = projectedTurnover > 0 ? ('GST Annualized ' + (latestGstFY || '')) : (plSales2425 > 0 ? 'P&L Sales 2024-25' : (plSales2324 > 0 ? 'P&L Sales 2023-24' : 'Not Available'));
+                        const gstEligSource = projectedTurnover > 0 ? ('GST Annualized ' + (latestGstFY || '')) : (plSales2425 > 0 ? 'P&L Sales 2025-26' : (plSales2324 > 0 ? 'P&L Sales 2024-25' : 'Not Available'));
 
                         // Total EMI obligations from debt profile (reuse from Normal Income)
                         let gstTotalEMI = 0;
@@ -6651,7 +6656,7 @@
                 const fy2324 = fy2324Input ? parseFloat(fy2324Input.value) || 0 : 0;
                 const fy2425 = fy2425Input ? parseFloat(fy2425Input.value) || 0 : 0;
 
-                // Update FY2024-25 growth
+                // Update FY2025-26 growth (col1 -> col2)
                 const growth2425Cell = document.getElementById('growth2425Cell');
                 if (growth2425Cell && fy2324 > 0 && fy2425 > 0) {
                     const growth = ((fy2425 - fy2324) / fy2324) * 100;
@@ -6659,7 +6664,7 @@
                     growth2425Cell.style.color = growth >= 0 ? '#27ae60' : '#e74c3c';
                 }
 
-                // Update FY2025-26 growth
+                // Update FY2026-27 growth (col2 -> projected)
                 const growth2526Cell = document.getElementById('growth2526Cell');
                 if (growth2526Cell && fy2425 > 0 && projectedTurnover > 0) {
                     const growth = ((projectedTurnover - fy2425) / fy2425) * 100;

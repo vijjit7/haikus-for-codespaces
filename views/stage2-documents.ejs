@@ -132,16 +132,20 @@
                         <div class="file-input-wrapper">
                             <input type="file" id="bulkDocuments" name="bulkDocuments" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.zip,.rar">
                             <input type="file" id="bulkFolderInput" webkitdirectory directory multiple style="display:none">
+                            <input type="file" id="bulkMultiFolderInput" webkitdirectory directory multiple style="display:none">
                             <div class="file-input-display">
                                 <span class="file-icon">📎</span>
                                 <span class="file-text">Choose files or drag here</span>
                             </div>
                         </div>
-                        <div style="display: flex; gap: 8px; margin-top: 8px;">
+                        <div style="display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;">
                             <button type="button" onclick="document.getElementById('bulkFolderInput').click()" class="btn btn-secondary" style="font-size: 13px; padding: 6px 14px;">
                                 📁 Add Folder
                             </button>
-                            <span style="font-size: 12px; color: #888; align-self: center;">Select entire folders — all supported files inside will be queued</span>
+                            <button type="button" onclick="alert('Select the PARENT folder that contains all the subfolders you want to import.\n\nExample: If you want to import ITR, Bank Statements, GST folders — select the folder that contains all of them.'); setTimeout(() => document.getElementById('bulkMultiFolderInput').click(), 300);" class="btn btn-secondary" style="font-size: 13px; padding: 6px 14px;">
+                                📂 Import All Subfolders
+                            </button>
+                            <span style="font-size: 12px; color: #888; align-self: center;">Add Folder = one folder at a time | Import All Subfolders = select parent folder to import all folders inside it</span>
                         </div>
                     </div>
                     <div id="bulkFilePreview" class="file-preview"></div>
@@ -213,10 +217,19 @@
 
             <!-- Required Documents Section -->
             <%
-                // Calculate Financial Years - Fixed to FY2024-25 + 2 previous years
-                const currentFY = 'FY 2024-25';
-                const previousFY = 'FY 2023-24';
-                const precedingFY = 'FY 2022-23';
+                // Calculate Financial Years dynamically based on the latest completed FY.
+                // Indian FY runs April–March. The latest completed FY is the one ending on the
+                // most recent 31 March; its ITR / Form 26AS become the "current year" documents.
+                const _now = new Date();
+                const _latestFYEndYear = (_now.getMonth() < 3) ? _now.getFullYear() - 1 : _now.getFullYear();
+                const _fyLabel = (startYear, spaced = true) => 'FY' + (spaced ? ' ' : '') + startYear + '-' + String((startYear + 1) % 100).padStart(2, '0');
+                const currentFY = _fyLabel(_latestFYEndYear - 1);   // latest completed FY (e.g. FY 2025-26)
+                const previousFY = _fyLabel(_latestFYEndYear - 2);
+                const precedingFY = _fyLabel(_latestFYEndYear - 3);
+                // Compact labels (no space) used for Tax Audit Report document types
+                const currentFYc = _fyLabel(_latestFYEndYear - 1, false);
+                const previousFYc = _fyLabel(_latestFYEndYear - 2, false);
+                const precedingFYc = _fyLabel(_latestFYEndYear - 3, false);
             %>
             <div class="required-documents card">
                 <h2 style="cursor: pointer; display: flex; align-items: center; justify-content: space-between; margin-bottom: 0;" onclick="toggleRequiredDocs()">
@@ -390,9 +403,9 @@
                             <li>Form 26AS of <%= currentFY %> of (<%= proposal.applicantName %>)</li>
                             <li>Form 26AS of <%= previousFY %> of (<%= proposal.applicantName %>)</li>
                             <li>Form 26AS of <%= precedingFY %> of (<%= proposal.applicantName %>)</li>
-                            <li>Tax Audit Report of FY2022-23</li>
-                            <li>Tax Audit Report of FY2023-24</li>
-                            <li>Tax Audit Report of FY2024-25</li>
+                            <li>Tax Audit Report of <%= precedingFYc %></li>
+                            <li>Tax Audit Report of <%= previousFYc %></li>
+                            <li>Tax Audit Report of <%= currentFYc %></li>
                         </ul>
                     </div>
                     <% if (proposal.coApplicants && proposal.coApplicants.length > 0) { %>
@@ -862,9 +875,9 @@
                         allDocTypesByCategory.financials.push('Form 26AS of ' + currentFY + ' of ' + proposal.applicantName);
                         allDocTypesByCategory.financials.push('Form 26AS of ' + previousFY + ' of ' + proposal.applicantName);
                         allDocTypesByCategory.financials.push('Form 26AS of ' + precedingFY + ' of ' + proposal.applicantName);
-                        allDocTypesByCategory.financials.push('Tax Audit Report of FY2022-23');
-                        allDocTypesByCategory.financials.push('Tax Audit Report of FY2023-24');
-                        allDocTypesByCategory.financials.push('Tax Audit Report of FY2024-25');
+                        allDocTypesByCategory.financials.push('Tax Audit Report of ' + precedingFYc);
+                        allDocTypesByCategory.financials.push('Tax Audit Report of ' + previousFYc);
+                        allDocTypesByCategory.financials.push('Tax Audit Report of ' + currentFYc);
                         if (proposal.coApplicants && proposal.coApplicants.length > 0) {
                             proposal.coApplicants.forEach((co, idx) => {
                                 allDocTypesByCategory.financials.push('ITR of ' + currentFY + ' of ' + (co.name || 'CoApplicant ' + (idx + 1)));
@@ -1100,9 +1113,9 @@
                         if (!isDocClassified(form26asPreceding)) pendingByCategory.financials.push(form26asPreceding);
 
                         // Tax Audit Reports
-                        const taxAudit2223 = 'Tax Audit Report of FY2022-23';
-                        const taxAudit2324 = 'Tax Audit Report of FY2023-24';
-                        const taxAudit2425 = 'Tax Audit Report of FY2024-25';
+                        const taxAudit2223 = 'Tax Audit Report of ' + precedingFYc;
+                        const taxAudit2324 = 'Tax Audit Report of ' + previousFYc;
+                        const taxAudit2425 = 'Tax Audit Report of ' + currentFYc;
                         if (!isDocClassified(taxAudit2223)) pendingByCategory.financials.push(taxAudit2223);
                         if (!isDocClassified(taxAudit2324)) pendingByCategory.financials.push(taxAudit2324);
                         if (!isDocClassified(taxAudit2425)) pendingByCategory.financials.push(taxAudit2425);
@@ -1799,11 +1812,11 @@
                             // Get all financial documents
                             const financialDocs = uploadedFiles.filter(f => f.category === 'financials');
 
-                            // Define financial years - Fixed to FY2024-25 + 2 previous years
+                            // Financial years derived from the latest completed FY (see top of template)
                             const financialYears = [
-                                'FY 2024-25',
-                                'FY 2023-24',
-                                'FY 2022-23'
+                                currentFY,
+                                previousFY,
+                                precedingFY
                             ];
 
                             // Get all applicants (main applicant + coapplicants)
@@ -4257,6 +4270,10 @@
         let selectedFiles = [];
         // Map: index in selectedFiles → { entries: [{ name, fullPath, blob, size, checked, isDuplicate }], expanded: true }
         const zipPreviews = new Map();
+        // Map: fileIndex → folderName (tracks which folder each file came from)
+        const folderSources = new Map();
+        // Set of collapsed folder names (expanded by default)
+        const folderCollapsed = new Set();
 
         function getFileIcon(name) {
             const ext = name.split('.').pop().toLowerCase();
@@ -4282,7 +4299,12 @@
         async function processIncomingFiles(files) {
             const duplicates = [];
             for (const file of files) {
-                const existsInSelection = selectedFiles.some(f => f.name === file.name && f.size === file.size);
+                // Use webkitRelativePath (if available) for uniqueness so same-named files in different subfolders are kept
+                const filePath = file.webkitRelativePath || file.name;
+                const existsInSelection = selectedFiles.some(f => {
+                    const existingPath = f.webkitRelativePath || f.name;
+                    return existingPath === filePath && f.size === file.size;
+                });
                 if (existsInSelection) continue;
 
                 const idx = selectedFiles.length;
@@ -4346,78 +4368,129 @@
             if (zp) { zp.entries.forEach(e => e.checked = checked); renderFilePreview(); }
         }
 
-        // Function to render file preview with remove buttons
+        // Render a single file item (regular or ZIP) into the given container
+        function renderSingleFile(container, index) {
+            const file = selectedFiles[index];
+            if (zipPreviews.has(index)) {
+                const zp = zipPreviews.get(index);
+                const checkedCount = zp.entries.filter(e => e.checked).length;
+                const zipContainer = document.createElement('div');
+                zipContainer.className = 'zip-preview-container';
+
+                const header = document.createElement('div');
+                header.className = 'zip-header';
+                header.innerHTML = `
+                    <span class="zip-icon">📦</span>
+                    <span class="zip-name">${file.name}</span>
+                    <span class="zip-count">${checkedCount}/${zp.entries.length} selected</span>
+                    <span class="zip-toggle ${zp.expanded ? 'expanded' : ''}">▶</span>
+                    <button type="button" class="file-remove-btn" onclick="event.stopPropagation(); removeFile(${index})" title="Remove ZIP">✕</button>
+                `;
+                header.addEventListener('click', (e) => {
+                    if (e.target.closest('.file-remove-btn')) return;
+                    toggleZipExpand(index);
+                });
+                zipContainer.appendChild(header);
+
+                if (zp.expanded) {
+                    const actions = document.createElement('div');
+                    actions.className = 'zip-actions';
+                    actions.innerHTML = `
+                        <button type="button" onclick="toggleAllZipEntries(${index}, true)">Select All</button>
+                        <button type="button" onclick="toggleAllZipEntries(${index}, false)">Deselect All</button>
+                    `;
+                    zipContainer.appendChild(actions);
+
+                    const list = document.createElement('div');
+                    list.className = 'zip-entries-list';
+                    zp.entries.forEach((entry, eIdx) => {
+                        const item = document.createElement('div');
+                        item.className = 'zip-entry-item' + (entry.isDuplicate ? ' zip-entry-duplicate' : '');
+                        item.innerHTML = `
+                            <input type="checkbox" ${entry.checked ? 'checked' : ''} onchange="toggleZipEntry(${index}, ${eIdx})">
+                            <span class="entry-icon">${getFileIcon(entry.name)}</span>
+                            <span class="entry-name" title="${entry.fullPath}">${entry.name}</span>
+                            ${entry.isDuplicate ? '<span class="duplicate-badge">Already exists</span>' : ''}
+                            <span class="entry-size">${(entry.size / 1024).toFixed(1)} KB</span>
+                        `;
+                        list.appendChild(item);
+                    });
+                    zipContainer.appendChild(list);
+                }
+
+                container.appendChild(zipContainer);
+            } else {
+                const isDuplicate = existingFileNames.has(file.name);
+                const subfolderPath = fileSubfolderPaths.get(index);
+                const fileItem = document.createElement('div');
+                fileItem.className = 'file-preview-item';
+                if (isDuplicate) fileItem.style.background = '#fff3e0';
+                fileItem.innerHTML = `
+                    <span class="file-icon">${getFileIcon(file.name)}</span>
+                    <span class="file-name" ${isDuplicate ? 'style="color:#e65100;"' : ''}>
+                        ${subfolderPath ? '<span style="color:#888;font-size:11px;">' + subfolderPath + '/</span>' : ''}${file.name}
+                    </span>
+                    ${isDuplicate ? '<span class="duplicate-badge">Already exists</span>' : ''}
+                    <span class="file-size">${(file.size / 1024).toFixed(2)} KB</span>
+                    <button type="button" class="file-remove-btn" onclick="removeFile(${index})" title="Remove file">✕</button>
+                `;
+                container.appendChild(fileItem);
+            }
+        }
+
+        // Function to render file preview with folder grouping
         function renderFilePreview() {
             bulkFilePreview.innerHTML = '';
 
+            // Group files by folder source
+            const folders = new Map(); // folderName → [indices]
+            const ungrouped = [];
+
             selectedFiles.forEach((file, index) => {
-                if (zipPreviews.has(index)) {
-                    // Render ZIP preview
-                    const zp = zipPreviews.get(index);
-                    const checkedCount = zp.entries.filter(e => e.checked).length;
-                    const container = document.createElement('div');
-                    container.className = 'zip-preview-container';
-
-                    // Header
-                    const header = document.createElement('div');
-                    header.className = 'zip-header';
-                    header.innerHTML = `
-                        <span class="zip-icon">📦</span>
-                        <span class="zip-name">${file.name}</span>
-                        <span class="zip-count">${checkedCount}/${zp.entries.length} selected</span>
-                        <span class="zip-toggle ${zp.expanded ? 'expanded' : ''}">▶</span>
-                        <button type="button" class="file-remove-btn" onclick="event.stopPropagation(); removeFile(${index})" title="Remove ZIP">✕</button>
-                    `;
-                    header.addEventListener('click', (e) => {
-                        if (e.target.closest('.file-remove-btn')) return;
-                        toggleZipExpand(index);
-                    });
-                    container.appendChild(header);
-
-                    if (zp.expanded) {
-                        // Actions bar
-                        const actions = document.createElement('div');
-                        actions.className = 'zip-actions';
-                        actions.innerHTML = `
-                            <button type="button" onclick="toggleAllZipEntries(${index}, true)">Select All</button>
-                            <button type="button" onclick="toggleAllZipEntries(${index}, false)">Deselect All</button>
-                        `;
-                        container.appendChild(actions);
-
-                        // Entries list
-                        const list = document.createElement('div');
-                        list.className = 'zip-entries-list';
-                        zp.entries.forEach((entry, eIdx) => {
-                            const item = document.createElement('div');
-                            item.className = 'zip-entry-item' + (entry.isDuplicate ? ' zip-entry-duplicate' : '');
-                            item.innerHTML = `
-                                <input type="checkbox" ${entry.checked ? 'checked' : ''} onchange="toggleZipEntry(${index}, ${eIdx})">
-                                <span class="entry-icon">${getFileIcon(entry.name)}</span>
-                                <span class="entry-name" title="${entry.fullPath}">${entry.name}</span>
-                                ${entry.isDuplicate ? '<span class="duplicate-badge">Already exists</span>' : ''}
-                                <span class="entry-size">${(entry.size / 1024).toFixed(1)} KB</span>
-                            `;
-                            list.appendChild(item);
-                        });
-                        container.appendChild(list);
-                    }
-
-                    bulkFilePreview.appendChild(container);
+                const folder = folderSources.get(index);
+                if (folder) {
+                    if (!folders.has(folder)) folders.set(folder, []);
+                    folders.get(folder).push(index);
                 } else {
-                    // Regular file
-                    const isDuplicate = existingFileNames.has(file.name);
-                    const fileItem = document.createElement('div');
-                    fileItem.className = 'file-preview-item';
-                    if (isDuplicate) fileItem.style.background = '#fff3e0';
-                    fileItem.innerHTML = `
-                        <span class="file-icon">${getFileIcon(file.name)}</span>
-                        <span class="file-name" ${isDuplicate ? 'style="color:#e65100;"' : ''}>${file.name}</span>
-                        ${isDuplicate ? '<span class="duplicate-badge">Already exists</span>' : ''}
-                        <span class="file-size">${(file.size / 1024).toFixed(2)} KB</span>
-                        <button type="button" class="file-remove-btn" onclick="removeFile(${index})" title="Remove file">✕</button>
-                    `;
-                    bulkFilePreview.appendChild(fileItem);
+                    ungrouped.push(index);
                 }
+            });
+
+            // Render folder groups
+            folders.forEach((indices, folderName) => {
+                const folderContainer = document.createElement('div');
+                folderContainer.className = 'folder-preview-container';
+
+                const isExpanded = !folderCollapsed.has(folderName);
+                const folderHeader = document.createElement('div');
+                folderHeader.className = 'folder-header';
+                folderHeader.innerHTML = `
+                    <span class="folder-toggle ${isExpanded ? 'expanded' : ''}">▶</span>
+                    <span class="folder-icon-label">📁 ${folderName}</span>
+                    <span class="folder-count">${indices.length} file(s)</span>
+                    <button type="button" class="file-remove-btn" onclick="event.stopPropagation(); removeFolder('${folderName.replace(/'/g, "\\'")}')" title="Remove folder">✕</button>
+                `;
+                folderHeader.addEventListener('click', (e) => {
+                    if (e.target.closest('.file-remove-btn')) return;
+                    toggleFolderCollapse(folderName);
+                });
+                folderContainer.appendChild(folderHeader);
+
+                if (isExpanded) {
+                    const filesList = document.createElement('div');
+                    filesList.className = 'folder-files-list';
+                    indices.forEach(index => {
+                        renderSingleFile(filesList, index);
+                    });
+                    folderContainer.appendChild(filesList);
+                }
+
+                bulkFilePreview.appendChild(folderContainer);
+            });
+
+            // Render ungrouped files (added via file picker or drag-drop without folder)
+            ungrouped.forEach(index => {
+                renderSingleFile(bulkFilePreview, index);
             });
 
             updateFileCount();
@@ -4426,15 +4499,72 @@
         // Function to remove a file from the selection
         function removeFile(index) {
             selectedFiles.splice(index, 1);
-            // Rebuild zipPreviews Map with shifted indices
-            const newMap = new Map();
+            // Rebuild zipPreviews and folderSources Maps with shifted indices
+            const newZipMap = new Map();
             zipPreviews.forEach((val, key) => {
-                if (key === index) return; // removed
-                const newKey = key > index ? key - 1 : key;
-                newMap.set(newKey, val);
+                if (key === index) return;
+                newZipMap.set(key > index ? key - 1 : key, val);
             });
             zipPreviews.clear();
-            newMap.forEach((val, key) => zipPreviews.set(key, val));
+            newZipMap.forEach((val, key) => zipPreviews.set(key, val));
+
+            const newFolderMap = new Map();
+            folderSources.forEach((val, key) => {
+                if (key === index) return;
+                newFolderMap.set(key > index ? key - 1 : key, val);
+            });
+            folderSources.clear();
+            newFolderMap.forEach((val, key) => folderSources.set(key, val));
+
+            const newSubfolderMap = new Map();
+            fileSubfolderPaths.forEach((val, key) => {
+                if (key === index) return;
+                newSubfolderMap.set(key > index ? key - 1 : key, val);
+            });
+            fileSubfolderPaths.clear();
+            newSubfolderMap.forEach((val, key) => fileSubfolderPaths.set(key, val));
+            renderFilePreview();
+        }
+
+        // Toggle folder expand/collapse
+        function toggleFolderCollapse(folderName) {
+            if (folderCollapsed.has(folderName)) {
+                folderCollapsed.delete(folderName);
+            } else {
+                folderCollapsed.add(folderName);
+            }
+            renderFilePreview();
+        }
+
+        // Remove all files from a specific folder
+        function removeFolder(folderName) {
+            const indicesToRemove = new Set();
+            folderSources.forEach((folder, idx) => {
+                if (folder === folderName) indicesToRemove.add(idx);
+            });
+
+            const newFiles = [];
+            const newZipPreviews = new Map();
+            const newFolderSources = new Map();
+            const newSubfolderPaths = new Map();
+
+            selectedFiles.forEach((file, oldIdx) => {
+                if (indicesToRemove.has(oldIdx)) return;
+                const newIdx = newFiles.length;
+                newFiles.push(file);
+                if (zipPreviews.has(oldIdx)) newZipPreviews.set(newIdx, zipPreviews.get(oldIdx));
+                if (folderSources.has(oldIdx)) newFolderSources.set(newIdx, folderSources.get(oldIdx));
+                if (fileSubfolderPaths.has(oldIdx)) newSubfolderPaths.set(newIdx, fileSubfolderPaths.get(oldIdx));
+            });
+
+            selectedFiles = newFiles;
+            zipPreviews.clear();
+            newZipPreviews.forEach((v, k) => zipPreviews.set(k, v));
+            folderSources.clear();
+            newFolderSources.forEach((v, k) => folderSources.set(k, v));
+            fileSubfolderPaths.clear();
+            newSubfolderPaths.forEach((v, k) => fileSubfolderPaths.set(k, v));
+            folderCollapsed.delete(folderName);
             renderFilePreview();
         }
 
@@ -4462,9 +4592,15 @@
 
             if (selectedFiles.length > 0) {
                 const zipCount = zipPreviews.size;
-                const label = zipCount > 0
-                    ? `<strong>${totalFiles}</strong> file(s) to upload (from ${selectedFiles.length} selection${selectedFiles.length > 1 ? 's' : ''})`
-                    : `<strong>${totalFiles}</strong> file(s) selected`;
+                const folderNames = new Set(folderSources.values());
+                const folderCount = folderNames.size;
+                let label = `<strong>${totalFiles}</strong> file(s) to upload`;
+                if (folderCount > 0 || zipCount > 0) {
+                    const parts = [];
+                    if (folderCount > 0) parts.push(`${folderCount} folder${folderCount > 1 ? 's' : ''}`);
+                    if (zipCount > 0) parts.push(`${zipCount} zip${zipCount > 1 ? 's' : ''}`);
+                    label += ` (from ${parts.join(', ')})`;
+                }
                 countDisplay.innerHTML = label;
                 countDisplay.style.display = 'block';
                 if (clearAllBtn) clearAllBtn.style.display = 'inline-flex';
@@ -4478,6 +4614,9 @@
         function clearAllFiles() {
             selectedFiles = [];
             zipPreviews.clear();
+            folderSources.clear();
+            folderCollapsed.clear();
+            fileSubfolderPaths.clear();
             bulkFileInput.value = '';
             renderFilePreview();
         }
@@ -4487,20 +4626,120 @@
             processIncomingFiles(Array.from(e.target.files));
         });
 
-        // Folder input — adds all supported files from the selected folder
+        // Folder input — adds all supported files from the selected folder (including subfolders)
+        // After each folder selection, prompts user to add another folder
         const bulkFolderInput = document.getElementById('bulkFolderInput');
-        bulkFolderInput.addEventListener('change', function(e) {
+        // Map: fileIndex → subfolder relative path (e.g. "TopFolder/Sub1/Sub2")
+        const fileSubfolderPaths = new Map();
+        bulkFolderInput.addEventListener('change', async function(e) {
             const ALLOWED_DOC_EXTS = ['pdf','doc','docx','xls','xlsx','jpg','jpeg','png','zip','rar'];
             const files = Array.from(e.target.files).filter(f => {
                 const ext = f.name.split('.').pop().toLowerCase();
                 return ALLOWED_DOC_EXTS.includes(ext);
             });
             if (files.length > 0) {
-                processIncomingFiles(files);
+                // Extract top-level folder name from webkitRelativePath (first path segment)
+                const folderName = files[0].webkitRelativePath ? files[0].webkitRelativePath.split('/')[0] : 'Folder';
+                const startIdx = selectedFiles.length;
+                await processIncomingFiles(files);
+                // Track which folder each newly added file came from + subfolder path
+                for (let i = startIdx; i < selectedFiles.length; i++) {
+                    folderSources.set(i, folderName);
+                    // Find the original file to get its webkitRelativePath for subfolder info
+                    const addedFile = selectedFiles[i];
+                    const origFile = files.find(f => f.name === addedFile.name && f.size === addedFile.size);
+                    if (origFile && origFile.webkitRelativePath) {
+                        const pathParts = origFile.webkitRelativePath.split('/');
+                        // Store subfolder path (everything between top folder and filename)
+                        if (pathParts.length > 2) {
+                            fileSubfolderPaths.set(i, pathParts.slice(1, -1).join('/'));
+                        }
+                    }
+                }
+                renderFilePreview();
+                bulkFolderInput.value = '';
+                // Prompt to add another folder
+                if (confirm(`Added folder "${folderName}" (${files.length} files including subfolders). Add another folder?`)) {
+                    setTimeout(() => bulkFolderInput.click(), 100);
+                }
             } else {
                 alert('No supported files found in the selected folder.');
+                bulkFolderInput.value = '';
             }
-            bulkFolderInput.value = '';
+        });
+
+        // Multi-folder input — select a parent folder, files are grouped by immediate subfolders
+        const bulkMultiFolderInput = document.getElementById('bulkMultiFolderInput');
+        bulkMultiFolderInput.addEventListener('change', async function(e) {
+            const ALLOWED_DOC_EXTS = ['pdf','doc','docx','xls','xlsx','jpg','jpeg','png','zip','rar'];
+            const allFiles = Array.from(e.target.files).filter(f => {
+                const ext = f.name.split('.').pop().toLowerCase();
+                return ALLOWED_DOC_EXTS.includes(ext);
+            });
+            if (allFiles.length === 0) {
+                alert('No supported files found in the selected folder.');
+                bulkMultiFolderInput.value = '';
+                return;
+            }
+
+            // Group files by their immediate subfolder (first level inside selected parent)
+            // webkitRelativePath: "ParentFolder/SubFolder1/file.pdf" or "ParentFolder/file.pdf"
+            const parentFolder = allFiles[0].webkitRelativePath ? allFiles[0].webkitRelativePath.split('/')[0] : 'Folder';
+            const subfolderGroups = new Map(); // subfolderName → [files]
+            const rootFiles = []; // files directly in parent (no subfolder)
+
+            for (const file of allFiles) {
+                const pathParts = file.webkitRelativePath ? file.webkitRelativePath.split('/') : [parentFolder, file.name];
+                if (pathParts.length <= 2) {
+                    // File directly in parent folder (e.g. "ParentFolder/file.pdf")
+                    rootFiles.push(file);
+                } else {
+                    // File in a subfolder (e.g. "ParentFolder/Sub1/file.pdf" or deeper)
+                    const subfolderName = pathParts[1];
+                    if (!subfolderGroups.has(subfolderName)) subfolderGroups.set(subfolderName, []);
+                    subfolderGroups.get(subfolderName).push(file);
+                }
+            }
+
+            // Process root files under parent folder name
+            if (rootFiles.length > 0) {
+                const startIdx = selectedFiles.length;
+                await processIncomingFiles(rootFiles);
+                for (let i = startIdx; i < selectedFiles.length; i++) {
+                    folderSources.set(i, parentFolder);
+                }
+            }
+
+            // Process each subfolder as a separate folder group
+            const subfolderNames = [];
+            for (const [subName, subFiles] of subfolderGroups) {
+                const folderLabel = parentFolder + '/' + subName;
+                subfolderNames.push(subName);
+                const startIdx = selectedFiles.length;
+                await processIncomingFiles(subFiles);
+                for (let i = startIdx; i < selectedFiles.length; i++) {
+                    folderSources.set(i, folderLabel);
+                    // Track deeper subfolder path
+                    const addedFile = selectedFiles[i];
+                    const origFile = subFiles.find(f => f.name === addedFile.name && f.size === addedFile.size);
+                    if (origFile && origFile.webkitRelativePath) {
+                        const parts = origFile.webkitRelativePath.split('/');
+                        // subfolder path beyond the immediate subfolder level
+                        if (parts.length > 3) {
+                            fileSubfolderPaths.set(i, parts.slice(2, -1).join('/'));
+                        }
+                    }
+                }
+            }
+
+            renderFilePreview();
+            bulkMultiFolderInput.value = '';
+
+            const folderCount = subfolderGroups.size + (rootFiles.length > 0 ? 1 : 0);
+            const summary = subfolderNames.length > 0
+                ? `Imported ${folderCount} folder(s) from "${parentFolder}" (${allFiles.length} total files):\n${subfolderNames.join(', ')}${rootFiles.length > 0 ? '\n+ ' + rootFiles.length + ' file(s) in root' : ''}`
+                : `Imported ${allFiles.length} file(s) from "${parentFolder}"`;
+            alert(summary);
         });
 
         // Drag and drop
@@ -4554,28 +4793,35 @@
 
         fileInputWrapper.addEventListener('drop', async function(e) {
             const items = e.dataTransfer.items;
-            let allFiles = [];
             if (items && items.length > 0) {
                 const entries = [];
                 for (let i = 0; i < items.length; i++) {
                     const entry = items[i].webkitGetAsEntry && items[i].webkitGetAsEntry();
                     if (entry) entries.push(entry);
                 }
-                if (entries.some(e => e.isDirectory)) {
+                if (entries.some(en => en.isDirectory)) {
+                    const ALLOWED_DOC_EXTS = ['pdf','doc','docx','xls','xlsx','jpg','jpeg','png','zip','rar'];
+                    // Process each dropped entry separately to track folder names
                     for (const entry of entries) {
                         const files = await readDroppedEntry(entry);
-                        allFiles.push(...files);
+                        const filtered = files.filter(f => {
+                            const ext = f.name.split('.').pop().toLowerCase();
+                            return ALLOWED_DOC_EXTS.includes(ext);
+                        });
+                        if (filtered.length > 0) {
+                            const startIdx = selectedFiles.length;
+                            await processIncomingFiles(filtered);
+                            if (entry.isDirectory) {
+                                for (let i = startIdx; i < selectedFiles.length; i++) {
+                                    folderSources.set(i, entry.name);
+                                }
+                            }
+                        }
                     }
-                    // Filter allowed extensions
-                    const ALLOWED_DOC_EXTS = ['pdf','doc','docx','xls','xlsx','jpg','jpeg','png','zip','rar'];
-                    allFiles = allFiles.filter(f => {
-                        const ext = f.name.split('.').pop().toLowerCase();
-                        return ALLOWED_DOC_EXTS.includes(ext);
-                    });
+                    renderFilePreview();
+                } else {
+                    processIncomingFiles(Array.from(e.dataTransfer.files));
                 }
-            }
-            if (allFiles.length > 0) {
-                processIncomingFiles(allFiles);
             } else {
                 processIncomingFiles(Array.from(e.dataTransfer.files));
             }
@@ -4585,89 +4831,132 @@
         bulkUploadForm.addEventListener('submit', async function(e) {
             e.preventDefault();
 
-            const formData = new FormData();
-
             if (selectedFiles.length === 0) {
                 alert('Please select at least one file');
                 return;
             }
 
-            // Build list of files to upload
-            const filesToUpload = [];
+            // Build list of files to upload, grouped by folder
+            const folderBatches = new Map(); // folderName → [files]
+            const ungroupedFiles = [];
+
             selectedFiles.forEach((file, idx) => {
+                const folder = folderSources.get(idx);
+                let filesToAdd = [];
+
                 if (zipPreviews.has(idx)) {
                     const zp = zipPreviews.get(idx);
                     zp.entries.forEach(entry => {
                         if (entry.checked) {
-                            filesToUpload.push(new File([entry.blob], entry.name, { type: getMimeType(entry.name) }));
+                            filesToAdd.push(new File([entry.blob], entry.name, { type: getMimeType(entry.name) }));
                         }
                     });
                 } else {
-                    filesToUpload.push(file);
+                    filesToAdd.push(file);
+                }
+
+                if (folder) {
+                    if (!folderBatches.has(folder)) folderBatches.set(folder, []);
+                    folderBatches.get(folder).push(...filesToAdd);
+                } else {
+                    ungroupedFiles.push(...filesToAdd);
                 }
             });
 
-            if (filesToUpload.length === 0) {
+            // Combine into ordered batches: each folder as a batch, ungrouped as one batch
+            const batches = [];
+            folderBatches.forEach((files, folderName) => {
+                if (files.length > 0) batches.push({ name: folderName, files });
+            });
+            if (ungroupedFiles.length > 0) {
+                batches.push({ name: 'Other files', files: ungroupedFiles });
+            }
+
+            const totalFiles = batches.reduce((sum, b) => sum + b.files.length, 0);
+            if (totalFiles === 0) {
                 alert('No files selected for upload. Check at least one file.');
                 return;
             }
 
-            // Check for duplicates among the files to upload
-            const dupeNames = filesToUpload.filter(f => existingFileNames.has(f.name)).map(f => f.name);
+            // Check for duplicates
+            const allFiles = batches.flatMap(b => b.files);
+            const dupeNames = allFiles.filter(f => existingFileNames.has(f.name)).map(f => f.name);
+            let skipDuplicates = false;
             if (dupeNames.length > 0) {
                 const proceed = confirm('These files already exist:\n\n' + dupeNames.join('\n') + '\n\nClick OK to skip duplicates and upload only new files.');
                 if (!proceed) return;
-                const newFiles = filesToUpload.filter(f => !existingFileNames.has(f.name));
-                if (newFiles.length === 0) {
+                skipDuplicates = true;
+                // Remove empty batches after filtering
+                batches.forEach(b => {
+                    b.files = b.files.filter(f => !existingFileNames.has(f.name));
+                });
+                const remaining = batches.reduce((sum, b) => sum + b.files.length, 0);
+                if (remaining === 0) {
                     alert('All selected files already exist. Nothing to upload.');
                     return;
                 }
-                for (const file of newFiles) {
-                    formData.append('documents', file);
-                }
-            } else {
-                for (const file of filesToUpload) {
-                    formData.append('documents', file);
-                }
             }
-            formData.append('proposalId', proposalId);
 
             // Show progress
             uploadProgress.style.display = 'block';
+            const progressBar = uploadProgress.querySelector('.progress-fill');
             const progressText = uploadProgress.querySelector('.progress-text');
-            progressText.textContent = `Uploading ${filesToUpload.length} file(s)... This may take a few minutes for PDF processing.`;
-
             const submitBtn = bulkUploadForm.querySelector('button[type="submit"]');
             submitBtn.disabled = true;
             submitBtn.style.opacity = '0.5';
 
-            try {
-                console.log('Starting upload...');
-                const response = await fetch(`/stage2/${proposalId}/upload`, {
-                    method: 'POST',
-                    body: formData
-                });
+            let uploadedBatches = 0;
+            let failedBatches = [];
+            const activeBatches = batches.filter(b => b.files.length > 0);
 
-                console.log('Response received:', response.status);
-                const result = await response.json();
-                console.log('Result:', result);
+            for (const batch of activeBatches) {
+                uploadedBatches++;
+                const batchLabel = activeBatches.length > 1
+                    ? `Uploading batch ${uploadedBatches}/${activeBatches.length}: "${batch.name}" (${batch.files.length} files)...`
+                    : `Uploading ${batch.files.length} file(s)... This may take a few minutes for PDF processing.`;
+                progressText.textContent = batchLabel;
+                if (progressBar) progressBar.style.width = ((uploadedBatches - 1) / activeBatches.length * 100) + '%';
 
-                if (result.success) {
-                    uploadProgress.style.display = 'none';
-                    alert('Documents uploaded and processed successfully!');
-                    window.location.reload();
-                } else {
-                    uploadProgress.style.display = 'none';
-                    submitBtn.disabled = false;
-                    submitBtn.style.opacity = '1';
-                    alert('Upload failed: ' + result.error);
+                const formData = new FormData();
+                for (const file of batch.files) {
+                    formData.append('documents', file);
                 }
-            } catch (error) {
-                console.error('Upload error:', error);
-                uploadProgress.style.display = 'none';
-                submitBtn.disabled = false;
-                submitBtn.style.opacity = '1';
-                alert('Upload error: ' + error.message + '. Please try again or check your network connection.');
+                formData.append('proposalId', proposalId);
+
+                try {
+                    console.log(`Uploading batch "${batch.name}": ${batch.files.length} files`);
+                    const response = await fetch(`/stage2/${proposalId}/upload`, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const result = await response.json();
+                    console.log(`Batch "${batch.name}" result:`, result);
+
+                    if (!result.success) {
+                        failedBatches.push({ name: batch.name, error: result.error });
+                    }
+                } catch (error) {
+                    console.error(`Batch "${batch.name}" error:`, error);
+                    failedBatches.push({ name: batch.name, error: error.message });
+                }
+
+                if (progressBar) progressBar.style.width = (uploadedBatches / activeBatches.length * 100) + '%';
+            }
+
+            uploadProgress.style.display = 'none';
+            submitBtn.disabled = false;
+            submitBtn.style.opacity = '1';
+
+            if (failedBatches.length === 0) {
+                alert('All documents uploaded and processed successfully!');
+                window.location.reload();
+            } else if (failedBatches.length < activeBatches.length) {
+                const failMsg = failedBatches.map(b => `"${b.name}": ${b.error}`).join('\n');
+                alert(`Some batches uploaded successfully, but these failed:\n\n${failMsg}\n\nPage will reload to show uploaded files.`);
+                window.location.reload();
+            } else {
+                const failMsg = failedBatches.map(b => `"${b.name}": ${b.error}`).join('\n');
+                alert(`Upload failed:\n\n${failMsg}`);
             }
         });
 

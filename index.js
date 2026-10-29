@@ -8809,8 +8809,8 @@ app.get('/stage3/:proposalId/cam-text', async (req, res) => {
     }
     // Turnover data fallback
     if (!finInfo && proposal.turnoverData) {
-      if (proposal.turnoverData.fy2324) finInfo += `FY 2023-24 Sales: ${fmtAmt(proposal.turnoverData.fy2324)}\n`;
-      if (proposal.turnoverData.fy2425) finInfo += `FY 2024-25 Sales: ${fmtAmt(proposal.turnoverData.fy2425)}\n`;
+      if (proposal.turnoverData.fy2324) finInfo += `FY 2024-25 Sales: ${fmtAmt(proposal.turnoverData.fy2324)}\n`;
+      if (proposal.turnoverData.fy2425) finInfo += `FY 2025-26 Sales: ${fmtAmt(proposal.turnoverData.fy2425)}\n`;
     }
 
     // 5. Debt profile
