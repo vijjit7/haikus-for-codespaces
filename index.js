@@ -4152,7 +4152,9 @@ function aggregateBankMonthly(txns) {
 // since a single request can't reliably read hundreds of rows at once.
 async function extractBankMonthlyFromText(fullText) {
   if (!fullText || fullText.trim().length === 0) return null;
-  const CHUNK = 24000;
+  // Keep chunks small enough that the model's JSON reply (one object per transaction) fits well
+  // within max_tokens; otherwise the array truncates and we lose rows.
+  const CHUNK = 9000;
   const lines = fullText.split('\n');
   const chunks = [];
   let cur = '';
@@ -4543,6 +4545,25 @@ Respond ONLY with valid JSON:
               method: 'openrouter-document-ai'
             };
           } catch (parseErr) {
+            // Recover a truncated transaction array by salvaging complete {..} objects.
+            if (documentType === 'bank-statement-transactions') {
+              const arrMatch = content.match(/"txns"\s*:\s*\[([\s\S]*)/);
+              if (arrMatch) {
+                const recovered = [];
+                const objRegex = /\{[^{}]*\}/g;
+                let mm;
+                while ((mm = objRegex.exec(arrMatch[1])) !== null) {
+                  try {
+                    const o = JSON.parse(mm[0]);
+                    if (o.date && o.type) recovered.push(o);
+                  } catch (e) { /* skip incomplete trailing object */ }
+                }
+                if (recovered.length > 0) {
+                  console.log(`✓ Recovered ${recovered.length} transaction(s) from truncated response`);
+                  return { success: true, data: { txns: recovered }, method: 'openrouter-document-ai-recovered' };
+                }
+              }
+            }
             // Attempt to recover truncated JSON for title documents (array of objects)
             if (documentType === 'title-document') {
               console.log('⚠ JSON truncated, attempting to recover partial title documents...');
