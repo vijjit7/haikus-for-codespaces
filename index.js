@@ -8501,7 +8501,11 @@ app.post('/stage3/:proposalId/reextract-financials', async (req, res) => {
       if (doc.category !== 'financials') continue;
 
       const fileExists = await existsInGridFS(doc.filename);
-      if (!fileExists || !doc.originalName.toLowerCase().endsWith('.pdf')) continue;
+      if (!fileExists) continue;
+      const lowerName = (doc.originalName || '').toLowerCase();
+      const isPdf = lowerName.endsWith('.pdf');
+      const isImage = /\.(jpe?g|png)$/i.test(lowerName);
+      if (!isPdf && !isImage) continue;
 
       try {
         console.log('\n========================================');
@@ -8510,17 +8514,28 @@ app.post('/stage3/:proposalId/reextract-financials', async (req, res) => {
 
         const fileBuffer = await readFromGridFS(doc.filename);
         let fullText = '';
-        let pdfResult;
+        let pdfResult = null;
+        let numPages = 1;
 
         await withTempFile(fileBuffer, doc.filename, async (filePath) => {
+          if (isImage) {
+            // Image financial doc — use Vision OCR directly, same path as KYC personal IDs.
+            console.log(`Using Vision OCR for image financial doc: ${doc.originalName}`);
+            const ocrResult = await extractTextFromImage(filePath);
+            if (ocrResult.success && ocrResult.text) fullText = ocrResult.text;
+            return;
+          }
+
           pdfResult = await extractPDFWithTableDetection(filePath, false);
           fullText = pdfResult.text;
+          numPages = pdfResult.numPages || 1;
 
-          // Vision OCR for scanned/image PDFs
+          // Vision OCR for scanned/image PDFs (including single-page scans with no text layer).
           const charsPerPage = fullText.length / (pdfResult.numPages || 1);
+          const isEmpty = fullText.trim().length === 0;
           const isShortText = fullText.trim().length > 0 && fullText.trim().length < 2000 && pdfResult.numPages > 1;
-          if ((pdfResult.numPages > 3 && charsPerPage < 200) || isShortText) {
-            console.log('Attempting multi-page Vision OCR...');
+          if (isEmpty || (pdfResult.numPages > 3 && charsPerPage < 200) || isShortText) {
+            console.log('Attempting Vision OCR for scanned PDF...');
             try {
               const ocrResult = await extractAllPagesWithVisionOCR(filePath);
               if (ocrResult.success && ocrResult.text.length > fullText.length) {
@@ -8538,7 +8553,7 @@ app.post('/stage3/:proposalId/reextract-financials', async (req, res) => {
         });
 
         proposal.documents[i].extractedText = fullText;
-        proposal.documents[i].pages = pdfResult.numPages;
+        proposal.documents[i].pages = numPages;
 
         // Extract financial data from tables
         const textLower = fullText.toLowerCase();
@@ -8552,14 +8567,14 @@ app.post('/stage3/:proposalId/reextract-financials', async (req, res) => {
           itrAck: hasITR, computation: hasComp, balanceSheet: hasBS, profitLoss: hasPL
         };
 
-        console.log('Text length:', fullText.length, 'Pages:', pdfResult.numPages);
+        console.log('Text length:', fullText.length, 'Pages:', numPages);
         console.log('Components: ITR=' + hasITR, 'Comp=' + hasComp, 'BS=' + hasBS, 'PL=' + hasPL);
 
         // AI-based financial extraction
         let aiExtracted = false;
         try {
           console.log('🤖 Attempting AI financial extraction for:', doc.originalName);
-          const aiResult = await extractWithDocumentAI(fullText, 'financial-itr', pdfResult.tables || []);
+          const aiResult = await extractWithDocumentAI(fullText, 'financial-itr', (pdfResult && pdfResult.tables) || []);
           if (aiResult.success && aiResult.data) {
             const ai = aiResult.data;
             if (!proposal.documents[i].extractedDetails) proposal.documents[i].extractedDetails = {};
