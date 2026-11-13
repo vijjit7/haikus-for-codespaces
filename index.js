@@ -4147,6 +4147,38 @@ function aggregateBankMonthly(txns) {
   return { months, totalCredits, totalDebits, txnCount: (txns || []).length };
 }
 
+// Extract per-month credit/debit totals from a bank-statement's text using Gemini. Long statements
+// are split into line-aligned chunks (so no transaction row is cut) and the results de-duplicated,
+// since a single request can't reliably read hundreds of rows at once.
+async function extractBankMonthlyFromText(fullText) {
+  if (!fullText || fullText.trim().length === 0) return null;
+  const CHUNK = 24000;
+  const lines = fullText.split('\n');
+  const chunks = [];
+  let cur = '';
+  for (const ln of lines) {
+    if (cur.length + ln.length + 1 > CHUNK && cur.length > 0) { chunks.push(cur); cur = ''; }
+    cur += ln + '\n';
+  }
+  if (cur.trim()) chunks.push(cur);
+
+  const seen = new Set();
+  const allTxns = [];
+  for (const ch of chunks) {
+    const res = await extractWithDocumentAI(ch, 'bank-statement-transactions', []);
+    if (res && res.success && res.data && Array.isArray(res.data.txns)) {
+      for (const t of res.data.txns) {
+        const key = `${t.date}|${t.type}|${t.amount}|${t.balance}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        allTxns.push(t);
+      }
+    }
+  }
+  if (allTxns.length === 0) return null;
+  return aggregateBankMonthly(allTxns);
+}
+
 async function extractWithDocumentAI(text, documentType, tables = []) {
   try {
     let prompt = '';
@@ -7476,10 +7508,10 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
             // client-side regex parser, which can't separate debit/credit once the PDF text is
             // flattened). Gemini reads each row; we sum per month deterministically.
             try {
-              const txnResult = await extractWithDocumentAI(fullText, 'bank-statement-transactions', []);
-              if (txnResult.success && txnResult.data && Array.isArray(txnResult.data.txns) && txnResult.data.txns.length > 0) {
-                proposal.documents[i].bankMonthly = aggregateBankMonthly(txnResult.data.txns);
-                console.log(`✓ Bank monthly via AI: ${txnResult.data.txns.length} txns, credits ₹${proposal.documents[i].bankMonthly.totalCredits}, debits ₹${proposal.documents[i].bankMonthly.totalDebits}`);
+              const bm = await extractBankMonthlyFromText(fullText);
+              if (bm) {
+                proposal.documents[i].bankMonthly = bm;
+                console.log(`✓ Bank monthly via AI: ${bm.txnCount} txns, credits ₹${bm.totalCredits}, debits ₹${bm.totalDebits}`);
               } else {
                 console.log('⚠ AI transaction extraction returned no txns; leaving regex parser to handle monthly totals');
               }
