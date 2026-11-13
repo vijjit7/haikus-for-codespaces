@@ -8557,6 +8557,14 @@ app.post('/stage3/:proposalId/reextract-financials', async (req, res) => {
           }
         });
 
+        // Safety: never overwrite previously-extracted data with an empty result. If this run
+        // produced no text (e.g. OCR failed or timed out on a large scanned PDF), preserve what
+        // was already stored and skip this document instead of wiping it.
+        if (!fullText || fullText.trim().length === 0) {
+          console.log(`⚠ No text extracted for ${doc.originalName} — preserving existing data, skipping overwrite`);
+          continue;
+        }
+
         proposal.documents[i].extractedText = fullText;
         proposal.documents[i].pages = numPages;
 
