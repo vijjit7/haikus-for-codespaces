@@ -8526,15 +8526,20 @@ app.post('/stage3/:proposalId/reextract-financials', async (req, res) => {
             return;
           }
 
-          pdfResult = await extractPDFWithTableDetection(filePath, false);
-          fullText = pdfResult.text;
-          numPages = pdfResult.numPages || 1;
+          try {
+            pdfResult = await extractPDFWithTableDetection(filePath, false);
+            fullText = pdfResult.text || '';
+            numPages = pdfResult.numPages || 1;
+          } catch (e) {
+            console.error(`PDF text extraction failed for ${doc.originalName}, will try OCR:`, e.message);
+          }
 
-          // Vision OCR for scanned/image PDFs (including single-page scans with no text layer).
-          const charsPerPage = fullText.length / (pdfResult.numPages || 1);
+          // Vision OCR for scanned/image PDFs: empty text layer (incl. single-page scans or when
+          // the text extractor failed entirely above), or low text density on a multi-page scan.
           const isEmpty = fullText.trim().length === 0;
-          const isShortText = fullText.trim().length > 0 && fullText.trim().length < 2000 && pdfResult.numPages > 1;
-          if (isEmpty || (pdfResult.numPages > 3 && charsPerPage < 200) || isShortText) {
+          const charsPerPage = fullText.length / numPages;
+          const isShortText = fullText.trim().length > 0 && fullText.trim().length < 2000 && numPages > 1;
+          if (isEmpty || (numPages > 3 && charsPerPage < 200) || isShortText) {
             console.log('Attempting Vision OCR for scanned PDF...');
             try {
               const ocrResult = await extractAllPagesWithVisionOCR(filePath);
