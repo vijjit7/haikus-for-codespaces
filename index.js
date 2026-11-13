@@ -856,6 +856,13 @@ if (!OPENROUTER_API_KEY) {
   console.warn('⚠️ OPENROUTER_API_KEY is not set — document OCR/AI extraction will fail. Set it in .env');
 }
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+// Vision OCR models (served via OpenRouter). Gemini 2.5 Flash is the default: it is cheap and,
+// in testing on this app's KYC documents, the most reliable — it transcribes both PAN and
+// Aadhaar accurately without refusing. (Claude Opus refuses Aadhaar; smaller/cheaper models like
+// Mistral-small hallucinated a fake identity on a hard Aadhaar scan.) Both are overridable via
+// env; if the primary ever refuses or errors, callGeminiVision falls back to OCR_FALLBACK_MODEL.
+const OCR_PRIMARY_MODEL = process.env.OCR_PRIMARY_MODEL || 'google/gemini-2.5-flash';
+const OCR_FALLBACK_MODEL = process.env.OCR_FALLBACK_MODEL || 'google/gemini-2.5-flash';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 if (!GEMINI_API_KEY) {
   console.warn('⚠️ GEMINI_API_KEY is not set — direct Gemini API calls will fail. Set it in .env');
@@ -4580,24 +4587,21 @@ function normalizeDeedDate(dateStr) {
  * Call OpenRouter Vision API with image(s) and a prompt. Shared helper for all OCR functions.
  * Uses google/gemini-2.5-flash via OpenRouter (supports vision/multimodal).
  */
-async function callGeminiVision(imagePartsArray, promptText, timeoutMs = 60000) {
-  // Convert Gemini-format image parts to OpenRouter/OpenAI-compatible content parts
-  const contentParts = [{ type: 'text', text: promptText }];
-  for (const part of imagePartsArray) {
-    if (part.inline_data) {
-      contentParts.push({
-        type: 'image_url',
-        image_url: {
-          url: `data:${part.inline_data.mime_type};base64,${part.inline_data.data}`
-        }
-      });
-    }
-  }
+// A Vision/OCR response "looks like a refusal" when its opening lines decline the task rather
+// than transcribe. Claude's refusals can be long and helpfully-worded, so we key off the leading
+// phrases ("I can't…", "I'm not able to…") instead of the overall length.
+function looksLikeOcrRefusal(text) {
+  const trimmed = (text || '').trim();
+  if (!trimmed) return true;
+  const head = trimmed.slice(0, 240).toLowerCase();
+  return /\b(i\s*can'?t|i\s*cannot|i'?m\s*(sorry|unable|not\s*able)|i\s*am\s*(sorry|unable|not\s*able)|i\s*won'?t|i'?m\s*not\s*going\s*to|unable\s*to\s*(assist|help|transcribe|extract))\b/.test(head);
+}
 
+async function postVisionRequest(model, contentParts, timeoutMs) {
   const response = await axios.post(
     OPENROUTER_API_URL,
     {
-      model: 'google/gemini-2.5-flash',
+      model,
       messages: [{ role: 'user', content: contentParts }],
       temperature: 0.1,
       max_tokens: 4000
@@ -4612,8 +4616,37 @@ async function callGeminiVision(imagePartsArray, promptText, timeoutMs = 60000) 
       timeout: timeoutMs
     }
   );
-  const text = response.data.choices?.[0]?.message?.content || '';
-  return text;
+  return response.data.choices?.[0]?.message?.content || '';
+}
+
+async function callGeminiVision(imagePartsArray, promptText, timeoutMs = 60000) {
+  // Convert Gemini-format image parts to OpenRouter/OpenAI-compatible content parts
+  const contentParts = [{ type: 'text', text: promptText }];
+  for (const part of imagePartsArray) {
+    if (part.inline_data) {
+      contentParts.push({
+        type: 'image_url',
+        image_url: {
+          url: `data:${part.inline_data.mime_type};base64,${part.inline_data.data}`
+        }
+      });
+    }
+  }
+
+  // Try the primary OCR model; on a refusal/empty/error, fall back to OCR_FALLBACK_MODEL.
+  // Default primary is Gemini 2.5 Flash, which reliably OCRs the Indian KYC documents
+  // (PAN/Aadhaar) this app processes without refusing or hallucinating.
+  try {
+    const primary = await postVisionRequest(OCR_PRIMARY_MODEL, contentParts, timeoutMs);
+    if (!looksLikeOcrRefusal(primary)) {
+      return primary;
+    }
+    console.warn(`⚠️ OCR primary (${OCR_PRIMARY_MODEL}) refused/empty — falling back to ${OCR_FALLBACK_MODEL}`);
+  } catch (err) {
+    console.warn(`⚠️ OCR primary (${OCR_PRIMARY_MODEL}) error (${err.response?.status || ''} ${err.message}) — falling back to ${OCR_FALLBACK_MODEL}`);
+  }
+
+  return await postVisionRequest(OCR_FALLBACK_MODEL, contentParts, timeoutMs);
 }
 
 /**
