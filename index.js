@@ -4127,6 +4127,26 @@ function detectTableType(tableData) {
 // ============================================
 
 // Use Document AI (via OpenRouter) for intelligent structured extraction
+// Aggregate a Gemini-extracted transaction list into per-month credit/debit totals.
+// Deterministic summation in code keeps the numbers exact (the LLM only reads each row).
+function aggregateBankMonthly(txns) {
+  const map = {};
+  let totalCredits = 0, totalDebits = 0;
+  for (const t of (txns || [])) {
+    const m = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(String(t.date || '').trim());
+    if (!m) continue;
+    const year = parseInt(m[3], 10);
+    const month = parseInt(m[2], 10);
+    const key = year + '-' + month;
+    if (!map[key]) map[key] = { year, month, credits: 0, creditCount: 0, debits: 0, debitCount: 0 };
+    const amt = Math.abs(parseFloat(t.amount) || 0);
+    if (t.type === 'C') { map[key].credits += amt; map[key].creditCount++; totalCredits += amt; }
+    else if (t.type === 'D') { map[key].debits += amt; map[key].debitCount++; totalDebits += amt; }
+  }
+  const months = Object.values(map).sort((a, b) => (a.year * 12 + a.month) - (b.year * 12 + b.month));
+  return { months, totalCredits, totalDebits, txnCount: (txns || []).length };
+}
+
 async function extractWithDocumentAI(text, documentType, tables = []) {
   try {
     let prompt = '';
@@ -4348,6 +4368,18 @@ Respond ONLY with valid JSON in this exact format:
   "periodFrom": "DD/MM/YYYY" or null,
   "periodTo": "DD/MM/YYYY" or null
 }`;
+    } else if (documentType === 'bank-statement-transactions') {
+      prompt = `Below is a bank statement. Each transaction line has a date, particulars, an amount in EITHER the Debit or Credit column, and a running Balance (often suffixed CR or DR). For EVERY transaction output exactly one row. Decide debit vs credit using the running balance: if the balance DECREASED from the previous line it is a debit ("D"); if it INCREASED it is a credit ("C"). Ignore opening-balance / brought-forward lines and any non-transaction rows. Amounts use Indian digit grouping (e.g. 2,66,65,638.00) — output them as plain numbers without commas.
+
+Document Text:
+${text.substring(0, 30000)}
+
+Be exhaustive — include ALL transactions in date order. Respond ONLY with valid JSON:
+{
+  "txns": [
+    { "date": "DD-MM-YYYY", "type": "C", "amount": 0, "balance": 0 }
+  ]
+}`;
     } else if (documentType === 'title-document') {
       prompt = `You are a legal document extraction AI specializing in Indian property title documents (Sale Deeds, Gift Deeds, Partition Deeds, Release Deeds, etc.).
 
@@ -4452,7 +4484,7 @@ Respond ONLY with valid JSON:
               }
             ],
             temperature: 0.1, // Low temperature for consistent extraction
-            max_tokens: (documentType === 'title-document' || documentType === 'other-income') ? 4000 : 1000
+            max_tokens: documentType === 'bank-statement-transactions' ? 8000 : (documentType === 'title-document' || documentType === 'other-income') ? 4000 : 1000
           },
           {
             headers: {
@@ -4461,7 +4493,7 @@ Respond ONLY with valid JSON:
               'HTTP-Referer': 'http://localhost:3000',
               'X-Title': 'Customer Profiling App'
             },
-            timeout: documentType === 'title-document' ? 60000 : 30000
+            timeout: documentType === 'bank-statement-transactions' ? 120000 : documentType === 'title-document' ? 60000 : 30000
           }
         );
         
@@ -7439,6 +7471,21 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
             proposal.documents[i].extractedText = fullText; // Save full text for EMI verification
             proposal.documents[i].pages = pdfResult.numPages;
             proposal.documents[i].extractionMethod = pdfResult.method || 'pymupdf';
+
+            // Monthly credits/debits via Gemini per-transaction extraction (replaces the fragile
+            // client-side regex parser, which can't separate debit/credit once the PDF text is
+            // flattened). Gemini reads each row; we sum per month deterministically.
+            try {
+              const txnResult = await extractWithDocumentAI(fullText, 'bank-statement-transactions', []);
+              if (txnResult.success && txnResult.data && Array.isArray(txnResult.data.txns) && txnResult.data.txns.length > 0) {
+                proposal.documents[i].bankMonthly = aggregateBankMonthly(txnResult.data.txns);
+                console.log(`✓ Bank monthly via AI: ${txnResult.data.txns.length} txns, credits ₹${proposal.documents[i].bankMonthly.totalCredits}, debits ₹${proposal.documents[i].bankMonthly.totalDebits}`);
+              } else {
+                console.log('⚠ AI transaction extraction returned no txns; leaving regex parser to handle monthly totals');
+              }
+            } catch (bmErr) {
+              console.error('Bank monthly AI extraction error:', bmErr.message);
+            }
 
             extractionResults.push({
               fileName: doc.originalName,

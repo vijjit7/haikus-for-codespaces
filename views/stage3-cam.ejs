@@ -1744,7 +1744,7 @@
                                             if (!camPeriod) return;
                                             const period = camPeriod;
                                             let taxableValue = 0, integratedTax = 0, centralTax = 0, stateTax = 0, cess = 0;
-                                            const outwardMatch = txt.match(/\(a\)\s*Outward taxable supplies[^)]+\)\s*(-?[\d,.]+)\s+(-?[\d,.]+)\s+(-?[\d,.]+)\s+(-?[\d,.]+)\s+(-?[\d,.]+)/);
+                                            const outwardMatch = txt.match(/\(a\)\s*Outward taxable supplies[^)]+\)\s*(-?[\d,.]+|-)\s+(-?[\d,.]+|-)\s+(-?[\d,.]+|-)\s+(-?[\d,.]+|-)\s+(-?[\d,.]+|-)/);
                                             if (outwardMatch) {
                                                 taxableValue = parseFloat(outwardMatch[1].replace(/,/g, '')) || 0;
                                                 integratedTax = parseFloat(outwardMatch[2].replace(/,/g, '')) || 0;
@@ -3608,7 +3608,24 @@
                         // Sort credits by amount for top 10
                         allCredits.sort((a, b) => b.amount - a.amount);
                         const top10Credits = allCredits.slice(0, 10);
-                        
+
+                        // Prefer Gemini-based monthly totals when available for every statement in
+                        // this account. The regex parser above can't reliably separate the debit and
+                        // credit columns once the PDF text is flattened, so it under-counts; the AI
+                        // reads each transaction's column and we store exact per-month sums.
+                        const aiMonthlyDocs = account.documents.filter(d => d.bankMonthly && Array.isArray(d.bankMonthly.months));
+                        if (aiMonthlyDocs.length === account.documents.length && aiMonthlyDocs.length > 0) {
+                            for (const k in monthCreditsTotal) delete monthCreditsTotal[k];
+                            for (const k in monthDebitsTotal) delete monthDebitsTotal[k];
+                            account.documents.forEach(d => {
+                                d.bankMonthly.months.forEach(mo => {
+                                    const key = String(mo.month).padStart(2, '0') + '-' + mo.year;
+                                    monthCreditsTotal[key] = (monthCreditsTotal[key] || 0) + (mo.credits || 0);
+                                    monthDebitsTotal[key] = (monthDebitsTotal[key] || 0) + (mo.debits || 0);
+                                });
+                            });
+                        }
+
                         // Combine all months from credits, debits, and balances to find available data months
                         const allMonthKeys = new Set([
                             ...Object.keys(monthCreditsTotal),
@@ -4066,7 +4083,7 @@
                         let cess = 0;
 
                         // Match outward taxable supplies row (a) - support negative values for sales returns
-                        const outwardMatch = text.match(/\(a\)\s*Outward taxable supplies[^)]+\)\s*(-?[\d,.]+)\s+(-?[\d,.]+)\s+(-?[\d,.]+)\s+(-?[\d,.]+)\s+(-?[\d,.]+)/);
+                        const outwardMatch = text.match(/\(a\)\s*Outward taxable supplies[^)]+\)\s*(-?[\d,.]+|-)\s+(-?[\d,.]+|-)\s+(-?[\d,.]+|-)\s+(-?[\d,.]+|-)\s+(-?[\d,.]+|-)/);
                         if (outwardMatch) {
                             taxableValue = parseFloat(outwardMatch[1].replace(/,/g, '')) || 0;
                             integratedTax = parseFloat(outwardMatch[2].replace(/,/g, '')) || 0;
