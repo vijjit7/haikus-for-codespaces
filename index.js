@@ -6062,9 +6062,14 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
       if (fileDetail.category === 'personalId' && fullText) {
         const lowerText = fullText.toLowerCase();
         const lowerName = file.originalname.toLowerCase();
+        // Also honour the AI/manual classification (e.g. "PAN Card of …", "Aadhar Card of …").
+        // Scanned photo-IDs often have generic filenames (e.g. "WhatsApp Image….jpeg") and OCR
+        // text that lacks the canonical keywords, so filename/text alone miss the document type.
+        const existingDoc = (proposal.documents || []).find(d => d.filename === fileDetail.filename);
+        const lowerClass = ((existingDoc && existingDoc.classification) || '').toLowerCase();
 
-        const isPAN = lowerName.includes('pan') || lowerText.includes('permanent account number') || lowerText.includes('income tax department');
-        const isAadhaar = lowerName.includes('aadhar') || lowerName.includes('aadhaar') || lowerText.includes('aadhaar') || lowerText.includes('unique identification');
+        const isPAN = lowerName.includes('pan') || lowerClass.includes('pan') || lowerText.includes('permanent account number') || lowerText.includes('income tax department');
+        const isAadhaar = lowerName.includes('aadhar') || lowerName.includes('aadhaar') || lowerClass.includes('aadhar') || lowerClass.includes('aadhaar') || lowerText.includes('aadhaar') || lowerText.includes('unique identification');
 
         if (isPAN || isAadhaar) {
           const docType = isPAN ? 'PAN Card' : 'Aadhaar Card';
@@ -7781,9 +7786,12 @@ app.post('/stage2/:proposalId/reprocess-personal-docs', async (req, res) => {
         if (doc.category === 'personalId') {
           const lowerText = fullText.toLowerCase();
           const lowerName = (doc.originalName || '').toLowerCase();
+          // Also honour the AI/manual classification (e.g. "PAN Card of …", "Aadhar Card of …").
+          // Scanned photo-IDs often have generic filenames and OCR text lacking canonical keywords.
+          const lowerClass = (doc.classification || '').toLowerCase();
 
-          const isPAN = lowerName.includes('pan') || lowerText.includes('permanent account number') || lowerText.includes('income tax department');
-          const isAadhaar = lowerName.includes('aadhar') || lowerName.includes('aadhaar') || lowerText.includes('aadhaar') || lowerText.includes('unique identification');
+          const isPAN = lowerName.includes('pan') || lowerClass.includes('pan') || lowerText.includes('permanent account number') || lowerText.includes('income tax department');
+          const isAadhaar = lowerName.includes('aadhar') || lowerName.includes('aadhaar') || lowerClass.includes('aadhar') || lowerClass.includes('aadhaar') || lowerText.includes('aadhaar') || lowerText.includes('unique identification');
 
           if (isPAN || isAadhaar) {
             const docType = isPAN ? 'PAN Card' : 'Aadhaar Card';
