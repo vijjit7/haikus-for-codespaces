@@ -4153,16 +4153,25 @@ function aggregateBankMonthly(txns) {
 async function extractBankMonthlyFromText(fullText) {
   if (!fullText || fullText.trim().length === 0) return null;
   // Keep chunks small enough that the model's JSON reply (one object per transaction) fits well
-  // within max_tokens; otherwise the array truncates and we lose rows.
+  // within max_tokens; otherwise the array truncates and we lose rows. Overlap a few trailing lines
+  // into the next chunk so the running-balance context — hence debit/credit direction — survives
+  // chunk boundaries (without overlap, the first row of each chunk can be mis-classified).
   const CHUNK = 9000;
+  const OVERLAP_LINES = 4;
   const lines = fullText.split('\n');
   const chunks = [];
-  let cur = '';
+  let cur = [];
+  let curLen = 0;
   for (const ln of lines) {
-    if (cur.length + ln.length + 1 > CHUNK && cur.length > 0) { chunks.push(cur); cur = ''; }
-    cur += ln + '\n';
+    if (curLen + ln.length + 1 > CHUNK && cur.length > 0) {
+      chunks.push(cur.join('\n'));
+      cur = cur.slice(-OVERLAP_LINES);
+      curLen = cur.join('\n').length;
+    }
+    cur.push(ln);
+    curLen += ln.length + 1;
   }
-  if (cur.trim()) chunks.push(cur);
+  if (cur.length) chunks.push(cur.join('\n'));
 
   const seen = new Set();
   const allTxns = [];
@@ -4170,7 +4179,9 @@ async function extractBankMonthlyFromText(fullText) {
     const res = await extractWithDocumentAI(ch, 'bank-statement-transactions', []);
     if (res && res.success && res.data && Array.isArray(res.data.txns)) {
       for (const t of res.data.txns) {
-        const key = `${t.date}|${t.type}|${t.amount}|${t.balance}`;
+        // De-dupe by the running balance (unique per row) so an overlapped row read twice — even if
+        // the two reads disagree on direction — is counted once (keeping the first, which had context).
+        const key = `${t.date}|${t.amount}|${t.balance}`;
         if (seen.has(key)) continue;
         seen.add(key);
         allTxns.push(t);
