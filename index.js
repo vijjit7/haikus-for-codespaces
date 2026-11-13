@@ -7593,39 +7593,64 @@ app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
       if (doc.category === 'financials') {
         const fileExists = await existsInGridFS(doc.filename);
 
-        if (fileExists && doc.originalName.toLowerCase().endsWith('.pdf')) {
+        const lowerName = (doc.originalName || '').toLowerCase();
+        const isPdf = lowerName.endsWith('.pdf');
+        const isImage = /\.(jpe?g|png)$/i.test(lowerName);
+        if (fileExists && (isPdf || isImage)) {
           try {
             const fileBuffer = await readFromGridFS(doc.filename);
             let fullText = '';
-            let pdfResult;
-
-            await withTempFile(fileBuffer, doc.filename, async (filePath) => {
-            // Extract full text from PDF (table extraction disabled for speed)
-            pdfResult = await extractPDFWithTableDetection(filePath, false);
-            fullText = pdfResult.text;
+            let numPages = 1;
 
             console.log('\n========================================');
             console.log('📊 EXTRACTING FINANCIAL DOC:', doc.originalName);
             console.log('========================================');
-            console.log('Text length:', fullText.length);
-            console.log('Pages:', pdfResult.numPages);
 
-            // Check if text extraction is inadequate (scanned/image PDF)
-            const charsPerPage = fullText.length / (pdfResult.numPages || 1);
-            if (pdfResult.numPages > 3 && charsPerPage < 200) {
-              console.log(`⚠ Low text density (${Math.round(charsPerPage)} chars/page) for ${pdfResult.numPages} pages - likely scanned PDF`);
-              console.log('🔍 Attempting multi-page Vision OCR...');
-              try {
-                const ocrResult = await extractAllPagesWithVisionOCR(filePath);
-                if (ocrResult.success && ocrResult.text.length > fullText.length) {
-                  fullText = ocrResult.text;
-                  console.log(`✓ Vision OCR improved extraction: ${fullText.length} chars (was ${pdfResult.text.length})`);
-                }
-              } catch (ocrErr) {
-                console.error('Vision OCR fallback error:', ocrErr.message);
+            await withTempFile(fileBuffer, doc.filename, async (filePath) => {
+              if (isImage) {
+                // Image financial doc — Vision OCR directly (same path as KYC personal IDs).
+                const ocrResult = await extractTextFromImage(filePath);
+                if (ocrResult.success && ocrResult.text) fullText = ocrResult.text;
+                return;
               }
-            }
+
+              // Extract text layer (table extraction disabled for speed); tolerate failures.
+              let pdfResult = null;
+              try {
+                pdfResult = await extractPDFWithTableDetection(filePath, false);
+                fullText = pdfResult.text || '';
+                numPages = pdfResult.numPages || 1;
+              } catch (e) {
+                console.error(`PDF text extraction failed for ${doc.originalName}, will try OCR:`, e.message);
+              }
+              console.log('Text length:', fullText.length, 'Pages:', numPages);
+
+              // Vision OCR when the text layer is empty (incl. single-page scans, or when the text
+              // extractor failed/reported 0 pages), or on a low-density multi-page scan.
+              const charsPerPage = fullText.length / numPages;
+              const isEmpty = fullText.trim().length === 0;
+              if (isEmpty || (numPages > 3 && charsPerPage < 200)) {
+                console.log('🔍 Attempting Vision OCR for scanned PDF...');
+                try {
+                  const ocrResult = await extractAllPagesWithVisionOCR(filePath);
+                  if (ocrResult.success && ocrResult.text.length > fullText.length) {
+                    fullText = ocrResult.text;
+                    if (ocrResult.numPages) numPages = ocrResult.numPages;
+                    console.log(`✓ Vision OCR improved extraction: ${fullText.length} chars`);
+                  }
+                } catch (ocrErr) {
+                  console.error('Vision OCR fallback error:', ocrErr.message);
+                }
+              }
             });
+
+            // Safety: never overwrite previously-extracted data with an empty result. If this run
+            // produced no text (OCR failed/timed out on a large scan), keep what was stored.
+            if (!fullText || fullText.trim().length === 0) {
+              console.log(`⚠ No text extracted for ${doc.originalName} — preserving existing data, skipping`);
+              extractionResults.push({ fileName: doc.originalName, status: 'skipped-no-text' });
+              continue;
+            }
 
             // Check for each component with strict keyword matching
             const textLower = fullText.toLowerCase();
@@ -7707,7 +7732,7 @@ app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
 
             // Store full text and components
             proposal.documents[i].extractedText = fullText;
-            proposal.documents[i].pages = pdfResult.numPages;
+            proposal.documents[i].pages = numPages;
             proposal.documents[i].financialComponents = components;
 
             extractionResults.push({
