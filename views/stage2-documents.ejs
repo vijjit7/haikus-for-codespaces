@@ -1990,24 +1990,15 @@
                             // Helper function to check if document component exists
                             function hasFinancialComponent(applicant, year, componentType) {
                                 return parsedFinancialDocs.some(doc => {
-                                    // Match applicant (strict matching to avoid bommu/bommu false positives)
-                                    const appLower = applicant ? applicant.toLowerCase() : '';
-                                    const docAppLower = doc.applicant ? doc.applicant.toLowerCase() : '';
-                                    // Fuzzy match for first name variations like pragati/pragathi, sivarami/shivarami
-                                    const fuzzyFirstMatch = (s1, s2) => {
-                                        if (!s1 || !s2) return false;
-                                        const a = s1.replace(/[^a-z]/g, '');
-                                        const b = s2.replace(/[^a-z]/g, '');
-                                        if (a === b) return true;
-                                        return a.length >= 4 && b.length >= 4 && a.slice(0,4) === b.slice(0,4);
-                                    };
-                                    // Get first names for comparison
-                                    const appFirst = appLower.split(' ')[0];
-                                    const docFirst = docAppLower.split(' ')[0];
-                                    // Strict matching: exact match, first name match, or fuzzy first name
-                                    const appMatch = doc.applicant === applicant ||
-                                        (doc.applicant && applicant && docFirst === appFirst) ||
-                                        (doc.applicant && applicant && fuzzyFirstMatch(docFirst, appFirst));
+                                    // Each financial doc is already assigned to exactly one applicant
+                                    // (parsedFinancialDocs above picks the best-matching applicant from
+                                    // allFinancialApplicants). Both `applicant` and `doc.applicant` therefore
+                                    // come from that same list, so match on the exact assigned applicant.
+                                    // Re-fuzzy-matching on first name here would leak one applicant's docs into
+                                    // a co-applicant who shares a first name/surname (e.g. a father and son
+                                    // both named "THANNEERU ..."), showing ✓ for documents they never uploaded.
+                                    const appMatch = !!doc.applicant && !!applicant &&
+                                        doc.applicant.trim().toLowerCase() === applicant.trim().toLowerCase();
 
                                     // Match year - flexible matching
                                     // Extract just the year numbers for comparison (e.g., "2024-25" from "FY 2024-25")

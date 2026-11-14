@@ -6088,23 +6088,23 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
       if (fileDetail.category === 'incorporation' && fullText) {
         console.log('Processing incorporation document:', file.originalname);
         
-        // Try Document AI first
+        // AI extraction (Gemini via Document AI), same as the KYC path. No regex fallback.
         const aiResult = await extractWithDocumentAI(fullText, 'partnership-deed', file.extractedTables || []);
         if (aiResult.success && aiResult.data) {
           console.log('✓ Document AI extraction successful:', aiResult.data);
           // Transform AI result to match expected format
           const partners = (aiResult.data.partners || []).map(p => ({
             name: p.name,
-            profitPercent: p.profitPercentage !== null ? p.profitPercentage : 'Not specified',
-            lossPercent: p.lossPercentage !== null ? p.lossPercentage : 'Not specified'
+            profitPercent: (p.profitPercentage !== null && p.profitPercentage !== undefined) ? p.profitPercentage : 'Not specified',
+            lossPercent: (p.lossPercentage !== null && p.lossPercentage !== undefined) ? p.lossPercentage : 'Not specified'
           }));
           extractedDetails = {
-            deedDate: aiResult.data.dateOfExecution,
+            deedDate: aiResult.data.dateOfExecution || null,
             partners: partners
           };
         } else {
-          console.log('⚠ Document AI failed, using fallback extraction');
-          extractedDetails = extractPartnershipDeedDetails(fullText, file.extractedTables || []);
+          console.log('⚠ Document AI did not return data for partnership deed');
+          extractedDetails = { deedDate: null, partners: [] };
         }
         
         console.log('Extracted details:', JSON.stringify(extractedDetails));
@@ -7178,11 +7178,32 @@ app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
               rawExtraction.rawResponse = extractedDetails;
               console.log('Private Limited Extracted Data:', JSON.stringify(extractedDetails, null, 2));
             } else {
-              // AI extraction DISABLED - using only regex-based extraction
-              console.log('🔧 AI extraction disabled, using regex-based extraction for:', doc.originalName);
-              extractedDetails = extractPartnershipDeedDetails(fullText, pdfResult.tables || []);
-              console.log('Regex Extracted Data:', JSON.stringify(extractedDetails, null, 2));
-              rawExtraction.method = 'Regex Pattern Matching (AI Disabled)';
+              // Partnership deed: use AI extraction (Gemini via Document AI), same as the
+              // KYC / initial-upload path. No regex fallback — regex pattern matching
+              // frequently misses the profit & loss sharing ratio and previously wiped the
+              // shareholding details when users clicked "Re-extract Information".
+              console.log('🤖 AI extraction for partnership deed:', doc.originalName);
+              const aiResult = await extractWithDocumentAI(fullText, 'partnership-deed', pdfResult.tables || []);
+              if (aiResult.success && aiResult.data) {
+                const partners = (aiResult.data.partners || []).map(p => ({
+                  name: p.name,
+                  profitPercent: (p.profitPercentage !== null && p.profitPercentage !== undefined) ? p.profitPercentage : 'Not specified',
+                  lossPercent: (p.lossPercentage !== null && p.lossPercentage !== undefined) ? p.lossPercentage : 'Not specified'
+                }));
+                extractedDetails = {
+                  deedDate: aiResult.data.dateOfExecution || null,
+                  partners: partners
+                };
+                rawExtraction.method = 'Document AI (Partnership Deed)';
+              } else {
+                // AI unavailable/failed: keep prior extraction if any, otherwise empty so the
+                // document stays flagged for re-extraction rather than showing stale/regex data.
+                console.log('⚠ Document AI did not return data for partnership deed:', doc.originalName);
+                extractedDetails = proposal.documents[i].extractedDetails ||
+                  { deedDate: null, partners: [] };
+                rawExtraction.method = 'Document AI (Partnership Deed) - no data';
+              }
+              console.log('Partnership Extracted Data:', JSON.stringify(extractedDetails, null, 2));
               rawExtraction.rawResponse = extractedDetails;
             }
             
