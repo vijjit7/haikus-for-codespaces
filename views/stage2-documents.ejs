@@ -5316,6 +5316,12 @@
                         msg += '\n\nSkipped/failed reasons:\n' +
                             Object.entries(result.noteSummary).map(([n, c]) => `  • ${n}: ${c}`).join('\n');
                     }
+                    // Show extraction diagnostics for the first few failed docs to pinpoint the cause.
+                    const failed = (result.results || []).filter(r => r.diag);
+                    if (failed.length > 0) {
+                        msg += '\n\nDiagnostics (first 3):\n' +
+                            failed.slice(0, 3).map(r => `  • ${r.fileName}: ${JSON.stringify(r.diag)}`).join('\n');
+                    }
                     alert(msg);
                     if (result.categorizedCount > 0 || result.classifiedCount > 0) {
                         window.location.reload();

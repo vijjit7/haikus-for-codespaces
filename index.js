@@ -7064,32 +7064,47 @@ app.post('/stage2/:proposalId/recategorize', async (req, res) => {
       // First-page text: prefer stored extracted text; re-extract from GridFS if missing/short.
       let firstPageText = (doc.extractedText || '').trim();
       let noTextReason = null; // distinguish "file missing from storage" vs "OCR returned nothing"
+      const diag = { storedLen: firstPageText.length };
       if (firstPageText.length < 80) {
         try {
           if (await existsInGridFS(doc.filename)) {
+            diag.gridfs = true;
             const buf = await readFromGridFS(doc.filename);
+            diag.bytes = buf ? buf.length : 0;
             await withTempFile(buf, doc.filename, async (filePath) => {
               const name = (doc.originalName || doc.filename || '').toLowerCase();
               if (name.endsWith('.pdf')) {
                 const pdfResult = await extractPDFWithTableDetection(filePath);
                 let text = pdfResult.text || '';
+                diag.pdfMethod = pdfResult.method;
+                diag.pdfTextLen = text.trim().length;
                 if (text.trim().length < 20) {
                   const ocr = await extractTextFromScannedPDF(filePath); // first page only
+                  diag.ocrSuccess = ocr.success;
+                  diag.ocrLen = (ocr.text || '').trim().length;
+                  if (ocr.error) diag.ocrError = ocr.error;
                   if (ocr.success && ocr.text) text = ocr.text;
                 }
                 firstPageText = text.trim();
               } else if (/\.(jpe?g|png)$/i.test(name)) {
                 const ocr = await extractTextFromImage(filePath);
+                diag.ocrSuccess = ocr.success;
+                diag.ocrLen = (ocr.text || '').trim().length;
+                if (ocr.error) diag.ocrError = ocr.error;
                 if (ocr.success && ocr.text) firstPageText = ocr.text.trim();
+              } else {
+                diag.unsupportedType = true;
               }
             });
             if (firstPageText) proposal.documents[i].extractedText = firstPageText.substring(0, 500);
             else noTextReason = 'file in storage but OCR returned no text';
           } else {
+            diag.gridfs = false;
             noTextReason = 'file not found in storage (re-upload needed)';
           }
         } catch (exErr) {
           console.error('Recategorize text extraction error for', doc.originalName, exErr.message);
+          diag.exError = exErr.message;
           noTextReason = 'extraction error: ' + exErr.message;
         }
       }
@@ -7098,6 +7113,7 @@ app.post('/stage2/:proposalId/recategorize', async (req, res) => {
       const result = { fileName: doc.originalName, category: doc.category || null, classification: doc.classification || null };
       if (!firstPageText.trim()) {
         result.note = noTextReason || 'no text available';
+        result.diag = diag;
         results.push(result);
         continue;
       }
