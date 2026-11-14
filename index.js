@@ -7037,6 +7037,108 @@ app.post('/stage2/:proposalId/classify', async (req, res) => {
   }
 });
 
+// Bulk AI re-categorization for documents that never got auto-categorized (e.g. uploaded
+// before categorization worked). Uses first-page text only (pure AI, no regex) and skips
+// anything the user set manually. Also surfaces per-document diagnostics in the response.
+app.post('/stage2/:proposalId/recategorize', async (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const proposal = await getProposalById(proposalId);
+    if (!proposal) {
+      return res.status(404).json({ success: false, error: 'Proposal not found' });
+    }
+    if (!proposal.documents || proposal.documents.length === 0) {
+      return res.status(400).json({ success: false, error: 'No documents found' });
+    }
+
+    let categorizedCount = 0;
+    let classifiedCount = 0;
+    const results = [];
+
+    for (let i = 0; i < proposal.documents.length; i++) {
+      const doc = proposal.documents[i];
+      const needsCategory = !doc.category && !doc.manualCategory;
+      const needsClassification = doc.category && !doc.classification && !doc.manualClassification;
+      if (!needsCategory && !needsClassification) continue;
+
+      // First-page text: prefer stored extracted text; re-extract from GridFS if missing/short.
+      let firstPageText = (doc.extractedText || '').trim();
+      if (firstPageText.length < 80) {
+        try {
+          if (await existsInGridFS(doc.filename)) {
+            const buf = await readFromGridFS(doc.filename);
+            await withTempFile(buf, doc.filename, async (filePath) => {
+              const name = (doc.originalName || doc.filename || '').toLowerCase();
+              if (name.endsWith('.pdf')) {
+                const pdfResult = await extractPDFWithTableDetection(filePath);
+                let text = pdfResult.text || '';
+                if (text.trim().length < 20) {
+                  const ocr = await extractTextFromScannedPDF(filePath); // first page only
+                  if (ocr.success && ocr.text) text = ocr.text;
+                }
+                firstPageText = text.trim();
+              } else if (/\.(jpe?g|png)$/i.test(name)) {
+                const ocr = await extractTextFromImage(filePath);
+                if (ocr.success && ocr.text) firstPageText = ocr.text.trim();
+              }
+            });
+            if (firstPageText) proposal.documents[i].extractedText = firstPageText.substring(0, 500);
+          }
+        } catch (exErr) {
+          console.error('Recategorize text extraction error for', doc.originalName, exErr.message);
+        }
+      }
+      firstPageText = firstPageText.substring(0, 3000);
+
+      const result = { fileName: doc.originalName, category: doc.category || null, classification: doc.classification || null };
+      if (!firstPageText.trim()) {
+        result.note = 'no text available';
+        results.push(result);
+        continue;
+      }
+
+      try {
+        if (needsCategory) {
+          const cat = await aiCategorizeDocument(firstPageText, doc.originalName);
+          if (cat) {
+            proposal.documents[i].category = cat;
+            proposal.documents[i].autoCategorized = true;
+            doc.category = cat;
+            result.category = cat;
+            categorizedCount++;
+          } else {
+            result.note = 'AI could not categorize';
+          }
+        }
+        if ((needsClassification || (needsCategory && doc.category)) && doc.category && !doc.classification) {
+          const cls = await autoClassifyDocument(doc.originalName, firstPageText, doc.category, proposal);
+          if (cls) {
+            proposal.documents[i].classification = cls;
+            result.classification = cls;
+            classifiedCount++;
+          }
+        }
+      } catch (aiErr) {
+        result.note = 'AI error: ' + aiErr.message;
+      }
+      results.push(result);
+    }
+
+    await updateProposal(proposalId, { documents: proposal.documents });
+
+    res.json({
+      success: true,
+      message: `Categorized ${categorizedCount}, classified ${classifiedCount} of ${results.length} document(s) processed`,
+      categorizedCount,
+      classifiedCount,
+      results
+    });
+  } catch (error) {
+    console.error('Recategorize error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Reprocess incorporation documents to extract partnership deed details
 app.post('/stage2/:proposalId/reprocess-incorporation', async (req, res) => {
   try {

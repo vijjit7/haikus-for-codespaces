@@ -513,9 +513,14 @@
                         <span style="color: #555; font-weight: 500;">
                             📊 <%= uploadedFiles.length %> document(s) uploaded
                         </span>
-                        <button onclick="reprocessAllDocuments()" class="btn btn-primary" style="font-size: 0.9em; padding: 8px 16px;">
-                            🔄 Reprocess All Documents
-                        </button>
+                        <div style="display: flex; gap: 10px;">
+                            <button onclick="recategorizeDocuments()" class="btn btn-primary" style="font-size: 0.9em; padding: 8px 16px;">
+                                🏷️ Auto-Categorize Uncategorized
+                            </button>
+                            <button onclick="reprocessAllDocuments()" class="btn btn-primary" style="font-size: 0.9em; padding: 8px 16px;">
+                                🔄 Reprocess All Documents
+                            </button>
+                        </div>
                     </div>
                     <% } %>
                     
@@ -5290,6 +5295,36 @@
         }
 
         // Reprocess ALL documents to extract page counts and metadata
+        // AI-categorize (and classify) documents that never got auto-categorized.
+        async function recategorizeDocuments() {
+            if (!confirm('This will use AI to categorize/classify any documents that are still uncategorized (first page only). Continue?')) {
+                return;
+            }
+            const btn = event.target;
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Categorizing...';
+            try {
+                const response = await fetch(`/stage2/${proposalId}/recategorize`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const result = await response.json();
+                if (result.success) {
+                    console.log('Re-categorize results:', result.results);
+                    alert(`✓ ${result.message}`);
+                    window.location.reload();
+                } else {
+                    alert('Auto-categorize failed: ' + result.error);
+                    btn.disabled = false;
+                    btn.innerHTML = '🏷️ Auto-Categorize Uncategorized';
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                btn.disabled = false;
+                btn.innerHTML = '🏷️ Auto-Categorize Uncategorized';
+            }
+        }
+
         async function reprocessAllDocuments() {
             if (!confirm('This will re-extract metadata (page counts, text) from all uploaded PDF documents. Continue?')) {
                 return;
