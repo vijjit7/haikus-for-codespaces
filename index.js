@@ -7114,6 +7114,11 @@ app.post('/stage2/:proposalId/recategorize', async (req, res) => {
       if (!firstPageText.trim()) {
         result.note = noTextReason || 'no text available';
         result.diag = diag;
+        // Compact one-line diagnostic that leads with the failure cause so it fits in an alert.
+        result.diagStr = `pdf=${diag.pdfMethod || 'n/a'}/${diag.pdfTextLen || 0} ocr=${diag.ocrSuccess === undefined ? 'n/a' : diag.ocrSuccess}/${diag.ocrLen || 0}` +
+          (diag.ocrError ? ` OCRERR[${String(diag.ocrError).slice(0, 120)}]` : '') +
+          (diag.exError ? ` EXERR[${String(diag.exError).slice(0, 120)}]` : '') +
+          ` (${diag.bytes || 0}b, gridfs=${diag.gridfs})`;
         results.push(result);
         continue;
       }
