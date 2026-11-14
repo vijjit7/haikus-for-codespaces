@@ -1943,16 +1943,22 @@
                                           normalizedText.includes('partners capital') || normalizedText.includes("partner's capital")))
                                     ) && !normalizedText.includes('balance sheet (regular books of account');
 
-                                    // Check for Profit & Loss - must be actual P&L section
+                                    // Check for Profit & Loss - must be an actual P&L statement,
+                                    // not a "...as per Profit and Loss Account" reference inside a
+                                    // Computation of Income. Strip those references before matching.
+                                    const textForPL = normalizedText.replace(
+                                        /(?:net\s+)?(?:profit|loss|income)?\s*(?:\/\s*loss)?\s*(?:before\s+tax\s+)?as\s+per\s+(?:the\s+)?(?:profit\s*(?:and|&)\s*loss(?:\s*account|\s*a\/c)?|p\s*&?\s*l(?:\s*account|\s*a\/c)?)/gi,
+                                        ' '
+                                    );
                                     const hasProfitLoss =
-                                        normalizedText.includes('profit and loss account') ||
-                                        normalizedText.includes('profit & loss account') ||
-                                        normalizedText.includes('profit and loss a/c') ||
-                                        normalizedText.includes('trading and profit and loss') ||
-                                        normalizedText.includes('trading, profit and loss') ||
-                                        normalizedText.includes('statement of profit and loss') ||
-                                        normalizedText.includes('income and expenditure account') ||
-                                        (normalizedText.includes('trading account') && normalizedText.includes('gross profit'));
+                                        textForPL.includes('profit and loss account') ||
+                                        textForPL.includes('profit & loss account') ||
+                                        textForPL.includes('profit and loss a/c') ||
+                                        textForPL.includes('trading and profit and loss') ||
+                                        textForPL.includes('trading, profit and loss') ||
+                                        textForPL.includes('statement of profit and loss') ||
+                                        textForPL.includes('income and expenditure account') ||
+                                        (textForPL.includes('trading account') && textForPL.includes('gross profit'));
 
                                     // Check for keywords with strict matching
                                     components = {

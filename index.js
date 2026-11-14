@@ -7814,24 +7814,25 @@ app.post('/stage2/:proposalId/reprocess-financials', async (req, res) => {
                (textLower.includes('fixed assets') || textLower.includes('current assets')))
             ) && !textLower.includes('balance sheet (regular books of account');
 
-            // Check for Profit & Loss - must be actual P&L section header
+            // Check for Profit & Loss - must be an actual P&L statement, not merely a
+            // reference to it. A Computation / Statement of Income routinely says
+            // "Net profit as per Profit and Loss Account ..." without the P&L statement
+            // itself being present, so strip those reference phrases before matching.
+            const textForPL = textLower.replace(
+              /(?:net\s+)?(?:profit|loss|income)?\s*(?:\/\s*loss)?\s*(?:before\s+tax\s+)?as\s+per\s+(?:the\s+)?(?:profit\s*(?:and|&)\s*loss(?:\s*account|\s*a\/c)?|p\s*&?\s*l(?:\s*account|\s*a\/c)?)/gi,
+              ' '
+            );
             const hasProfitLoss =
-              textLower.includes('profit and loss account') ||
-              textLower.includes('profit & loss account') ||
-              textLower.includes('profit and loss a/c') ||
-              textLower.includes('profit & loss a/c') ||
-              textLower.includes('trading and profit and loss') ||
-              textLower.includes('trading, profit and loss') ||
-              textLower.includes('income and expenditure account') ||
-              textLower.includes('statement of profit and loss') ||
-              // ITR specific markers
-              textLower.includes('net profit before tax as per p & l') ||
-              textLower.includes('net profit before tax as per p&l') ||
-              textLower.includes('profit before tax as per p & l') ||
+              textForPL.includes('profit and loss account') ||
+              textForPL.includes('profit & loss account') ||
+              textForPL.includes('profit and loss a/c') ||
+              textForPL.includes('profit & loss a/c') ||
+              textForPL.includes('trading and profit and loss') ||
+              textForPL.includes('trading, profit and loss') ||
+              textForPL.includes('income and expenditure account') ||
+              textForPL.includes('statement of profit and loss') ||
               // Has actual P&L content
-              (textLower.includes('trading account') && textLower.includes('gross profit')) ||
-              // ITR-6 P&L schedule
-              (textLower.includes('statement of income') && textLower.includes('business or profession'));
+              (textForPL.includes('trading account') && textForPL.includes('gross profit'));
 
             // Check for Computation of Income
             const hasComputation = textLower.includes('computation of total income') ||
@@ -8730,7 +8731,21 @@ app.post('/stage3/:proposalId/reextract-financials', async (req, res) => {
         const hasBS = textLower.includes('balance sheet') ||
           /alance\s*sheet\s*as\s*on/i.test(fullText) ||
           (textLower.includes('liabilities') && textLower.includes('assets') && (textLower.includes('sundry debtors') || textLower.includes('sundry creditors') || textLower.includes('capital account')));
-        const hasPL = textLower.includes('profit') && textLower.includes('loss');
+        // Require an actual P&L statement header, not just the words "profit"/"loss" or a
+        // "...as per Profit and Loss Account" reference inside a Computation of Income.
+        const textForPL = textLower.replace(
+          /(?:net\s+)?(?:profit|loss|income)?\s*(?:\/\s*loss)?\s*(?:before\s+tax\s+)?as\s+per\s+(?:the\s+)?(?:profit\s*(?:and|&)\s*loss(?:\s*account|\s*a\/c)?|p\s*&?\s*l(?:\s*account|\s*a\/c)?)/gi,
+          ' '
+        );
+        const hasPL = textForPL.includes('profit and loss account') ||
+          textForPL.includes('profit & loss account') ||
+          textForPL.includes('profit and loss a/c') ||
+          textForPL.includes('profit & loss a/c') ||
+          textForPL.includes('trading and profit and loss') ||
+          textForPL.includes('trading, profit and loss') ||
+          textForPL.includes('income and expenditure account') ||
+          textForPL.includes('statement of profit and loss') ||
+          (textForPL.includes('trading account') && textForPL.includes('gross profit'));
         const hasComp = textLower.includes('computation') && textLower.includes('total income');
         const hasITR = textLower.includes('income tax return') || textLower.includes('acknowledgement number');
         proposal.documents[i].financialComponents = {
