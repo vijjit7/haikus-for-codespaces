@@ -779,6 +779,62 @@ header h1 {
     font-size: 0.95em;
 }
 
+/* Folder Group Styles */
+.folder-preview-container {
+    background: #f5f0ff;
+    border: 1px solid #d0c4f7;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    overflow: hidden;
+}
+
+.folder-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: #e8e0f5;
+    cursor: pointer;
+    user-select: none;
+}
+
+.folder-header .folder-toggle {
+    font-size: 0.9em;
+    color: #6a5a8a;
+    transition: transform 0.2s;
+}
+
+.folder-header .folder-toggle.expanded {
+    transform: rotate(90deg);
+}
+
+.folder-header .folder-icon-label {
+    flex: 1;
+    font-weight: 600;
+    color: #3a2a5c;
+    font-size: 0.95em;
+}
+
+.folder-header .folder-count {
+    font-size: 0.82em;
+    color: #6a5a8a;
+    background: #d8cef0;
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+
+.folder-files-list {
+    padding: 4px 8px 8px;
+}
+
+.folder-files-list .file-preview-item {
+    margin-bottom: 4px;
+}
+
+.folder-files-list .zip-preview-container {
+    margin-left: 0;
+}
+
 /* ZIP Preview Styles */
 .zip-preview-container {
     background: #f0f7ff;
