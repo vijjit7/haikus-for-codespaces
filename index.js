@@ -7063,6 +7063,7 @@ app.post('/stage2/:proposalId/recategorize', async (req, res) => {
 
       // First-page text: prefer stored extracted text; re-extract from GridFS if missing/short.
       let firstPageText = (doc.extractedText || '').trim();
+      let noTextReason = null; // distinguish "file missing from storage" vs "OCR returned nothing"
       if (firstPageText.length < 80) {
         try {
           if (await existsInGridFS(doc.filename)) {
@@ -7083,16 +7084,20 @@ app.post('/stage2/:proposalId/recategorize', async (req, res) => {
               }
             });
             if (firstPageText) proposal.documents[i].extractedText = firstPageText.substring(0, 500);
+            else noTextReason = 'file in storage but OCR returned no text';
+          } else {
+            noTextReason = 'file not found in storage (re-upload needed)';
           }
         } catch (exErr) {
           console.error('Recategorize text extraction error for', doc.originalName, exErr.message);
+          noTextReason = 'extraction error: ' + exErr.message;
         }
       }
       firstPageText = firstPageText.substring(0, 3000);
 
       const result = { fileName: doc.originalName, category: doc.category || null, classification: doc.classification || null };
       if (!firstPageText.trim()) {
-        result.note = 'no text available';
+        result.note = noTextReason || 'no text available';
         results.push(result);
         continue;
       }
