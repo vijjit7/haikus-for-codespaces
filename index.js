@@ -3226,23 +3226,31 @@ ${extractedText.substring(0, 2000)}
 Respond with ONLY the category key (e.g., "financials", "banking", "turnover") from the list above. If you cannot determine the category, respond with "UNKNOWN".`;
 
   try {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        'HTTP-Referer': 'https://github.com/copilot',
-        'X-Title': 'Document Categorizer'
-      },
-      body: JSON.stringify({
-        model: 'openai/gpt-4o-mini',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 50,
-        temperature: 0.1
-      })
-    });
-
-    if (!response.ok) {
+    let response;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'HTTP-Referer': 'https://github.com/copilot',
+          'X-Title': 'Document Categorizer'
+        },
+        body: JSON.stringify({
+          // Use the same model as the rest of the app (KYC/document AI). The OpenRouter key
+          // is provisioned for Gemini; OpenAI models were failing, which left docs uncategorized.
+          model: 'google/gemini-2.5-flash',
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 50,
+          temperature: 0.1
+        })
+      });
+      if (response.ok) break;
+      // Retry on rate limit / overload so bulk uploads don't leave docs uncategorized.
+      if ((response.status === 429 || response.status === 503) && attempt < 3) {
+        await new Promise(r => setTimeout(r, 2000 * attempt));
+        continue;
+      }
       throw new Error(`API error: ${response.status}`);
     }
 
@@ -3649,23 +3657,31 @@ ${extractedText.substring(0, 1500)}
 Respond with ONLY the exact document type from the list above that best matches this document. If you cannot determine the type, respond with "UNKNOWN".`;
 
   try {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        'HTTP-Referer': 'https://github.com/copilot',
-        'X-Title': 'Document Classifier'
-      },
-      body: JSON.stringify({
-        model: 'openai/gpt-4o',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 150,
-        temperature: 0.1
-      })
-    });
-    
-    if (!response.ok) {
+    let response;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'HTTP-Referer': 'https://github.com/copilot',
+          'X-Title': 'Document Classifier'
+        },
+        body: JSON.stringify({
+          // Use the same model as the rest of the app (KYC/document AI) so classification works
+          // with the Gemini-provisioned OpenRouter key instead of failing on OpenAI models.
+          model: 'google/gemini-2.5-flash',
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 150,
+          temperature: 0.1
+        })
+      });
+      if (response.ok) break;
+      // Retry on rate limit / overload so bulk uploads don't leave docs unclassified.
+      if ((response.status === 429 || response.status === 503) && attempt < 3) {
+        await new Promise(r => setTimeout(r, 2000 * attempt));
+        continue;
+      }
       throw new Error(`API error: ${response.status}`);
     }
     
