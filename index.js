@@ -5989,8 +5989,12 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
             const isShortFinancialText = fileDetail.category === 'financials' && fullText && fullText.trim().length > 0 && fullText.trim().length < 2000 && pageCount > 1;
             if (isEmptyText || isShortFinancialText) {
               const ocrCategories = ['personalId', 'creditReports', 'financials', 'incorporation'];
-              if (ocrCategories.includes(fileDetail.category)) {
-                console.log(`⚠ ${isShortFinancialText ? 'Short text (' + fullText.trim().length + ' chars) for multi-page' : 'Empty text for'} ${fileDetail.category} PDF, trying Vision OCR fallback...`);
+              // Also OCR an uncategorized scanned PDF so content-based categorization can run.
+              // Otherwise a scanned PAN/Aadhaar/etc. with a non-descriptive filename never gets
+              // any text (OCR was gated on an already-known category) and stays uncategorized.
+              const needsOcrToCategorize = isEmptyText && !fileDetail.category;
+              if (ocrCategories.includes(fileDetail.category) || needsOcrToCategorize) {
+                console.log(`⚠ ${isShortFinancialText ? 'Short text (' + fullText.trim().length + ' chars) for multi-page' : 'Empty text for'} ${fileDetail.category || 'uncategorized'} PDF, trying Vision OCR fallback...`);
                 try {
                   let ocrResult;
                   if (fileDetail.category === 'financials' || fileDetail.category === 'incorporation') {
@@ -6082,6 +6086,28 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
       if (latestDoc && latestDoc.manualCategory) {
         fileDetail.category = latestDoc.category;
         console.log(`📌 Using manual category "${latestDoc.category}" for ${file.originalname}`);
+      }
+
+      // First page of extracted text — used for BOTH AI categorization and classification to
+      // keep AI usage low (one page is enough to identify a document type). For scanned PDFs,
+      // fullText is already just the OCR'd first page (see first-page OCR fallback above).
+      const firstPageText = (fullText || '').substring(0, 3000);
+
+      // Pure AI auto-categorization (no filename/keyword regex). Run it here — before the
+      // category-specific extraction steps below — so a freshly categorized PAN/credit/etc.
+      // still gets its details extracted on upload.
+      if (!fileDetail.category && !(latestDoc && latestDoc.manualCategory) && firstPageText.trim()) {
+        try {
+          const aiCat = await aiCategorizeDocument(firstPageText, file.originalname);
+          if (aiCat) {
+            fileDetail.category = aiCat;
+            console.log(`🤖 AI auto-categorization (first page): "${file.originalname}" → ${aiCat}`);
+          } else {
+            console.log(`⚠ AI could not categorize "${file.originalname}" from first page`);
+          }
+        } catch (aiCatErr) {
+          console.error('AI categorization error:', aiCatErr.message);
+        }
       }
 
       // Extract specific details for incorporation documents (partnership deeds)
@@ -6286,7 +6312,7 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
         try {
           autoClassification = await autoClassifyDocument(
             file.originalname,
-            fullText,
+            firstPageText,
             effectiveCategory,
             preClassifyProposal
           );
@@ -6324,45 +6350,15 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
             console.log(`⏭️ Keeping manual classification "${currentDoc.classification}" for "${file.originalname}"`);
           }
 
-          // Only set auto-category if user hasn't manually categorized
+          // Only set auto-category if user hasn't manually categorized.
           if (currentDoc.manualCategory) {
             console.log(`⏭️ Keeping manual category "${currentDoc.category}" for "${file.originalname}"`);
-          } else if (!currentDoc.category && fullText) {
-            // Re-run categorization using extracted text for uncategorized docs
-            let textCategory = autoCategorizeDocument(file.originalname, fullText);
-            if (textCategory) {
-              console.log(`🔍 Text-based re-categorization: "${file.originalname}" → ${textCategory}`);
-            }
-
-            // If text patterns fail, try AI categorization as fallback
-            if (!textCategory) {
-              try {
-                textCategory = await aiCategorizeDocument(fullText, file.originalname);
-                if (textCategory) {
-                  console.log(`🤖 AI categorization: "${file.originalname}" → ${textCategory}`);
-                }
-              } catch (aiCatErr) {
-                console.error('AI categorization error:', aiCatErr.message);
-              }
-            }
-
-            if (textCategory) {
-              currentDoc.category = textCategory;
-              currentDoc.autoCategorized = true;
-              fileDetail.category = textCategory;
-              // Re-run classification with new category
-              try {
-                const reclassProposal = await getProposalById(proposalId);
-                const reclass = await autoClassifyDocument(file.originalname, fullText, textCategory, reclassProposal);
-                if (reclass) {
-                  currentDoc.classification = reclass;
-                  autoClassification = reclass;
-                  console.log(`📋 Re-classified "${file.originalname}" as: ${reclass}`);
-                }
-              } catch (reclassErr) {
-                console.error('Re-classification error:', reclassErr.message);
-              }
-            }
+          } else if (fileDetail.category && !currentDoc.category) {
+            // Persist the AI category computed earlier (pure AI, first page — no regex).
+            // Classification was already done above by the pre-classification step using the
+            // same category + first-page text, so don't make a second AI call here.
+            currentDoc.category = fileDetail.category;
+            currentDoc.autoCategorized = true;
           }
 
           saveProposal.documents[docIndex] = currentDoc;
@@ -6663,8 +6659,9 @@ app.post('/stage2/:proposalId/upload', (req, res) => {
     // Save files to GridFS and create file details
     const fileDetails = [];
     for (const file of allFiles) {
-      // Auto-categorize based on filename only (quick)
-      const autoCategory = autoCategorizeDocument(file.originalname, '');
+      // Categorization is done by AI from the document's first page during background
+      // processing (pure AI, no filename/keyword regex), so start uncategorized.
+      const autoCategory = '';
 
       // Save to GridFS with proposal metadata
       await saveToGridFS(file.buffer, file.filename, { proposalId, originalName: file.originalname });
