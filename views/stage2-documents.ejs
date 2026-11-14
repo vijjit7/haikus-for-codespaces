@@ -5311,8 +5311,15 @@
                 const result = await response.json();
                 if (result.success) {
                     console.log('Re-categorize results:', result.results);
-                    alert(`✓ ${result.message}`);
-                    window.location.reload();
+                    let msg = `✓ ${result.message}`;
+                    if (result.noteSummary && Object.keys(result.noteSummary).length > 0) {
+                        msg += '\n\nSkipped/failed reasons:\n' +
+                            Object.entries(result.noteSummary).map(([n, c]) => `  • ${n}: ${c}`).join('\n');
+                    }
+                    alert(msg);
+                    if (result.categorizedCount > 0 || result.classifiedCount > 0) {
+                        window.location.reload();
+                    }
                 } else {
                     alert('Auto-categorize failed: ' + result.error);
                     btn.disabled = false;

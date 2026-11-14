@@ -7126,11 +7126,19 @@ app.post('/stage2/:proposalId/recategorize', async (req, res) => {
 
     await updateProposal(proposalId, { documents: proposal.documents });
 
+    // Aggregate the per-document notes so the UI can show WHY nothing categorized
+    // (e.g. all "no text available" vs "AI error: 401").
+    const noteSummary = {};
+    for (const r of results) {
+      if (r.note) noteSummary[r.note] = (noteSummary[r.note] || 0) + 1;
+    }
+
     res.json({
       success: true,
       message: `Categorized ${categorizedCount}, classified ${classifiedCount} of ${results.length} document(s) processed`,
       categorizedCount,
       classifiedCount,
+      noteSummary,
       results
     });
   } catch (error) {
