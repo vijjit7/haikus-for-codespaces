@@ -5316,6 +5316,9 @@
                         msg += '\n\nSkipped/failed reasons:\n' +
                             Object.entries(result.noteSummary).map(([n, c]) => `  • ${n}: ${c}`).join('\n');
                     }
+                    if (result.ocrConfig) {
+                        msg += `\n\nOCR config: primary=${result.ocrConfig.primary} fallback=${result.ocrConfig.fallback} key=${result.ocrConfig.hasKey}`;
+                    }
                     // Show extraction diagnostics for the first few failed docs to pinpoint the cause.
                     const failed = (result.results || []).filter(r => r.diagStr || r.diag);
                     if (failed.length > 0) {

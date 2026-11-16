@@ -7165,6 +7165,9 @@ app.post('/stage2/:proposalId/recategorize', async (req, res) => {
       categorizedCount,
       classifiedCount,
       noteSummary,
+      // Surface the OCR model config so an env misconfiguration (e.g. OCR_PRIMARY_MODEL set to a
+      // non-vision model on Railway) is visible — vision OCR and text categorization can diverge.
+      ocrConfig: { primary: OCR_PRIMARY_MODEL, fallback: OCR_FALLBACK_MODEL, hasKey: !!OPENROUTER_API_KEY },
       results
     });
   } catch (error) {
