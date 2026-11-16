@@ -6498,6 +6498,37 @@ app.get('/health', (req, res) => {
   });
 });
 
+// OCR self-test: verifies the direct-PDF->Gemini OCR path works in this environment
+// (the path that replaced node-canvas rendering). Generates a tiny PDF, OCRs it, and reports
+// the result. Token-gated to avoid casual abuse of the AI call. Safe: touches no real data.
+app.get('/debug/ocr-selftest', async (req, res) => {
+  if (req.query.token !== 'ocrcheck2026') {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  try {
+    const marker = 'OCRSELFTEST' + Date.now();
+    const pdfDoc = await PDFDocument.create();
+    const page = pdfDoc.addPage([400, 200]);
+    page.drawText(marker + '\nHello World 12345', { x: 40, y: 120, size: 20 });
+    const pdfBytes = Buffer.from(await pdfDoc.save());
+
+    const result = await ocrPdfDirectWithGemini(pdfBytes, 'Transcribe all text in this document verbatim. Return only the text.', 60000);
+    const text = (result.text || '').trim();
+    res.json({
+      ocrPath: 'direct-pdf-gemini',
+      primaryModel: OCR_PRIMARY_MODEL,
+      hasKey: !!OPENROUTER_API_KEY,
+      success: result.success && text.includes(marker),
+      markerFound: text.includes(marker),
+      model: result.model || null,
+      error: result.error || null,
+      sample: text.slice(0, 120)
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // Routes
 app.get('/', (req, res) => {
   res.render('dashboard', { user: 'Associate' });
