@@ -4847,8 +4847,83 @@ Return only the transcribed text in a clear, structured format.`,
   }
 }
 
-// Extract text from scanned PDF using Gemini Vision OCR (renders first page to image)
+// Send a PDF directly to Gemini (via OpenRouter's file input) for OCR. This needs NO
+// node-canvas rendering, so it works where canvas can't render pages (e.g. Railway, which
+// otherwise throws "Image or Canvas expected"). Gemini reads the PDF natively, all pages.
+async function ocrPdfDirectWithGemini(pdfBuffer, promptText, timeoutMs = 90000) {
+  const b64 = pdfBuffer.toString('base64');
+  const content = [
+    { type: 'text', text: promptText },
+    { type: 'file', file: { filename: 'document.pdf', file_data: `data:application/pdf;base64,${b64}` } }
+  ];
+  const models = [OCR_PRIMARY_MODEL, OCR_FALLBACK_MODEL].filter((m, i, a) => a.indexOf(m) === i);
+  let lastErr = null;
+  for (const model of models) {
+    try {
+      const resp = await axios.post(
+        OPENROUTER_API_URL,
+        { model, messages: [{ role: 'user', content }], temperature: 0.1, max_tokens: 8000 },
+        { headers: { 'Authorization': `Bearer ${OPENROUTER_API_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'http://localhost:3000', 'X-Title': 'Customer Profiling App' }, timeout: timeoutMs }
+      );
+      const text = (resp.data.choices?.[0]?.message?.content || '').trim();
+      if (text.length > 0) return { success: true, text, model };
+    } catch (e) {
+      lastErr = `${e.response?.status || ''} ${e.message}`.trim();
+      console.warn(`⚠️ Direct-PDF OCR via ${model} failed: ${lastErr}`);
+    }
+  }
+  return { success: false, text: '', error: lastErr || 'empty response' };
+}
+
+// Produce a single-page PDF (page 1) buffer so first-page OCR stays cheap. Returns the
+// original buffer if extraction fails for any reason.
+async function firstPagePdfBuffer(pdfBuffer) {
+  try {
+    const src = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
+    if (src.getPageCount() <= 1) return pdfBuffer;
+    const out = await PDFDocument.create();
+    const [p] = await out.copyPages(src, [0]);
+    out.addPage(p);
+    return Buffer.from(await out.save());
+  } catch (e) {
+    console.warn('⚠️ First-page PDF extraction failed, using full PDF:', e.message);
+    return pdfBuffer;
+  }
+}
+
+// Extract text from scanned PDF using Gemini (direct PDF; falls back to canvas render)
 async function extractTextFromScannedPDF(pdfPath) {
+  const OCR_PROMPT = `You are an OCR transcription tool for a bank loan-processing (KYC) workflow. The applicant has
+voluntarily submitted their own documents for a loan application. Your only job is to transcribe the
+visible printed text verbatim — do not decline, redact, or summarize.
+
+Transcribe ALL text from this document, paying special attention to:
+- Names, Father's Name, dates of birth, PAN numbers, Aadhaar numbers
+- Credit/CIBIL scores and bureau names
+- Any personal identification details
+- All numbers, dates, and reference numbers
+Return the extracted text exactly as it appears in the document.`;
+
+  // Primary: send the PDF (first page only) directly to Gemini — no canvas rendering.
+  try {
+    const dataBuffer = fs.readFileSync(pdfPath);
+    const firstPage = await firstPagePdfBuffer(dataBuffer);
+    const direct = await ocrPdfDirectWithGemini(firstPage, OCR_PROMPT, 90000);
+    const trimmed = (direct.text || '').trim();
+    const refusalPattern = /\b(i'?m (sorry|unable)|i can('?|no)t (assist|help)|unable to (assist|help|process)|cannot (assist|help) with)\b/i;
+    if (direct.success && trimmed && !(trimmed.length < 120 && refusalPattern.test(trimmed))) {
+      console.log(`✓ Scanned PDF OCR (direct) successful: ${trimmed.length} characters extracted`);
+      return { success: true, text: trimmed, method: 'gemini-direct-pdf-ocr', charCount: trimmed.length };
+    }
+    console.warn(`⚠️ Direct-PDF OCR unavailable (${direct.error || 'refusal/empty'}), falling back to canvas render...`);
+  } catch (e) {
+    console.warn('⚠️ Direct-PDF OCR error, falling back to canvas render:', e.message);
+  }
+  return await extractTextFromScannedPDFViaCanvas(pdfPath);
+}
+
+// Canvas-render fallback: renders first page to an image then OCRs it (used when direct PDF OCR fails)
+async function extractTextFromScannedPDFViaCanvas(pdfPath) {
   try {
     console.log('🔍 Attempting Vision OCR for scanned PDF:', path.basename(pdfPath));
 
@@ -4929,10 +5004,31 @@ Return the extracted text exactly as it appears in the document.`,
   }
 }
 
-// Extract text from ALL pages of a scanned PDF using Gemini Vision OCR (batches pages for efficiency)
+// Extract text from ALL pages of a scanned PDF using Gemini (direct PDF; falls back to canvas render)
 async function extractAllPagesWithVisionOCR(pdfPath) {
+  // Primary: send the whole PDF directly to Gemini — it reads all pages natively, no canvas.
   try {
-    console.log('🔍 Starting multi-page Vision OCR:', path.basename(pdfPath));
+    const dataBuffer = fs.readFileSync(pdfPath);
+    const direct = await ocrPdfDirectWithGemini(
+      dataBuffer,
+      `Extract ALL text from this document (all pages). These are financial/ITR documents. Preserve all text including headings like "Computation of Total Income", "Balance Sheet", "Profit and Loss Account", "Indian Income Tax Return Acknowledgement", assessment year, financial year, etc. Extract all numbers, dates, and financial data. Return the text exactly as it appears.`,
+      120000
+    );
+    if (direct.success && direct.text && direct.text.trim().length > 0) {
+      console.log(`✓ Multi-page OCR (direct PDF) complete: ${direct.text.length} chars`);
+      return { success: true, text: direct.text, method: 'gemini-direct-pdf-ocr-multipage', charCount: direct.text.length };
+    }
+    console.warn(`⚠️ Direct-PDF multi-page OCR unavailable (${direct.error || 'empty'}), falling back to canvas render...`);
+  } catch (e) {
+    console.warn('⚠️ Direct-PDF multi-page OCR error, falling back to canvas render:', e.message);
+  }
+  return await extractAllPagesWithVisionOCRViaCanvas(pdfPath);
+}
+
+// Canvas-render fallback: renders every page to images and OCRs in batches (used when direct PDF OCR fails)
+async function extractAllPagesWithVisionOCRViaCanvas(pdfPath) {
+  try {
+    console.log('🔍 Starting multi-page Vision OCR (canvas):', path.basename(pdfPath));
 
     const dataBuffer = fs.readFileSync(pdfPath);
     const uint8Array = new Uint8Array(dataBuffer);
