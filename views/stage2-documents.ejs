@@ -1852,7 +1852,7 @@
                                                 classification.match(/(\d{4})-(\d{2,4})/i) ||
                                                 classification.match(/itr.*?(\d{4})/i) ||
                                                 filename.match(/it[\s\-_]*(20\d{2})/i) ||
-                                                filename.match(/(20\d{2})[\s\-_]*(2\d)/i) ||
+                                                filename.match(/(20\d{2})[\s\-_]+(\d{2,4})/i) ||
                                                 extractedText.match(/assessment\s*year[:\s]*(\d{4})-?(\d{2,4})/i) ||
                                                 extractedText.match(/a\.?\s*y\.?[:\s]*(\d{4})-?(\d{2,4})/i) ||
                                                 extractedText.match(/accounting\s*year[:\s]*(\d{4})\s*-\s*(\d{4})/i) ||
