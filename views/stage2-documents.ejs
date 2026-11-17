@@ -585,8 +585,11 @@
                                             <td><%= new Date(file.uploadedAt).toLocaleString() %></td>
                                             <td title="Uploaded"><span class="badge badge-success">✓</span></td>
                                             <td class="actions-cell">
-                                                <button class="btn-view" 
-                                                    onmouseenter="showPreview('<%= file.filename %>', '<%= file.originalName %>', '<%= proposalId %>', this)" 
+                                                <button class="btn-view"
+                                                    data-filename="<%= file.filename %>"
+                                                    data-originalname="<%= file.originalName %>"
+                                                    data-proposalid="<%= proposalId %>"
+                                                    onmouseenter="showPreview(this.dataset.filename, this.dataset.originalname, this.dataset.proposalid, this)"
                                                     onmouseleave="scheduleHidePreview()"
                                                     title="View document">
                                                     👁️
@@ -613,7 +616,9 @@
                                                     ⬇️
                                                 </a>
                                                 <button class="btn-delete"
-                                                    onclick="deleteDocument('<%= file.id %>', '<%= file.originalName %>')"
+                                                    data-fileid="<%= file.id %>"
+                                                    data-originalname="<%= file.originalName %>"
+                                                    onclick="deleteDocument(this.dataset.fileid, this.dataset.originalname)"
                                                     title="Delete document">
                                                     🗑️
                                                 </button>
