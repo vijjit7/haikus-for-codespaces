@@ -1845,24 +1845,16 @@
                                 const extractedText = (doc.extractedText || '').toLowerCase();
                                 const filename = (doc.originalName || '').toLowerCase();
 
-                                // Extract financial year from classification (e.g., "ITR of FY2023-24 of pragathi")
-                                // Also check filename and extracted text for year patterns
-                                let fy = null;
-                                const fyMatch = classification.match(/fy\s*(\d{4})-?(\d{2,4})/i) ||
-                                                classification.match(/(\d{4})-(\d{2,4})/i) ||
-                                                classification.match(/itr.*?(\d{4})/i) ||
-                                                filename.match(/it[\s\-_]*(20\d{2})/i) ||
-                                                filename.match(/(20\d{2})[\s\-_]+(\d{2,4})/i) ||
-                                                extractedText.match(/assessment\s*year[:\s]*(\d{4})-?(\d{2,4})/i) ||
-                                                extractedText.match(/a\.?\s*y\.?[:\s]*(\d{4})-?(\d{2,4})/i) ||
-                                                extractedText.match(/accounting\s*year[:\s]*(\d{4})\s*-\s*(\d{4})/i) ||
-                                                extractedText.match(/financial\s*year[:\s]*(\d{4})-?(\d{2,4})/i) ||
-                                                extractedText.match(/previous\s*year[:\s]*(\d{4})-?(\d{2,4})/i) ||
-                                                extractedText.match(/f\.?\s*y\.?[:\s]*(\d{4})-?(\d{2,4})/i) ||
-                                                extractedText.match(/(\d{4})-(\d{2})\s*(?:to|ending)/i) ||
-                                                extractedText.match(/year\s*ended?\s*(?:on\s*)?(?:31[\/\-]?(?:03|march)[\/\-]?)?(\d{4})/i);
-
-                                if (fyMatch) {
+                                // Extract financial year in order of trust:
+                                //   1. AI classification  (e.g. "ITR of FY2023-24 of pragathi")
+                                //   2. Filename year
+                                //   3. Years mentioned in the extracted/OCR text
+                                // The AI classification already resolves Assessment Year -> Financial
+                                // Year (an ITR named for AY 2024-25 is classified as "FY 2023-24"),
+                                // so it must win: a year in the classification is never overridden by
+                                // the raw filename/text years, which may carry the Assessment Year.
+                                const matchToFY = (fyMatch) => {
+                                    if (!fyMatch) return null;
                                     let year1, year2;
                                     if (fyMatch[2]) {
                                         year1 = fyMatch[1];
@@ -1873,8 +1865,28 @@
                                         year1 = String(singleYear - 1);
                                         year2 = String(singleYear).slice(-2);
                                     }
-                                    fy = `FY ${year1}-${year2}`;
-                                }
+                                    return `FY ${year1}-${year2}`;
+                                };
+
+                                // 1. AI classification (authoritative)
+                                const classMatch = classification.match(/f\.?\s*y\.?\s*(\d{4})-?(\d{2,4})/i) ||
+                                                   classification.match(/financial\s*year[:\s]*(\d{4})-?(\d{2,4})/i) ||
+                                                   classification.match(/(\d{4})-(\d{2,4})/i) ||
+                                                   classification.match(/itr.*?(\d{4})/i);
+                                // 2. Filename
+                                const fileMatch = filename.match(/it[\s\-_]*(20\d{2})/i) ||
+                                                  filename.match(/(20\d{2})[\s\-_]+(\d{2,4})/i);
+                                // 3. Extracted/OCR text
+                                const textMatch = extractedText.match(/assessment\s*year[:\s]*(\d{4})-?(\d{2,4})/i) ||
+                                                  extractedText.match(/a\.?\s*y\.?[:\s]*(\d{4})-?(\d{2,4})/i) ||
+                                                  extractedText.match(/accounting\s*year[:\s]*(\d{4})\s*-\s*(\d{4})/i) ||
+                                                  extractedText.match(/financial\s*year[:\s]*(\d{4})-?(\d{2,4})/i) ||
+                                                  extractedText.match(/previous\s*year[:\s]*(\d{4})-?(\d{2,4})/i) ||
+                                                  extractedText.match(/f\.?\s*y\.?[:\s]*(\d{4})-?(\d{2,4})/i) ||
+                                                  extractedText.match(/(\d{4})-(\d{2})\s*(?:to|ending)/i) ||
+                                                  extractedText.match(/year\s*ended?\s*(?:on\s*)?(?:31[\/\-]?(?:03|march)[\/\-]?)?(\d{4})/i);
+
+                                const fy = matchToFY(classMatch) || matchToFY(fileMatch) || matchToFY(textMatch);
 
                                 // Extract applicant name from classification
                                 let applicantName = null;
