@@ -2141,22 +2141,40 @@
                                             return emiDates;
                                         };
                                         
-                                        // Fixed 12 months: Jan 2026 to Feb 2025 (reverse chronological)
+                                        // Last 12 months (reverse chronological), anchored to the most recent
+                                        // month present in the banking statements so EMI tracking always
+                                        // reflects the actual statement period rather than a fixed window.
                                         const camMonthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                                        const camMonths = [
-                                            { month: 0, year: 2026, label: 'Jan' },
-                                            { month: 11, year: 2025, label: 'Dec' },
-                                            { month: 10, year: 2025, label: 'Nov' },
-                                            { month: 9, year: 2025, label: 'Oct' },
-                                            { month: 8, year: 2025, label: 'Sep' },
-                                            { month: 7, year: 2025, label: 'Aug' },
-                                            { month: 6, year: 2025, label: 'Jul' },
-                                            { month: 5, year: 2025, label: 'Jun' },
-                                            { month: 4, year: 2025, label: 'May' },
-                                            { month: 3, year: 2025, label: 'Apr' },
-                                            { month: 2, year: 2025, label: 'Mar' },
-                                            { month: 1, year: 2025, label: 'Feb' }
-                                        ];
+                                        const camFindLatestStatementMonth = (docs) => {
+                                            const map = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+                                            const normY = (y) => y < 100 ? y + 2000 : y;
+                                            const now = new Date();
+                                            const nowKey = now.getFullYear() * 12 + now.getMonth();
+                                            // Count dated rows per month; the latest month with several dates is the
+                                            // most recent statement month (a lone footer/mandate date won't qualify).
+                                            const counts = {};
+                                            const tally = (mo, y) => { if (mo < 0 || mo > 11 || y < 2023) return; const k = y * 12 + mo; if (k <= nowKey) counts[k] = (counts[k] || 0) + 1; };
+                                            (docs || []).forEach(doc => {
+                                                const t = (doc.extractedText || '').toLowerCase();
+                                                let m;
+                                                const reNum = /(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/g;
+                                                while ((m = reNum.exec(t)) !== null) tally(parseInt(m[2]) - 1, normY(parseInt(m[3])));
+                                                const reNamed = /(\d{1,2})[\/\-\.\s](jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*[\/\-\.\s](\d{2,4})/gi;
+                                                while ((m = reNamed.exec(t)) !== null) { const mo = map[m[2].toLowerCase()]; if (mo !== undefined) tally(mo, normY(parseInt(m[3]))); }
+                                            });
+                                            const keys = Object.keys(counts).map(Number).sort((a, b) => b - a);
+                                            const solid = keys.find(k => counts[k] >= 3);
+                                            const chosen = solid !== undefined ? solid : (keys.length ? keys[0] : null);
+                                            return chosen === null ? null : new Date(Math.floor(chosen / 12), chosen % 12, 1);
+                                        };
+                                        const camEmiAnchor = camFindLatestStatementMonth(camBankingDocs) || new Date();
+                                        const camMonths = [];
+                                        for (let ci = 0; ci < 12; ci++) {
+                                            const cd = new Date(camEmiAnchor.getFullYear(), camEmiAnchor.getMonth() - ci, 1);
+                                            camMonths.push({ month: cd.getMonth(), year: cd.getFullYear(), label: camMonthNames[cd.getMonth()] });
+                                        }
+                                        const camEmiOldest = new Date(camEmiAnchor.getFullYear(), camEmiAnchor.getMonth() - 11, 1);
+                                        const camEmiRangeLabel = camMonthNames[camEmiAnchor.getMonth()] + "'" + String(camEmiAnchor.getFullYear()).slice(-2) + ' to ' + camMonthNames[camEmiOldest.getMonth()] + "'" + String(camEmiOldest.getFullYear()).slice(-2);
                                         %>
                                         
                                         <% if (camDebtProfiles.length > 0) { %>
@@ -2215,7 +2233,7 @@
                                         
                                         <!-- EMI Tracking Table -->
                                         <div style="margin-bottom: 15px;">
-                                            <div style="font-weight: 600; color: #1976d2; margin-bottom: 10px; font-size: 0.95em;">📅 EMI Tracking (Jan'26 to Feb'25)</div>
+                                            <div style="font-weight: 600; color: #1976d2; margin-bottom: 10px; font-size: 0.95em;">📅 EMI Tracking (<%= camEmiRangeLabel %>)</div>
                                             <div style="overflow-x:auto;">
                                             <table border="1" style="width:100%;border-collapse:collapse;background:#fff;font-size:0.75em;">
                                                 <thead>
@@ -4805,8 +4823,38 @@
                     <% } %>
                     
                     <!-- EMI Tracking Section -->
-                    <h4 style="margin-bottom: 15px; color: #1976d2;">📅 EMI Tracking (Jan'26 to Feb'25)</h4>
-                    
+                    <%
+                    // Determine the most recent month present in the banking statements so the
+                    // EMI tracking window is the last 12 months of actual statement data.
+                    const findLatestStatementMonth = (docs) => {
+                        const map = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+                        const normY = (y) => y < 100 ? y + 2000 : y;
+                        const now = new Date();
+                        const nowKey = now.getFullYear() * 12 + now.getMonth();
+                        // Count dated rows per month; the latest month with several dates is the
+                        // most recent statement month (a lone footer/mandate date won't qualify).
+                        const counts = {};
+                        const tally = (mo, y) => { if (mo < 0 || mo > 11 || y < 2023) return; const k = y * 12 + mo; if (k <= nowKey) counts[k] = (counts[k] || 0) + 1; };
+                        (docs || []).forEach(doc => {
+                            const t = (doc.extractedText || '').toLowerCase();
+                            let m;
+                            const reNum = /(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/g;
+                            while ((m = reNum.exec(t)) !== null) tally(parseInt(m[2]) - 1, normY(parseInt(m[3])));
+                            const reNamed = /(\d{1,2})[\/\-\.\s](jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*[\/\-\.\s](\d{2,4})/gi;
+                            while ((m = reNamed.exec(t)) !== null) { const mo = map[m[2].toLowerCase()]; if (mo !== undefined) tally(mo, normY(parseInt(m[3]))); }
+                        });
+                        const keys = Object.keys(counts).map(Number).sort((a, b) => b - a);
+                        const solid = keys.find(k => counts[k] >= 3);
+                        const chosen = solid !== undefined ? solid : (keys.length ? keys[0] : null);
+                        return chosen === null ? null : new Date(Math.floor(chosen / 12), chosen % 12, 1);
+                    };
+                    const emiMonthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                    const emiAnchorDate = findLatestStatementMonth((proposal.documents || []).filter(d => d.category === 'banking')) || new Date();
+                    const emiOldestDate = new Date(emiAnchorDate.getFullYear(), emiAnchorDate.getMonth() - 11, 1);
+                    const emiRangeLabel = emiMonthNames[emiAnchorDate.getMonth()] + "'" + String(emiAnchorDate.getFullYear()).slice(-2) + ' to ' + emiMonthNames[emiOldestDate.getMonth()] + "'" + String(emiOldestDate.getFullYear()).slice(-2);
+                    %>
+                    <h4 style="margin-bottom: 15px; color: #1976d2;">📅 EMI Tracking (<%= emiRangeLabel %>)</h4>
+
                     <%
                     // Get banking documents from proposal
                     const bankingDocs = (proposal.documents || []).filter(d => d.category === 'banking');
@@ -4993,22 +5041,14 @@
                         });
                     }
                     
-                    // Fixed 12 months: Jan 2026 to Feb 2025 (reverse chronological)
-                    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                    const months = [
-                        { month: 0, year: 2026, label: 'Jan', fullLabel: 'Jan 2026' },
-                        { month: 11, year: 2025, label: 'Dec', fullLabel: 'Dec 2025' },
-                        { month: 10, year: 2025, label: 'Nov', fullLabel: 'Nov 2025' },
-                        { month: 9, year: 2025, label: 'Oct', fullLabel: 'Oct 2025' },
-                        { month: 8, year: 2025, label: 'Sep', fullLabel: 'Sep 2025' },
-                        { month: 7, year: 2025, label: 'Aug', fullLabel: 'Aug 2025' },
-                        { month: 6, year: 2025, label: 'Jul', fullLabel: 'Jul 2025' },
-                        { month: 5, year: 2025, label: 'Jun', fullLabel: 'Jun 2025' },
-                        { month: 4, year: 2025, label: 'May', fullLabel: 'May 2025' },
-                        { month: 3, year: 2025, label: 'Apr', fullLabel: 'Apr 2025' },
-                        { month: 2, year: 2025, label: 'Mar', fullLabel: 'Mar 2025' },
-                        { month: 1, year: 2025, label: 'Feb', fullLabel: 'Feb 2025' }
-                    ];
+                    // Last 12 months (reverse chronological), anchored to the most recent
+                    // month present in the banking statements (see emiAnchorDate above).
+                    const monthNames = emiMonthNames;
+                    const months = [];
+                    for (let mi = 0; mi < 12; mi++) {
+                        const md = new Date(emiAnchorDate.getFullYear(), emiAnchorDate.getMonth() - mi, 1);
+                        months.push({ month: md.getMonth(), year: md.getFullYear(), label: monthNames[md.getMonth()], fullLabel: monthNames[md.getMonth()] + ' ' + md.getFullYear() });
+                    }
                     
                     // Function to find EMI dates in bank statements
                     function findEmiDatesInStatements(emiAmount, bankName, bankingDocs) {
