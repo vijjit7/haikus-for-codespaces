@@ -2041,6 +2041,11 @@
                                             const roundedEmi = Math.round(emiAmount);
                                             const wideTolerance = Math.round(roundedEmi * 0.015);
                                             const camNormYear = (y) => { if (y < 100) y += 2000; return y; };
+                                            // Masked loan-account fragments (e.g. "XX15309") seen right before a
+                                            // matched EMI amount. Used to recover EMIs in rate-reset months where the
+                                            // debited figure differs from the stored EMI.
+                                            const accountTokenCounts = {};
+                                            const collectAccountTokens = (ctx) => { const tks = ctx.slice(-60).match(/[x*•]{2,}\d{3,}/gi); if (tks) tks.forEach(tk => { const k = tk.toLowerCase(); accountTokenCounts[k] = (accountTokenCounts[k] || 0) + 1; }); };
 
                                             // Helper: extract dates from context text (supports 2 and 4 digit years)
                                             const extractDates = (ctxText) => {
@@ -2104,6 +2109,7 @@
                                                     const hasKw = emiKeywords.some(kw => fullCtx.includes(kw));
                                                     const hasBank = bankTerms.length > 0 && bankTerms.some(term => fullCtx.includes(term));
                                                     if (hasKw || hasBank) {
+                                                        collectAccountTokens(ctxBefore);
                                                         const datesBefore = extractDates(ctxBefore);
                                                         const datesAfter = extractDates(ctxAfter);
                                                         let dt = datesBefore.length > 0 ? datesBefore[datesBefore.length - 1] : (datesAfter.length > 0 ? datesAfter[0] : null);
@@ -2127,6 +2133,7 @@
                                                             const hasKw = emiKeywords.some(kw => fullCtx.includes(kw)) ||
                                                                           (bankTerms.length > 0 && bankTerms.some(term => fullCtx.includes(term)));
                                                             if (hasKw) {
+                                                                collectAccountTokens(ctxBefore);
                                                                 const datesBefore = extractDates(ctxBefore);
                                                                 const datesAfter = extractDates(ctxAfter);
                                                                 let dt = datesBefore.length > 0 ? datesBefore[datesBefore.length - 1] : (datesAfter.length > 0 ? datesAfter[0] : null);
@@ -2138,6 +2145,63 @@
                                                     }
                                                 }
                                             });
+
+                                            // Pass 3: Account-fragment recovery. Floating-rate loans change the EMI
+                                            // on resets, so the exact figure only matches some months. Discover the
+                                            // loan's masked account fragment from the months that DID match, then
+                                            // record every month that fragment appears on an EMI line - regardless
+                                            // of the debited amount.
+                                            let accountTag = null, accountTagHits = 0;
+                                            for (const [tk, c] of Object.entries(accountTokenCounts)) {
+                                                if (tk.replace(/[^0-9]/g, '').length >= 4 && c > accountTagHits) { accountTagHits = c; accountTag = tk; }
+                                            }
+                                            if (accountTag && accountTagHits >= 2) {
+                                                docs.forEach(doc => {
+                                                    if (!doc.extractedText) return;
+                                                    const text = camCleanBankText(doc.extractedText).toLowerCase();
+                                                    let idx = text.indexOf(accountTag);
+                                                    while (idx !== -1) {
+                                                        const ctxB = text.substring(Math.max(0, idx - 90), idx);
+                                                        const ctxA = text.substring(idx, Math.min(text.length, idx + 40));
+                                                        if (emiKeywords.some(kw => (ctxB + ctxA).includes(kw))) {
+                                                            const dB = extractDates(ctxB), dA = extractDates(ctxA);
+                                                            const dt = dB.length > 0 ? dB[dB.length - 1] : (dA.length > 0 ? dA[0] : null);
+                                                            if (dt && !emiDates.some(d => d.day === dt.day && d.month === dt.month && d.year === dt.year)) {
+                                                                emiDates.push({day: dt.day, month: dt.month, year: dt.year});
+                                                            }
+                                                        }
+                                                        idx = text.indexOf(accountTag, idx + 1);
+                                                    }
+                                                });
+                                            } else if (emiDates.length >= 3 && bankTerms.length > 0) {
+                                                // Fallback: no account fragment exposed. The loan pays on a consistent
+                                                // day each month, so capture lender + EMI lines on that day whose amount
+                                                // is in a wide band around the stored EMI (covers reset changes).
+                                                const dayCounts = {};
+                                                emiDates.forEach(d => { dayCounts[d.day] = (dayCounts[d.day] || 0) + 1; });
+                                                const usualDay = Object.keys(dayCounts).map(Number).sort((a, b) => dayCounts[b] - dayCounts[a])[0];
+                                                if (dayCounts[usualDay] >= 3) {
+                                                    const lo = roundedEmi * 0.6, hi = roundedEmi * 1.7;
+                                                    docs.forEach(doc => {
+                                                        if (!doc.extractedText) return;
+                                                        const text = camCleanBankText(doc.extractedText).toLowerCase();
+                                                        const amtRe = /(\d[\d,]*)\.(\d{2})\b/g;
+                                                        let m;
+                                                        while ((m = amtRe.exec(text)) !== null) {
+                                                            const val = parseInt(m[1].replace(/,/g, ''));
+                                                            if (val < lo || val > hi) continue;
+                                                            const ctxB = text.substring(Math.max(0, m.index - 300), m.index);
+                                                            const ctx = ctxB + text.substring(m.index, Math.min(text.length, m.index + 40));
+                                                            if (!bankTerms.some(t => ctx.includes(t)) || !emiKeywords.some(k => ctx.includes(k))) continue;
+                                                            const dB = extractDates(ctxB);
+                                                            const dt = dB.length > 0 ? dB[dB.length - 1] : null;
+                                                            if (dt && dt.day === usualDay && !emiDates.some(d => d.day === dt.day && d.month === dt.month && d.year === dt.year)) {
+                                                                emiDates.push({day: dt.day, month: dt.month, year: dt.year});
+                                                            }
+                                                        }
+                                                    });
+                                                }
+                                            }
                                             return emiDates;
                                         };
                                         
@@ -5074,6 +5138,11 @@
                             return y;
                         };
 
+                        // Masked loan-account fragments (e.g. "XX15309") seen right before a matched
+                        // EMI amount; used to recover EMIs in rate-reset months (see Pass 3 below).
+                        const accountTokenCounts = {};
+                        const collectAccountTokens = (ctx) => { const tks = ctx.slice(-60).match(/[x*•]{2,}\d{3,}/gi); if (tks) tks.forEach(tk => { const k = tk.toLowerCase(); accountTokenCounts[k] = (accountTokenCounts[k] || 0) + 1; }); };
+
                         // Helper: extract dates from context text
                         const extractDatesFromContext = (contextText) => {
                             const allDates = [];
@@ -5148,6 +5217,7 @@
                                 const hasBankTerm = bankTerms.length > 0 && bankTerms.some(term => fullContext.includes(term));
 
                                 if (hasEmiKeyword || hasBankTerm) {
+                                    collectAccountTokens(ctxBefore);
                                     // Try to find date: prefer BEFORE the amount, fall back to AFTER
                                     const datesBefore = extractDatesFromContext(ctxBefore);
                                     const datesAfter = extractDatesFromContext(ctxAfter);
@@ -5181,6 +5251,7 @@
                                         const hasKw = emiKeywords.some(kw => fullCtx.includes(kw)) ||
                                                       (bankTerms.length > 0 && bankTerms.some(term => fullCtx.includes(term)));
                                         if (hasKw) {
+                                            collectAccountTokens(ctxBefore);
                                             const datesBefore = extractDatesFromContext(ctxBefore);
                                             const datesAfter = extractDatesFromContext(ctxAfter);
                                             let dt = datesBefore.length > 0 ? datesBefore[datesBefore.length - 1] : (datesAfter.length > 0 ? datesAfter[0] : null);
@@ -5192,6 +5263,63 @@
                                 }
                             }
                         });
+
+                        // Pass 3: Account-fragment recovery. Floating-rate loans change the EMI on
+                        // resets, so the exact figure only matches some months. Discover the loan's
+                        // masked account fragment from the months that DID match, then record every
+                        // month that fragment appears on an EMI line - regardless of the amount.
+                        const emiRounded = Math.round(emiAmount);
+                        let accountTag = null, accountTagHits = 0;
+                        for (const [tk, c] of Object.entries(accountTokenCounts)) {
+                            if (tk.replace(/[^0-9]/g, '').length >= 4 && c > accountTagHits) { accountTagHits = c; accountTag = tk; }
+                        }
+                        if (accountTag && accountTagHits >= 2) {
+                            bankingDocs.forEach(doc => {
+                                if (!doc.extractedText) return;
+                                const text = cleanBankText(doc.extractedText).toLowerCase();
+                                let idx = text.indexOf(accountTag);
+                                while (idx !== -1) {
+                                    const ctxB = text.substring(Math.max(0, idx - 90), idx);
+                                    const ctxA = text.substring(idx, Math.min(text.length, idx + 40));
+                                    if (emiKeywords.some(kw => (ctxB + ctxA).includes(kw))) {
+                                        const dB = extractDatesFromContext(ctxB), dA = extractDatesFromContext(ctxA);
+                                        const dt = dB.length > 0 ? dB[dB.length - 1] : (dA.length > 0 ? dA[0] : null);
+                                        if (dt && !emiDates.some(ed => ed.day === dt.day && ed.month === dt.month && ed.year === dt.year)) {
+                                            emiDates.push({ day: dt.day, month: dt.month, year: dt.year, dateStr: dt.dateStr });
+                                        }
+                                    }
+                                    idx = text.indexOf(accountTag, idx + 1);
+                                }
+                            });
+                        } else if (emiDates.length >= 3 && bankTerms.length > 0) {
+                            // Fallback: no account fragment exposed. The loan pays on a consistent day
+                            // each month, so capture lender + EMI lines on that day whose amount is in a
+                            // wide band around the stored EMI (covers reset changes).
+                            const dayCounts = {};
+                            emiDates.forEach(d => { dayCounts[d.day] = (dayCounts[d.day] || 0) + 1; });
+                            const usualDay = Object.keys(dayCounts).map(Number).sort((a, b) => dayCounts[b] - dayCounts[a])[0];
+                            if (dayCounts[usualDay] >= 3) {
+                                const lo = emiRounded * 0.6, hi = emiRounded * 1.7;
+                                bankingDocs.forEach(doc => {
+                                    if (!doc.extractedText) return;
+                                    const text = cleanBankText(doc.extractedText).toLowerCase();
+                                    const amtRe = /(\d[\d,]*)\.(\d{2})\b/g;
+                                    let m;
+                                    while ((m = amtRe.exec(text)) !== null) {
+                                        const val = parseInt(m[1].replace(/,/g, ''));
+                                        if (val < lo || val > hi) continue;
+                                        const ctxB = text.substring(Math.max(0, m.index - 300), m.index);
+                                        const ctx = ctxB + text.substring(m.index, Math.min(text.length, m.index + 40));
+                                        if (!bankTerms.some(t => ctx.includes(t)) || !emiKeywords.some(k => ctx.includes(k))) continue;
+                                        const dB = extractDatesFromContext(ctxB);
+                                        const dt = dB.length > 0 ? dB[dB.length - 1] : null;
+                                        if (dt && dt.day === usualDay && !emiDates.some(ed => ed.day === dt.day && ed.month === dt.month && ed.year === dt.year)) {
+                                            emiDates.push({ day: dt.day, month: dt.month, year: dt.year, dateStr: dt.dateStr });
+                                        }
+                                    }
+                                });
+                            }
+                        }
 
                         return emiDates;
                     }
