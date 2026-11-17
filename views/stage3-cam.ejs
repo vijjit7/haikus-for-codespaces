@@ -2150,20 +2150,21 @@
                                             const normY = (y) => y < 100 ? y + 2000 : y;
                                             const now = new Date();
                                             const nowKey = now.getFullYear() * 12 + now.getMonth();
-                                            // Count dated rows per month; the latest month with several dates is the
-                                            // most recent statement month (a lone footer/mandate date won't qualify).
-                                            const counts = {};
-                                            const tally = (mo, y) => { if (mo < 0 || mo > 11 || y < 2023) return; const k = y * 12 + mo; if (k <= nowKey) counts[k] = (counts[k] || 0) + 1; };
+                                            // Count DISTINCT transaction days per month. A real statement month has
+                                            // many distinct days; a repeated print/footer or mandate date resolves to
+                                            // only one or two, so it won't be mistaken for the latest statement month.
+                                            const days = {};
+                                            const tally = (d, mo, y) => { if (d < 1 || d > 31 || mo < 0 || mo > 11 || y < 2023) return; const k = y * 12 + mo; if (k > nowKey) return; (days[k] || (days[k] = new Set())).add(d); };
                                             (docs || []).forEach(doc => {
                                                 const t = (doc.extractedText || '').toLowerCase();
                                                 let m;
                                                 const reNum = /(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/g;
-                                                while ((m = reNum.exec(t)) !== null) tally(parseInt(m[2]) - 1, normY(parseInt(m[3])));
+                                                while ((m = reNum.exec(t)) !== null) tally(parseInt(m[1]), parseInt(m[2]) - 1, normY(parseInt(m[3])));
                                                 const reNamed = /(\d{1,2})[\/\-\.\s](jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*[\/\-\.\s](\d{2,4})/gi;
-                                                while ((m = reNamed.exec(t)) !== null) { const mo = map[m[2].toLowerCase()]; if (mo !== undefined) tally(mo, normY(parseInt(m[3]))); }
+                                                while ((m = reNamed.exec(t)) !== null) { const mo = map[m[2].toLowerCase()]; if (mo !== undefined) tally(parseInt(m[1]), mo, normY(parseInt(m[3]))); }
                                             });
-                                            const keys = Object.keys(counts).map(Number).sort((a, b) => b - a);
-                                            const solid = keys.find(k => counts[k] >= 3);
+                                            const keys = Object.keys(days).map(Number).sort((a, b) => b - a);
+                                            const solid = keys.find(k => days[k].size >= 5);
                                             const chosen = solid !== undefined ? solid : (keys.length ? keys[0] : null);
                                             return chosen === null ? null : new Date(Math.floor(chosen / 12), chosen % 12, 1);
                                         };
@@ -4831,20 +4832,21 @@
                         const normY = (y) => y < 100 ? y + 2000 : y;
                         const now = new Date();
                         const nowKey = now.getFullYear() * 12 + now.getMonth();
-                        // Count dated rows per month; the latest month with several dates is the
-                        // most recent statement month (a lone footer/mandate date won't qualify).
-                        const counts = {};
-                        const tally = (mo, y) => { if (mo < 0 || mo > 11 || y < 2023) return; const k = y * 12 + mo; if (k <= nowKey) counts[k] = (counts[k] || 0) + 1; };
+                        // Count DISTINCT transaction days per month. A real statement month has
+                        // many distinct days; a repeated print/footer or mandate date resolves to
+                        // only one or two, so it won't be mistaken for the latest statement month.
+                        const days = {};
+                        const tally = (d, mo, y) => { if (d < 1 || d > 31 || mo < 0 || mo > 11 || y < 2023) return; const k = y * 12 + mo; if (k > nowKey) return; (days[k] || (days[k] = new Set())).add(d); };
                         (docs || []).forEach(doc => {
                             const t = (doc.extractedText || '').toLowerCase();
                             let m;
                             const reNum = /(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/g;
-                            while ((m = reNum.exec(t)) !== null) tally(parseInt(m[2]) - 1, normY(parseInt(m[3])));
+                            while ((m = reNum.exec(t)) !== null) tally(parseInt(m[1]), parseInt(m[2]) - 1, normY(parseInt(m[3])));
                             const reNamed = /(\d{1,2})[\/\-\.\s](jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*[\/\-\.\s](\d{2,4})/gi;
-                            while ((m = reNamed.exec(t)) !== null) { const mo = map[m[2].toLowerCase()]; if (mo !== undefined) tally(mo, normY(parseInt(m[3]))); }
+                            while ((m = reNamed.exec(t)) !== null) { const mo = map[m[2].toLowerCase()]; if (mo !== undefined) tally(parseInt(m[1]), mo, normY(parseInt(m[3]))); }
                         });
-                        const keys = Object.keys(counts).map(Number).sort((a, b) => b - a);
-                        const solid = keys.find(k => counts[k] >= 3);
+                        const keys = Object.keys(days).map(Number).sort((a, b) => b - a);
+                        const solid = keys.find(k => days[k].size >= 5);
                         const chosen = solid !== undefined ? solid : (keys.length ? keys[0] : null);
                         return chosen === null ? null : new Date(Math.floor(chosen / 12), chosen % 12, 1);
                     };
