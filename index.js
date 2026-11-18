@@ -8084,18 +8084,10 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
     }
     
     if (processedCount > 0) {
-      // Rebuild AI EMI tracking now that statements were re-extracted (reuses the bankTxns
-      // we just stored, so no second extraction pass — just the match step).
-      try {
-        const debtProfiles = await DebtProfile.find({ proposalId }).sort({ sNo: 1 });
-        const computed = await computeEmiTracking(proposal, debtProfiles);
-        if (computed) proposal.emiTracking = computed;
-      } catch (e) {
-        console.error('EMI tracking rebuild error (reprocess-banking):', e.message);
-      }
-      const update = { documents: proposal.documents };
-      if (proposal.emiTracking) update.emiTracking = proposal.emiTracking;
-      await updateProposal(proposalId, update);
+      // Persist the extracted bank-statement details. EMI tracking is recomputed separately by
+      // POST /stage3/:id/refresh-emi-tracking, so it is NOT done here — keeping this route fast
+      // and making sure the bank-statement summary always saves.
+      await updateProposal(proposalId, { documents: proposal.documents });
     }
 
     res.json({
@@ -9109,12 +9101,19 @@ app.get('/stage3/:proposalId/emi-debug', async (req, res) => {
       debtProfileCount: debtProfiles.length,
       profilesWithEmi: debtProfiles.filter(p => p.emi && p.emi > 0).length,
       allDocCategories: docs.reduce((acc, d) => { acc[d.category || 'undefined'] = (acc[d.category || 'undefined'] || 0) + 1; return acc; }, {}),
+      // Every document (name/category/type) — so a misfiled statement like "NORTON..." is visible.
+      allDocs: docs.map(d => ({ name: d.originalName, category: d.category || 'undefined', isPdf: (d.originalName || '').toLowerCase().endsWith('.pdf'), hasExtractedText: !!d.extractedText })),
       bankingDocCount: bankingDocs.length,
       bankingDocs: bankingDocs.map(d => ({
         name: d.originalName,
         isPdf: (d.originalName || '').toLowerCase().endsWith('.pdf'),
         hasExtractedText: !!d.extractedText,
         extractedTextLen: (d.extractedText || '').length,
+        extractionMethod: d.extractionMethod || null,
+        hasExtractedDetails: !!d.extractedDetails,
+        bankName: d.extractedDetails ? d.extractedDetails.bankName : null,
+        periodFrom: d.extractedDetails ? d.extractedDetails.periodFrom : null,
+        periodTo: d.extractedDetails ? d.extractedDetails.periodTo : null,
         hasBankTxns: Array.isArray(d.bankTxns),
         bankTxnCount: Array.isArray(d.bankTxns) ? d.bankTxns.length : null
       })),
