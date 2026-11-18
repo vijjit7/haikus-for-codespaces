@@ -4237,14 +4237,17 @@ async function callGeminiText(prompt, maxTokens = 8000, timeoutMs = 120000) {
   return '';
 }
 
-// Extract every transaction from a statement as compact pipe lines (DD-MM-YYYY|C/D|amount|balance).
-// Compact output is token-cheap, so chunks can be large (fewer calls) and the array can't truncate
-// into unparseable JSON. The direction (C/D) comes from the model reading the debit/credit columns
-// and running balance. Returns a txn array compatible with aggregateBankMonthly.
+// Extract every transaction from a statement as compact pipe lines
+// (DD-MM-YYYY|C/D|amount|balance). Chunks are kept small so the model's output can't truncate
+// (which was dropping whole months). The model's C/D guess is unreliable on flattened OCR, so the
+// direction is CORRECTED in code from the running-balance movement. Returns a txn array
+// compatible with aggregateBankMonthly.
 async function extractBankTxnsCompact(fullText) {
   if (!fullText || !fullText.trim()) return [];
-  const CHUNK = 45000;
-  const OVERLAP_LINES = 3;
+  // Small chunks → each reply stays well under the model's output-token cap, so no transaction
+  // rows are lost to truncation.
+  const CHUNK = 16000;
+  const OVERLAP_LINES = 2;
   const lines = fullText.split('\n');
   const chunks = [];
   let cur = [], curLen = 0;
@@ -4260,29 +4263,47 @@ async function extractBankTxnsCompact(fullText) {
   for (const ch of chunks) {
     const prompt = `Extract EVERY transaction row from this bank statement chunk. Output ONE line per transaction, in EXACTLY this pipe format and nothing else:
 DD-MM-YYYY|T|AMOUNT|BALANCE
-- T = C for a credit/deposit (money IN — running balance increases) or D for a debit/withdrawal (money OUT — running balance decreases). Use the debit/credit columns and the running balance to decide.
-- AMOUNT = the transaction amount as a plain number (no commas, no currency symbol). BALANCE = the running balance after the transaction as a plain number.
+- A statement has BOTH debits and credits. T = C for a credit/deposit (money IN) or D for a debit/withdrawal (money OUT). Many rows are credits — do not mark everything as debit.
+- AMOUNT = the transaction amount as a plain number (no commas, no currency symbol). BALANCE = the running balance shown on that row as a plain number (keep it exactly, including paise).
 - Skip opening-balance / brought-forward / closing-balance lines and any non-transaction rows.
 - Output ONLY the transaction lines. No header, no totals, no commentary, no code fences.
 
 BANK STATEMENT CHUNK:
 ${ch}`;
     let content;
-    try { content = await callGeminiText(prompt, 16000, 120000); } catch (e) { console.error('compact txn read failed:', e.message); continue; }
+    try { content = await callGeminiText(prompt, 8000, 120000); } catch (e) { console.error('compact txn read failed:', e.message); continue; }
     for (const raw of String(content).split('\n')) {
       const m = lineRe.exec(raw);
       if (!m) continue;
       const date = m[1];
       const type = m[2].toUpperCase();
       const amount = parseFloat(m[3].replace(/,/g, '')) || 0;
-      const balance = m[4].replace(/,/g, '');
-      if (amount <= 0) continue;
-      const key = `${date}|${type}|${amount}|${balance}`; // dedup overlapped rows
+      const balance = parseFloat(m[4].replace(/,/g, ''));
+      if (amount <= 0 || !isFinite(balance)) continue;
+      const key = `${date}|${amount}|${balance}`; // dedup overlapped rows (type-independent)
       if (seen.has(key)) continue;
       seen.add(key);
-      txns.push({ date, type, amount, balance: parseFloat(balance) || 0 });
+      txns.push({ date, type, amount, balance });
     }
   }
+
+  // Correct debit/credit from the running-balance movement — far more reliable than the model's
+  // guess on flattened OCR. A credit raises the balance, a debit lowers it. Statements may be
+  // printed oldest-first or newest-first, so pick the correct neighbouring row by date order.
+  if (txns.length >= 3) {
+    const dnum = (s) => { const m = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(s); return m ? (+m[3]) * 372 + (+m[2]) * 31 + (+m[1]) : 0; };
+    const newestFirst = dnum(txns[0].date) > dnum(txns[txns.length - 1].date);
+    for (let i = 0; i < txns.length; i++) {
+      const j = newestFirst ? i + 1 : i - 1; // the chronologically-previous row
+      if (j < 0 || j >= txns.length) continue;
+      const delta = txns[i].balance - txns[j].balance;
+      // Only override when the balance step matches this row's amount (guards against OCR noise).
+      if (Math.abs(Math.abs(delta) - txns[i].amount) <= Math.max(1, txns[i].amount * 0.01)) {
+        txns[i].type = delta > 0 ? 'C' : 'D';
+      }
+    }
+  }
+
   return txns;
 }
 
