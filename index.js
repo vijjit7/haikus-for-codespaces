@@ -4310,7 +4310,7 @@ async function computeEmiTracking(proposal, debtProfiles, options = {}) {
     if (txns && txns.length) allTxns = allTxns.concat(txns);
   }
   if (!allTxns.length && !allowExtraction) return null;
-  if (!allTxns.length) return docsMutated ? { _docsMutated: true, profiles: {}, months: [], rangeLabel: '' } : null;
+  if (!allTxns.length) return null;
 
   const parse = (s) => { const m = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(String(s || '').trim()); return m ? { d: +m[1], mo: +m[2] - 1, y: +m[3] } : null; };
 
@@ -4353,6 +4353,9 @@ async function computeEmiTracking(proposal, debtProfiles, options = {}) {
     resultProfiles[id] = { foundInStmt: Object.keys(byMonth).length > 0, dates: byMonth };
   }
 
+  const matchedCount = Object.values(resultProfiles).filter(p => p.foundInStmt).length;
+  console.log(`✓ EMI tracking: ${allTxns.length} txns (${debits.length} debits), matched ${matchedCount}/${profiles.length} loans, window ${rangeLabel}`);
+
   return {
     computedAt: new Date().toISOString(),
     signature: emiTrackingSignature(bankingDocs, profiles),
@@ -4361,6 +4364,9 @@ async function computeEmiTracking(proposal, debtProfiles, options = {}) {
     anchorYear: anchor.year,
     months,
     profiles: resultProfiles,
+    txnCount: allTxns.length,
+    debitCount: debits.length,
+    matchedCount,
     _docsMutated: docsMutated
   };
 }
@@ -9010,8 +9016,9 @@ app.get('/stage3/:proposalId', async (req, res) => {
     if (bankingDocs.length && trackProfiles.length) {
       const sig = emiTrackingSignature(bankingDocs, trackProfiles);
       if (!emiTracking || emiTracking.signature !== sig) {
-        // Page load: match only against already-extracted transactions (no slow OCR extraction).
-        const computed = await computeEmiTracking(proposal, debtProfiles, { allowExtraction: false });
+        // Generate tracking on first view (extract transactions if not cached yet, then match).
+        // Result is cached on the proposal via the signature, so later loads are fast.
+        const computed = await computeEmiTracking(proposal, debtProfiles);
         if (computed) {
           emiTracking = computed;
           const persist = { emiTracking: computed };

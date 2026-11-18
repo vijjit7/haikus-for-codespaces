@@ -2039,6 +2039,11 @@
                                         <!-- EMI Tracking Table -->
                                         <div style="margin-bottom: 15px;">
                                             <div style="font-weight: 600; color: #1976d2; margin-bottom: 10px; font-size: 0.95em;">📅 EMI Tracking (<%= camEmiRangeLabel %>)</div>
+                                            <% if (!camEmiTrackingData || camMonths.length === 0) { %>
+                                            <div style="margin-bottom: 10px; padding: 8px; background: #fff3e0; border-radius: 4px; font-size: 0.85em; color: #e65100;">
+                                                EMI tracking not generated yet. Open the <strong>Debt Profile</strong> analysis panel and click <strong>🔄 Refresh EMI Tracking</strong> to read the statements.
+                                            </div>
+                                            <% } %>
                                             <div style="overflow-x:auto;">
                                             <table border="1" style="width:100%;border-collapse:collapse;background:#fff;font-size:0.75em;">
                                                 <thead>
@@ -4636,9 +4641,18 @@
                     %>
                     <h4 style="margin-bottom: 15px; color: #1976d2;">📅 EMI Tracking (<%= emiRangeLabel %>)</h4>
 
+                    <% const emiBankingCount = (proposal.documents || []).filter(d => d.category === 'banking' && d.extractedText).length; %>
                     <% if (!emiTrackingData && debtProfilesList.length > 0) { %>
                     <div style="margin-bottom: 15px; padding: 10px; background: #fff3e0; border-radius: 4px; font-size: 0.85em; color: #e65100;">
-                        EMI tracking hasn't been generated yet. Click <strong>🔄 Refresh EMI Tracking</strong> below to extract transactions and match EMIs.
+                        <% if (emiBankingCount === 0) { %>
+                            No bank statements found for this proposal. Upload bank statements in Stage 2 (category <strong>Banking</strong>), then they'll be read for EMI tracking.
+                        <% } else { %>
+                            EMI tracking couldn't be generated from the <%= emiBankingCount %> bank statement(s) — no transactions were read. Click <strong>🔄 Refresh EMI Tracking</strong> to retry extraction.
+                        <% } %>
+                    </div>
+                    <% } else if (emiTrackingData) { %>
+                    <div style="margin-bottom: 10px; font-size: 0.8em; color: #666;">
+                        Read <strong><%= emiTrackingData.txnCount || 0 %></strong> transactions (<%= emiTrackingData.debitCount || 0 %> debits) from <%= emiBankingCount %> statement(s); matched <strong><%= emiTrackingData.matchedCount || 0 %></strong> of <%= debtProfilesList.length %> loans.
                     </div>
                     <% } %>
                     
