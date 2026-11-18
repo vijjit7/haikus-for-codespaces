@@ -4167,7 +4167,17 @@ function aggregateBankMonthly(txns) {
 // are split into line-aligned chunks (so no transaction row is cut) and the results de-duplicated,
 // since a single request can't reliably read hundreds of rows at once.
 async function extractBankMonthlyFromText(fullText) {
-  if (!fullText || fullText.trim().length === 0) return null;
+  const txns = await extractBankTxnsFromText(fullText);
+  if (!txns || txns.length === 0) return null;
+  return aggregateBankMonthly(txns);
+}
+
+// Extract the raw per-transaction list (date, type, amount, balance, desc) from a bank
+// statement's OCR text using Gemini. This is the structured data the EMI tracker matches
+// against — no regex/string search on the flattened PDF text. Long statements are split
+// into line-aligned chunks and de-duplicated by running balance.
+async function extractBankTxnsFromText(fullText) {
+  if (!fullText || fullText.trim().length === 0) return [];
   // Keep chunks small enough that the model's JSON reply (one object per transaction) fits well
   // within max_tokens; otherwise the array truncates and we lose rows. Overlap a few trailing lines
   // into the next chunk so the running-balance context — hence debit/credit direction — survives
@@ -4204,8 +4214,155 @@ async function extractBankMonthlyFromText(fullText) {
       }
     }
   }
-  if (allTxns.length === 0) return null;
-  return aggregateBankMonthly(allTxns);
+  return allTxns;
+}
+
+// Ask Gemini to match each loan's monthly EMI to the statement's debit transactions.
+// Input is the already-structured transaction list (date/amount/desc) — the model only
+// decides which debit is which loan's EMI and on what date, so there is no regex/string
+// search over raw OCR text. Returns { "<loanId>": ["DD-MM-YYYY", ...], ... }.
+async function matchEmisWithAI(loans, debits) {
+  if (!loans || !loans.length || !debits || !debits.length) return {};
+
+  // Keep the prompt bounded: newest debits first, cap the row count.
+  const parseD = (s) => { const m = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(String(s || '').trim()); return m ? (parseInt(m[3]) * 372 + parseInt(m[2]) * 31 + parseInt(m[1])) : 0; };
+  const sorted = debits.slice().sort((a, b) => parseD(b.date) - parseD(a.date)).slice(0, 1500);
+  const debitLines = sorted
+    .map(d => `${d.date}|${Math.round(Math.abs(parseFloat(d.amount) || 0))}|${String(d.desc || '').replace(/\s+/g, ' ').trim().slice(0, 80)}`)
+    .join('\n');
+  const loanLines = loans
+    .map(l => `id=${l.id} | lender=${l.bank || '?'} | emi=${Math.round(l.emi)} | start=${l.emiStartDate || '?'}`)
+    .join('\n');
+
+  const prompt = `You are matching loan EMI repayments to bank-statement DEBIT transactions.
+
+For each LOAN below, identify which DEBIT transactions are that loan's monthly EMI repayment. Use BOTH signals together:
+- Amount: the debit amount equals the loan's EMI. Floating-rate loans reset, so the amount may drift by up to ~20% across months and still be the same EMI.
+- Lender: the loan's lender name (or a common alias/abbreviation — e.g. "ICICI"→"ICICI BANK", "Kotak"→"KOTAK MAHINDRA", "Mahindra Finance"→"MMFSL", "Aditya Birla"→"ABFL/BIRLA") appears in the transaction particulars, OR the debit is an EMI / NACH / ACH / ECS / SI / auto-debit posted on a consistent day each month.
+
+A loan is normally repaid ONCE per month, on roughly the same day. Choose the single best-matching debit per calendar month. Only use dates that actually appear in the DEBIT TRANSACTIONS — never invent a date. If a month has no matching debit, omit it. Do not match the same debit transaction to more than one loan.
+
+LOANS:
+${loanLines}
+
+DEBIT TRANSACTIONS (date|amount|particulars):
+${debitLines}
+
+Respond ONLY with valid JSON mapping each loan id to the exact dates (as they appear above) of its EMI payments:
+{
+  "matches": [
+    { "id": "<loan id>", "dates": ["DD-MM-YYYY", "DD-MM-YYYY"] }
+  ]
+}`;
+
+  const res = await extractWithDocumentAI(prompt, 'emi-match', []);
+  const map = {};
+  if (res && res.success && res.data && Array.isArray(res.data.matches)) {
+    for (const m of res.data.matches) {
+      if (m && m.id != null && Array.isArray(m.dates)) {
+        map[String(m.id)] = m.dates.filter(d => /^\d{1,2}-\d{1,2}-\d{4}$/.test(String(d || '').trim()));
+      }
+    }
+  }
+  return map;
+}
+
+// Signature of the inputs that affect EMI tracking (statement set + loan EMIs). Used to skip
+// recomputation when nothing relevant changed between page loads.
+function emiTrackingSignature(bankingDocs, profiles) {
+  const d = (bankingDocs || []).map(x => `${x.filename}:${(x.extractedText || '').length}`).sort().join(',');
+  const p = (profiles || []).map(x => `${x._id}:${Math.round(x.emi || 0)}`).sort().join(',');
+  return d + '||' + p;
+}
+
+// Build the whole EMI-tracking grid server-side: extract structured transactions for each
+// banking statement (via Gemini), anchor a 12-month window to the newest transaction, and let
+// Gemini match each loan's EMI to its monthly debit dates. Returns a plain object the EJS
+// template renders directly (no regex/string matching in the view). Returns null if there is
+// nothing to track. May persist freshly-extracted transactions back onto the proposal docs.
+async function computeEmiTracking(proposal, debtProfiles, options = {}) {
+  const allowExtraction = options.allowExtraction !== false; // default: may run OCR→txn extraction
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const bankingDocs = (proposal.documents || []).filter(d => d.category === 'banking' && d.extractedText);
+  const profiles = (debtProfiles || []).filter(p => p.emi && p.emi > 0);
+  if (!bankingDocs.length || !profiles.length) return null;
+
+  // Gather structured transactions — reuse stored rows, extract (and cache) where missing.
+  // When allowExtraction is false (e.g. a plain page load), skip the slow extraction and use
+  // only whatever transactions were already stored; if none exist yet, bail so the caller can
+  // prompt the user to run "Refresh EMI Tracking" (which extracts with allowExtraction = true).
+  let allTxns = [];
+  let docsMutated = false;
+  for (const doc of bankingDocs) {
+    let txns = Array.isArray(doc.bankTxns) ? doc.bankTxns : null;
+    if (!txns) {
+      if (!allowExtraction) continue;
+      try {
+        txns = await extractBankTxnsFromText(doc.extractedText);
+      } catch (e) {
+        console.error('EMI tracking: txn extraction failed for', doc.originalName, e.message);
+        txns = [];
+      }
+      // Persist onto the live proposal document so later renders reuse it.
+      const liveDoc = (proposal.documents || []).find(d => d === doc || d.filename === doc.filename);
+      if (liveDoc) { liveDoc.bankTxns = txns; docsMutated = true; }
+    }
+    if (txns && txns.length) allTxns = allTxns.concat(txns);
+  }
+  if (!allTxns.length && !allowExtraction) return null;
+  if (!allTxns.length) return docsMutated ? { _docsMutated: true, profiles: {}, months: [], rangeLabel: '' } : null;
+
+  const parse = (s) => { const m = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(String(s || '').trim()); return m ? { d: +m[1], mo: +m[2] - 1, y: +m[3] } : null; };
+
+  // Anchor the window to the newest (non-future) transaction month.
+  const now = new Date();
+  const nowKey = now.getFullYear() * 12 + now.getMonth();
+  let anchorKey = null;
+  allTxns.forEach(t => { const p = parse(t.date); if (!p || p.mo < 0 || p.mo > 11) return; const k = p.y * 12 + p.mo; if (k > nowKey) return; if (anchorKey === null || k > anchorKey) anchorKey = k; });
+  if (anchorKey === null) return null;
+
+  const mod = (n, m) => ((n % m) + m) % m;
+  const months = [];
+  for (let i = 0; i < 12; i++) { const k = anchorKey - i; months.push({ month: mod(k, 12), year: Math.floor(k / 12), label: monthNames[mod(k, 12)] }); }
+  const anchor = months[0], oldest = months[11];
+  const rangeLabel = `${monthNames[anchor.month]}'${String(anchor.year).slice(-2)} to ${monthNames[oldest.month]}'${String(oldest.year).slice(-2)}`;
+
+  // Match EMIs against debit transactions via AI.
+  const debits = allTxns.filter(t => t.type === 'D');
+  const loans = profiles.map(p => ({ id: String(p._id), bank: p.bank || '', emi: p.emi, emiStartDate: p.emiStartDate || '' }));
+  let matchMap = {};
+  try {
+    matchMap = await matchEmisWithAI(loans, debits);
+  } catch (e) {
+    console.error('EMI tracking: AI match failed:', e.message);
+  }
+
+  const windowKeys = new Set(months.map(m => m.month + '-' + m.year));
+  const resultProfiles = {};
+  for (const p of profiles) {
+    const id = String(p._id);
+    const dates = matchMap[id] || [];
+    const byMonth = {};
+    dates.forEach(ds => {
+      const pr = parse(ds);
+      if (!pr) return;
+      const key = pr.mo + '-' + pr.y;
+      if (!windowKeys.has(key)) return;
+      if (!byMonth[key]) byMonth[key] = String(pr.d).padStart(2, '0'); // keep first day found per month
+    });
+    resultProfiles[id] = { foundInStmt: Object.keys(byMonth).length > 0, dates: byMonth };
+  }
+
+  return {
+    computedAt: new Date().toISOString(),
+    signature: emiTrackingSignature(bankingDocs, profiles),
+    rangeLabel,
+    anchorMonth: anchor.month,
+    anchorYear: anchor.year,
+    months,
+    profiles: resultProfiles,
+    _docsMutated: docsMutated
+  };
 }
 
 async function extractWithDocumentAI(text, documentType, tables = []) {
@@ -4430,7 +4587,7 @@ Respond ONLY with valid JSON in this exact format:
   "periodTo": "DD/MM/YYYY" or null
 }`;
     } else if (documentType === 'bank-statement-transactions') {
-      prompt = `Below is a bank statement. Each transaction line has a date, particulars, an amount in EITHER the Debit or Credit column, and a running Balance (often suffixed CR or DR). For EVERY transaction output exactly one row. Decide debit vs credit using the running balance: if the balance DECREASED from the previous line it is a debit ("D"); if it INCREASED it is a credit ("C"). Ignore opening-balance / brought-forward lines and any non-transaction rows. Amounts use Indian digit grouping (e.g. 2,66,65,638.00) — output them as plain numbers without commas.
+      prompt = `Below is a bank statement. Each transaction line has a date, particulars, an amount in EITHER the Debit or Credit column, and a running Balance (often suffixed CR or DR). For EVERY transaction output exactly one row. Decide debit vs credit using the running balance: if the balance DECREASED from the previous line it is a debit ("D"); if it INCREASED it is a credit ("C"). Ignore opening-balance / brought-forward lines and any non-transaction rows. Amounts use Indian digit grouping (e.g. 2,66,65,638.00) — output them as plain numbers without commas. Also capture the transaction particulars/narration as "desc" — the description text for that row (payee/lender name, UPI/NACH/ACH reference, cheque no, etc.), trimmed to roughly 80 characters.
 
 Document Text:
 ${text.substring(0, 30000)}
@@ -4438,7 +4595,7 @@ ${text.substring(0, 30000)}
 Be exhaustive — include ALL transactions in date order. Respond ONLY with valid JSON:
 {
   "txns": [
-    { "date": "DD-MM-YYYY", "type": "C", "amount": 0, "balance": 0 }
+    { "date": "DD-MM-YYYY", "type": "C", "amount": 0, "balance": 0, "desc": "particulars text" }
   ]
 }`;
     } else if (documentType === 'title-document') {
@@ -4524,6 +4681,9 @@ Respond ONLY with valid JSON:
     }
   ]
 }`;
+    } else if (documentType === 'emi-match') {
+      // Caller supplies the fully-built prompt (loan list + structured transactions).
+      prompt = text;
     }
 
     // Retry logic for rate limiting
@@ -4545,7 +4705,7 @@ Respond ONLY with valid JSON:
               }
             ],
             temperature: 0.1, // Low temperature for consistent extraction
-            max_tokens: documentType === 'bank-statement-transactions' ? 8000 : (documentType === 'title-document' || documentType === 'other-income') ? 4000 : 1000
+            max_tokens: (documentType === 'bank-statement-transactions' || documentType === 'emi-match') ? 8000 : (documentType === 'title-document' || documentType === 'other-income') ? 4000 : 1000
           },
           {
             headers: {
@@ -4554,7 +4714,7 @@ Respond ONLY with valid JSON:
               'HTTP-Referer': 'http://localhost:3000',
               'X-Title': 'Customer Profiling App'
             },
-            timeout: documentType === 'bank-statement-transactions' ? 120000 : documentType === 'title-document' ? 60000 : 30000
+            timeout: (documentType === 'bank-statement-transactions' || documentType === 'emi-match') ? 120000 : documentType === 'title-document' ? 60000 : 30000
           }
         );
         
@@ -7836,19 +7996,21 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
             proposal.documents[i].pages = pdfResult.numPages;
             proposal.documents[i].extractionMethod = pdfResult.method || 'pymupdf';
 
-            // Monthly credits/debits via Gemini per-transaction extraction (replaces the fragile
-            // client-side regex parser, which can't separate debit/credit once the PDF text is
-            // flattened). Gemini reads each row; we sum per month deterministically.
+            // Per-transaction extraction via Gemini (replaces the fragile client-side regex
+            // parser). Store the structured rows (date/amount/desc/type) — the EMI tracker
+            // matches against these — plus the per-month totals aggregated from the same pass.
             try {
-              const bm = await extractBankMonthlyFromText(fullText);
-              if (bm) {
+              const txns = await extractBankTxnsFromText(fullText);
+              proposal.documents[i].bankTxns = txns || [];
+              if (txns && txns.length) {
+                const bm = aggregateBankMonthly(txns);
                 proposal.documents[i].bankMonthly = bm;
-                console.log(`✓ Bank monthly via AI: ${bm.txnCount} txns, credits ₹${bm.totalCredits}, debits ₹${bm.totalDebits}`);
+                console.log(`✓ Bank txns via AI: ${bm.txnCount} txns, credits ₹${bm.totalCredits}, debits ₹${bm.totalDebits}`);
               } else {
-                console.log('⚠ AI transaction extraction returned no txns; leaving regex parser to handle monthly totals');
+                console.log('⚠ AI transaction extraction returned no txns');
               }
             } catch (bmErr) {
-              console.error('Bank monthly AI extraction error:', bmErr.message);
+              console.error('Bank transaction AI extraction error:', bmErr.message);
             }
 
             extractionResults.push({
@@ -7871,12 +8033,23 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
     }
     
     if (processedCount > 0) {
-      await updateProposal(proposalId, { documents: proposal.documents });
+      // Rebuild AI EMI tracking now that statements were re-extracted (reuses the bankTxns
+      // we just stored, so no second extraction pass — just the match step).
+      try {
+        const debtProfiles = await DebtProfile.find({ proposalId }).sort({ sNo: 1 });
+        const computed = await computeEmiTracking(proposal, debtProfiles);
+        if (computed) proposal.emiTracking = computed;
+      } catch (e) {
+        console.error('EMI tracking rebuild error (reprocess-banking):', e.message);
+      }
+      const update = { documents: proposal.documents };
+      if (proposal.emiTracking) update.emiTracking = proposal.emiTracking;
+      await updateProposal(proposalId, update);
     }
-    
-    res.json({ 
-      success: true, 
-      processedCount, 
+
+    res.json({
+      success: true,
+      processedCount,
       message: `Extracted bank details from ${processedCount} statement(s)`,
       extractionResults
     });
@@ -8827,8 +9000,31 @@ app.get('/stage3/:proposalId', async (req, res) => {
   } catch (err) {
     console.error('Error fetching debt profiles for stage 3:', err);
   }
-  
-  res.render('stage3-cam', { proposal, debtProfiles });
+
+  // EMI tracking is computed server-side (Gemini-matched) and cached on the proposal.
+  // Recompute only when the statement set or loan EMIs changed since the last render.
+  let emiTracking = proposal.emiTracking || null;
+  try {
+    const bankingDocs = (proposal.documents || []).filter(d => d.category === 'banking' && d.extractedText);
+    const trackProfiles = debtProfiles.filter(p => p.emi && p.emi > 0);
+    if (bankingDocs.length && trackProfiles.length) {
+      const sig = emiTrackingSignature(bankingDocs, trackProfiles);
+      if (!emiTracking || emiTracking.signature !== sig) {
+        // Page load: match only against already-extracted transactions (no slow OCR extraction).
+        const computed = await computeEmiTracking(proposal, debtProfiles, { allowExtraction: false });
+        if (computed) {
+          emiTracking = computed;
+          const persist = { emiTracking: computed };
+          if (computed._docsMutated) persist.documents = proposal.documents;
+          await updateProposal(req.params.proposalId, persist);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('EMI tracking compute error (stage 3):', err.message);
+  }
+
+  res.render('stage3-cam', { proposal, debtProfiles, emiTracking });
 });
 
 // Stage 3: Download entire proposal as ZIP with categorized folders
