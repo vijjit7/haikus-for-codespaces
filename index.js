@@ -4220,8 +4220,8 @@ async function extractBankTxnsFromText(fullText) {
 // Raw text completion via OpenRouter (Gemini 2.5 Flash). Unlike extractWithDocumentAI this does
 // not force/parse JSON — used when we want compact line output. Retries on rate limits.
 async function callGeminiText(prompt, maxTokens = 8000, timeoutMs = 120000) {
-  let delay = 8000;
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  let delay = 6000;
+  for (let attempt = 1; attempt <= 5; attempt++) {
     try {
       const response = await axios.post(
         OPENROUTER_API_URL,
@@ -4230,7 +4230,8 @@ async function callGeminiText(prompt, maxTokens = 8000, timeoutMs = 120000) {
       );
       return response.data.choices[0].message.content || '';
     } catch (error) {
-      if (error.response && error.response.status === 429 && attempt < 3) { await new Promise(r => setTimeout(r, delay)); delay *= 2; continue; }
+      const status = error.response && error.response.status;
+      if ((status === 429 || status === 503 || status === 500) && attempt < 5) { await new Promise(r => setTimeout(r, delay)); delay = Math.min(delay * 2, 45000); continue; }
       throw error;
     }
   }
@@ -4244,9 +4245,10 @@ async function callGeminiText(prompt, maxTokens = 8000, timeoutMs = 120000) {
 // compatible with aggregateBankMonthly.
 async function extractBankTxnsCompact(fullText) {
   if (!fullText || !fullText.trim()) return [];
-  // Small chunks → each reply stays well under the model's output-token cap, so no transaction
-  // rows are lost to truncation.
-  const CHUNK = 16000;
+  // Chunk size balances two failure modes: too large truncates the reply (dropping rows), too
+  // small means many calls and rate-limit failures. ~30k chars keeps each reply well under the
+  // output-token cap while keeping the call count low.
+  const CHUNK = 30000;
   const OVERLAP_LINES = 2;
   const lines = fullText.split('\n');
   const chunks = [];
@@ -9258,7 +9260,8 @@ app.get('/stage3/:proposalId/emi-debug', async (req, res) => {
         periodFrom: d.extractedDetails ? d.extractedDetails.periodFrom : null,
         periodTo: d.extractedDetails ? d.extractedDetails.periodTo : null,
         hasBankTxns: Array.isArray(d.bankTxns),
-        bankTxnCount: Array.isArray(d.bankTxns) ? d.bankTxns.length : null
+        bankTxnCount: Array.isArray(d.bankTxns) ? d.bankTxns.length : null,
+        bankMonthly: d.bankMonthly ? { months: (d.bankMonthly.months || []).length, totalCredits: Math.round(d.bankMonthly.totalCredits || 0), totalDebits: Math.round(d.bankMonthly.totalDebits || 0), txnCount: d.bankMonthly.txnCount } : null
       })),
       emiTracking: proposal.emiTracking ? {
         rangeLabel: proposal.emiTracking.rangeLabel,
@@ -9286,6 +9289,17 @@ app.get('/stage3/:proposalId/emi-debug', async (req, res) => {
             } catch (e) { perStatement.push({ doc: doc.originalName, error: e.message }); }
           }
           return { loanLegend: legend, perStatement };
+        } catch (e) { return { error: e.message }; }
+      })() : undefined,
+      // Add ?runmonthly=1 to re-extract monthly totals for the first banking statement and return
+      // the result — confirms the credit/debit classification is working on the actual text.
+      sampleMonthly: req.query.runmonthly ? await (async () => {
+        try {
+          const doc = bankingDocs.find(d => d.extractedText);
+          if (!doc) return { error: 'no banking doc with extractedText' };
+          const bm = await extractMonthlyTotalsFromText(doc.extractedText);
+          if (!bm) return { doc: doc.originalName, error: 'no transactions extracted' };
+          return { doc: doc.originalName, totalCredits: Math.round(bm.totalCredits), totalDebits: Math.round(bm.totalDebits), txnCount: bm.txnCount, months: bm.months.map(m => ({ m: m.month, y: m.year, cr: Math.round(m.credits), dr: Math.round(m.debits), nCr: m.creditCount, nDr: m.debitCount })) };
         } catch (e) { return { error: e.message }; }
       })() : undefined
     });

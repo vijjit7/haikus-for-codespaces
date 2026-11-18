@@ -3557,6 +3557,12 @@
                             <p>No banking documents uploaded yet.</p>
                         </div>
                     <% } else { %>
+                        <div style="margin-bottom: 20px;">
+                            <button onclick="recomputeBankMonthly()" style="padding: 8px 15px; background: #1976d2; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9em;">
+                                🔄 Recompute Monthly Credits/Debits (AI)
+                            </button>
+                            <span style="margin-left: 10px; font-size: 0.8em; color: #888;">Reads each statement's transactions and sums per month. Takes a minute or two.</span>
+                        </div>
                         <% accountsList.forEach((account, idx) => { %>
                             <div style="margin-bottom: 40px; padding: 20px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid #3498db;">
                                 <!-- Account Header -->
@@ -5773,6 +5779,29 @@
                 alert('Error refreshing EMI tracking: ' + error.message);
                 btn.innerHTML = originalText;
                 btn.disabled = false;
+            }
+        }
+
+        // Recompute per-month credit/debit totals (AI enumerates transactions, sums in code).
+        async function recomputeBankMonthly() {
+            const btn = event.target;
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '⏳ Reading statements…';
+            btn.disabled = true;
+            try {
+                const response = await fetch(`/stage2/${proposalId}/extract-bank-monthly`, { method: 'POST' });
+                const result = await response.json();
+                if (result.success) {
+                    const lines = (result.results || []).map(r => r.error ? `${r.fileName}: ERROR ${r.error}` : `${r.fileName}: ${r.months} months, Cr ₹${(r.totalCredits||0).toLocaleString('en-IN')}, Dr ₹${(r.totalDebits||0).toLocaleString('en-IN')}`).join('\n');
+                    alert(`Monthly totals recomputed for ${result.processedCount} statement(s).\n\n${lines}`);
+                    location.reload();
+                } else {
+                    alert('Error: ' + (result.error || 'Failed to recompute monthly totals'));
+                    btn.innerHTML = originalText; btn.disabled = false;
+                }
+            } catch (error) {
+                alert('Error recomputing monthly totals: ' + error.message);
+                btn.innerHTML = originalText; btn.disabled = false;
             }
         }
 
