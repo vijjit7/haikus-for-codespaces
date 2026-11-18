@@ -4231,14 +4231,19 @@ async function matchEmisInStatementText(loans, statementText) {
 
   const prompt = `You are reading ONE bank statement (OCR text) to find loan EMI repayments.
 
-The borrower has these loans:
+The borrower has these loans (id | lender | EMI amount | first EMI date):
 ${loanLines}
 
-TASK: For EACH loan, find every date in THIS statement on which that loan's EMI was debited. A match needs BOTH:
-- Amount: the debited amount is close to the loan's EMI. Floating-rate loans reset, so allow up to ~20% difference across months and still count it.
-- Lender: the narration/particulars identify that lender — its name or a common alias/abbreviation (e.g. "ICICI"→"ICICI BANK", "Kotak"→"KOTAK MAHINDRA / KOTAK PRIME", "Mahindra Finance"→"MMFSL / M&M FIN", "Aditya Birla"→"ABFL / BIRLA FINANCE") — OR the debit is a NACH / ACH / ECS / SI / EMI auto-debit posted on a consistent day each month.
+TASK: Work through EVERY loan id one by one. For each, scan the WHOLE statement for the monthly debits that repay that loan, and return the date of each.
 
-A loan is normally debited ONCE per month. Use only dates that actually appear in this statement; never invent a date. Ignore credits and non-EMI debits. Also report the latest transaction date you can see in this statement as "latestTxnDate".
+How to identify a loan's EMI debit — the AMOUNT is the primary signal:
+- A debit whose amount matches the loan's EMI (allow up to ~20% difference, since floating-rate loans reset) AND that recurs on roughly the SAME DAY each month is that loan's EMI. ATTRIBUTE IT EVEN IF the narration does NOT spell out the lender's name — ECS / NACH / ACH / SI / auto-debit / UPI mandate entries very often show only a mandate or reference number, not the lender.
+- The lender name in the narration is a helpful confirmation when present. Recognise common aliases/abbreviations, e.g. "ICICI"→"ICICI BANK", "Kotak"→"KOTAK MAHINDRA / KOTAK PRIME", "Mahindra Finance"→"MMFSL / M&M FIN / MAHINDRA & MAHINDRA FIN / MAHINDRA FINANCIAL", "Aditya Birla"→"ABFL / BIRLA FINANCE / ADITYA BIRLA FIN".
+- Two different loans can have the same lender but different EMI amounts — keep them separate by amount.
+
+A loan is normally debited ONCE per month, on a consistent day. Use only dates that actually appear in this statement; never invent a date. Ignore credits, small charges, and one-off debits that don't recur. Also report the latest transaction date you can see in this statement as "latestTxnDate".
+
+Return an entry for EVERY loan id (use an empty "dates" array if you found none in this statement).
 
 BANK STATEMENT TEXT:
 ${statementText}
