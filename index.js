@@ -4252,7 +4252,7 @@ Respond ONLY with valid JSON:
 }`;
 
   const res = await extractWithDocumentAI(prompt, 'emi-match', []);
-  if (!res || !res.success || !res.data) return empty;
+  if (!res || !res.success || !res.data) return null; // hard failure — caller treats as "no read"
   const map = {};
   if (Array.isArray(res.data.matches)) {
     for (const m of res.data.matches) {
@@ -4288,7 +4288,9 @@ async function computeEmiTracking(proposal, debtProfiles) {
   const now = new Date();
   const nowKey = now.getFullYear() * 12 + now.getMonth();
 
-  const loans = profiles.map(p => ({ id: String(p._id), bank: p.bank || '', emi: p.emi, emiStartDate: p.emiStartDate || '' }));
+  // Use small integer ids (the loan's position) in the prompt — LLMs echo these back reliably,
+  // whereas long Mongo ObjectIds get mangled, which would silently drop every match.
+  const loans = profiles.map((p, i) => ({ id: String(i), bank: p.bank || '', emi: p.emi, emiStartDate: p.emiStartDate || '' }));
 
   // Read each statement directly (chunked only for very long OCR text — Gemini 2.5 Flash has a
   // large context, so a statement is usually 1-3 calls, not one call per transaction row).
@@ -4336,9 +4338,8 @@ async function computeEmiTracking(proposal, debtProfiles) {
   const windowKeys = new Set(months.map(m => m.month + '-' + m.year));
   const resultProfiles = {};
   let emiDatesFound = 0;
-  for (const p of profiles) {
-    const id = String(p._id);
-    const set = perLoanDates[id] || new Set();
+  profiles.forEach((p, i) => {
+    const set = perLoanDates[String(i)] || new Set(); // matched by loan position, see above
     const byMonth = {};
     set.forEach(ds => {
       const pr = parse(ds);
@@ -4349,8 +4350,8 @@ async function computeEmiTracking(proposal, debtProfiles) {
       if (!byMonth[key] || pr.d < parseInt(byMonth[key], 10)) byMonth[key] = String(pr.d).padStart(2, '0');
     });
     emiDatesFound += Object.keys(byMonth).length;
-    resultProfiles[id] = { foundInStmt: Object.keys(byMonth).length > 0, dates: byMonth };
-  }
+    resultProfiles[String(p._id)] = { foundInStmt: Object.keys(byMonth).length > 0, dates: byMonth };
+  });
 
   const matchedCount = Object.values(resultProfiles).filter(p => p.foundInStmt).length;
   console.log(`✓ EMI tracking: ${bankingDocs.length} statement(s), matched ${matchedCount}/${profiles.length} loans, ${emiDatesFound} EMI dates, window ${rangeLabel}`);
@@ -9080,15 +9081,24 @@ app.get('/stage3/:proposalId/emi-debug', async (req, res) => {
         matchedCount: proposal.emiTracking.matchedCount,
         computedAt: proposal.emiTracking.computedAt
       } : null,
-      // Add ?run=1 to actually read the first statement with Gemini and return the raw result —
-      // confirms whether the AI read itself works for these documents.
+      // Add ?run=1 to read each statement (first 120k chars) with Gemini and return the raw
+      // per-statement result — shows whether the AI read works and which statement has which EMIs.
       sampleRun: req.query.run ? await (async () => {
         try {
-          const doc = bankingDocs.find(d => d.extractedText);
-          if (!doc) return { error: 'no banking doc with extractedText' };
-          const loans = debtProfiles.filter(p => p.emi && p.emi > 0).map(p => ({ id: String(p._id), bank: p.bank || '', emi: p.emi, emiStartDate: p.emiStartDate || '' }));
-          const r = await matchEmisInStatementText(loans, (doc.extractedText || '').slice(0, 120000));
-          return { doc: doc.originalName, loanCount: loans.length, latestTxnDate: r.latestTxnDate, matchedLoans: Object.keys(r.matches).length, matches: r.matches };
+          const profs = debtProfiles.filter(p => p.emi && p.emi > 0);
+          const loans = profs.map((p, i) => ({ id: String(i), bank: p.bank || '', emi: p.emi, emiStartDate: p.emiStartDate || '' }));
+          const legend = profs.map((p, i) => `${i}=${p.bank}(${Math.round(p.emi)})`);
+          const docsWithText = bankingDocs.filter(d => d.extractedText);
+          const perStatement = [];
+          for (const doc of docsWithText) {
+            try {
+              const r = await matchEmisInStatementText(loans, (doc.extractedText || '').slice(0, 120000));
+              if (!r) { perStatement.push({ doc: doc.originalName, error: 'AI read failed (null)' }); continue; }
+              const totalDates = Object.values(r.matches).reduce((a, d) => a + d.length, 0);
+              perStatement.push({ doc: doc.originalName, latestTxnDate: r.latestTxnDate, matchedLoans: Object.keys(r.matches).length, totalDates, matches: r.matches });
+            } catch (e) { perStatement.push({ doc: doc.originalName, error: e.message }); }
+          }
+          return { loanLegend: legend, perStatement };
         } catch (e) { return { error: e.message }; }
       })() : undefined
     });
