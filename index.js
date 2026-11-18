@@ -8047,22 +8047,10 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
             proposal.documents[i].pages = pdfResult.numPages;
             proposal.documents[i].extractionMethod = pdfResult.method || 'pymupdf';
 
-            // Per-transaction extraction via Gemini (replaces the fragile client-side regex
-            // parser). Store the structured rows (date/amount/desc/type) — the EMI tracker
-            // matches against these — plus the per-month totals aggregated from the same pass.
-            try {
-              const txns = await extractBankTxnsFromText(fullText);
-              proposal.documents[i].bankTxns = txns || [];
-              if (txns && txns.length) {
-                const bm = aggregateBankMonthly(txns);
-                proposal.documents[i].bankMonthly = bm;
-                console.log(`✓ Bank txns via AI: ${bm.txnCount} txns, credits ₹${bm.totalCredits}, debits ₹${bm.totalDebits}`);
-              } else {
-                console.log('⚠ AI transaction extraction returned no txns');
-              }
-            } catch (bmErr) {
-              console.error('Bank transaction AI extraction error:', bmErr.message);
-            }
+            // NOTE: per-transaction extraction (bankMonthly) is intentionally NOT done here — it
+            // fires many chunked Gemini calls per statement and was making this button hang. This
+            // route now only extracts the statement summary (bank name / account / period). The
+            // per-month totals are computed separately by POST /stage2/:id/extract-bank-monthly.
 
             extractionResults.push({
               fileName: doc.originalName,
@@ -8098,6 +8086,43 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
     });
   } catch (error) {
     console.error('Bank statement reprocess error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Heavy, separate step: per-transaction extraction to build each statement's monthly
+// credit/debit totals (bankMonthly). Split out of reprocess-banking so the bank-statement
+// summary stays fast; call this only when the monthly-totals analysis is needed.
+app.post('/stage2/:proposalId/extract-bank-monthly', async (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const proposal = await getProposalById(proposalId);
+    if (!proposal) return res.status(404).json({ success: false, error: 'Proposal not found' });
+
+    let processedCount = 0;
+    const results = [];
+    const docs = proposal.documents || [];
+    for (let i = 0; i < docs.length; i++) {
+      const doc = docs[i];
+      if (doc.category !== 'banking' || !doc.extractedText) continue;
+      try {
+        const txns = await extractBankTxnsFromText(doc.extractedText);
+        doc.bankTxns = txns || [];
+        if (txns && txns.length) {
+          doc.bankMonthly = aggregateBankMonthly(txns);
+          processedCount++;
+          results.push({ fileName: doc.originalName, txnCount: txns.length });
+        } else {
+          results.push({ fileName: doc.originalName, txnCount: 0 });
+        }
+      } catch (e) {
+        results.push({ fileName: doc.originalName, error: e.message });
+      }
+    }
+    await updateProposal(proposalId, { documents: docs });
+    res.json({ success: true, processedCount, results });
+  } catch (error) {
+    console.error('extract-bank-monthly error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
