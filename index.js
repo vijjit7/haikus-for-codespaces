@@ -4217,54 +4217,53 @@ async function extractBankTxnsFromText(fullText) {
   return allTxns;
 }
 
-// Ask Gemini to match each loan's monthly EMI to the statement's debit transactions.
-// Input is the already-structured transaction list (date/amount/desc) — the model only
-// decides which debit is which loan's EMI and on what date, so there is no regex/string
-// search over raw OCR text. Returns { "<loanId>": ["DD-MM-YYYY", ...], ... }.
-async function matchEmisWithAI(loans, debits) {
-  if (!loans || !loans.length || !debits || !debits.length) return {};
+// Read ONE bank-statement text chunk and ask Gemini directly which dates each loan's EMI
+// cleared. This works straight off the OCR text — no separate transaction-extraction pass —
+// so it is far fewer calls than enumerating every row. Returns
+// { latestTxnDate: "DD-MM-YYYY"|null, matches: { "<loanId>": ["DD-MM-YYYY", ...] } }.
+async function matchEmisInStatementText(loans, statementText) {
+  const empty = { latestTxnDate: null, matches: {} };
+  if (!loans || !loans.length || !statementText || !statementText.trim()) return empty;
 
-  // Keep the prompt bounded: newest debits first, cap the row count.
-  const parseD = (s) => { const m = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(String(s || '').trim()); return m ? (parseInt(m[3]) * 372 + parseInt(m[2]) * 31 + parseInt(m[1])) : 0; };
-  const sorted = debits.slice().sort((a, b) => parseD(b.date) - parseD(a.date)).slice(0, 1500);
-  const debitLines = sorted
-    .map(d => `${d.date}|${Math.round(Math.abs(parseFloat(d.amount) || 0))}|${String(d.desc || '').replace(/\s+/g, ' ').trim().slice(0, 80)}`)
-    .join('\n');
   const loanLines = loans
     .map(l => `id=${l.id} | lender=${l.bank || '?'} | emi=${Math.round(l.emi)} | start=${l.emiStartDate || '?'}`)
     .join('\n');
 
-  const prompt = `You are matching loan EMI repayments to bank-statement DEBIT transactions.
+  const prompt = `You are reading ONE bank statement (OCR text) to find loan EMI repayments.
 
-For each LOAN below, identify which DEBIT transactions are that loan's monthly EMI repayment. Use BOTH signals together:
-- Amount: the debit amount equals the loan's EMI. Floating-rate loans reset, so the amount may drift by up to ~20% across months and still be the same EMI.
-- Lender: the loan's lender name (or a common alias/abbreviation — e.g. "ICICI"→"ICICI BANK", "Kotak"→"KOTAK MAHINDRA", "Mahindra Finance"→"MMFSL", "Aditya Birla"→"ABFL/BIRLA") appears in the transaction particulars, OR the debit is an EMI / NACH / ACH / ECS / SI / auto-debit posted on a consistent day each month.
-
-A loan is normally repaid ONCE per month, on roughly the same day. Choose the single best-matching debit per calendar month. Only use dates that actually appear in the DEBIT TRANSACTIONS — never invent a date. If a month has no matching debit, omit it. Do not match the same debit transaction to more than one loan.
-
-LOANS:
+The borrower has these loans:
 ${loanLines}
 
-DEBIT TRANSACTIONS (date|amount|particulars):
-${debitLines}
+TASK: For EACH loan, find every date in THIS statement on which that loan's EMI was debited. A match needs BOTH:
+- Amount: the debited amount is close to the loan's EMI. Floating-rate loans reset, so allow up to ~20% difference across months and still count it.
+- Lender: the narration/particulars identify that lender — its name or a common alias/abbreviation (e.g. "ICICI"→"ICICI BANK", "Kotak"→"KOTAK MAHINDRA / KOTAK PRIME", "Mahindra Finance"→"MMFSL / M&M FIN", "Aditya Birla"→"ABFL / BIRLA FINANCE") — OR the debit is a NACH / ACH / ECS / SI / EMI auto-debit posted on a consistent day each month.
 
-Respond ONLY with valid JSON mapping each loan id to the exact dates (as they appear above) of its EMI payments:
+A loan is normally debited ONCE per month. Use only dates that actually appear in this statement; never invent a date. Ignore credits and non-EMI debits. Also report the latest transaction date you can see in this statement as "latestTxnDate".
+
+BANK STATEMENT TEXT:
+${statementText}
+
+Respond ONLY with valid JSON:
 {
+  "latestTxnDate": "DD-MM-YYYY",
   "matches": [
     { "id": "<loan id>", "dates": ["DD-MM-YYYY", "DD-MM-YYYY"] }
   ]
 }`;
 
   const res = await extractWithDocumentAI(prompt, 'emi-match', []);
+  if (!res || !res.success || !res.data) return empty;
   const map = {};
-  if (res && res.success && res.data && Array.isArray(res.data.matches)) {
+  if (Array.isArray(res.data.matches)) {
     for (const m of res.data.matches) {
       if (m && m.id != null && Array.isArray(m.dates)) {
-        map[String(m.id)] = m.dates.filter(d => /^\d{1,2}-\d{1,2}-\d{4}$/.test(String(d || '').trim()));
+        const clean = m.dates.filter(d => /^\d{1,2}-\d{1,2}-\d{4}$/.test(String(d || '').trim())).map(d => String(d).trim());
+        if (clean.length) map[String(m.id)] = (map[String(m.id)] || []).concat(clean);
       }
     }
   }
-  return map;
+  const ltd = /^\d{1,2}-\d{1,2}-\d{4}$/.test(String(res.data.latestTxnDate || '').trim()) ? String(res.data.latestTxnDate).trim() : null;
+  return { latestTxnDate: ltd, matches: map };
 }
 
 // Signature of the inputs that affect EMI tracking (statement set + loan EMIs). Used to skip
@@ -4276,85 +4275,85 @@ function emiTrackingSignature(bankingDocs, profiles) {
 }
 
 // Build the whole EMI-tracking grid server-side: extract structured transactions for each
-// banking statement (via Gemini), anchor a 12-month window to the newest transaction, and let
-// Gemini match each loan's EMI to its monthly debit dates. Returns a plain object the EJS
-// template renders directly (no regex/string matching in the view). Returns null if there is
-// nothing to track. May persist freshly-extracted transactions back onto the proposal docs.
-async function computeEmiTracking(proposal, debtProfiles, options = {}) {
-  const allowExtraction = options.allowExtraction !== false; // default: may run OCR→txn extraction
+// banking statement, and let Gemini read each statement directly and report the dates each
+// loan's EMI cleared. Returns a plain object the EJS template renders directly (no regex/string
+// matching in the view). Returns null if there is nothing to track or every AI call failed.
+async function computeEmiTracking(proposal, debtProfiles) {
   const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const bankingDocs = (proposal.documents || []).filter(d => d.category === 'banking' && d.extractedText);
   const profiles = (debtProfiles || []).filter(p => p.emi && p.emi > 0);
   if (!bankingDocs.length || !profiles.length) return null;
 
-  // Gather structured transactions — reuse stored rows, extract (and cache) where missing.
-  // When allowExtraction is false (e.g. a plain page load), skip the slow extraction and use
-  // only whatever transactions were already stored; if none exist yet, bail so the caller can
-  // prompt the user to run "Refresh EMI Tracking" (which extracts with allowExtraction = true).
-  let allTxns = [];
-  let docsMutated = false;
-  for (const doc of bankingDocs) {
-    let txns = Array.isArray(doc.bankTxns) ? doc.bankTxns : null;
-    if (!txns) {
-      if (!allowExtraction) continue;
-      try {
-        txns = await extractBankTxnsFromText(doc.extractedText);
-      } catch (e) {
-        console.error('EMI tracking: txn extraction failed for', doc.originalName, e.message);
-        txns = [];
-      }
-      // Persist onto the live proposal document so later renders reuse it.
-      const liveDoc = (proposal.documents || []).find(d => d === doc || d.filename === doc.filename);
-      if (liveDoc) { liveDoc.bankTxns = txns; docsMutated = true; }
-    }
-    if (txns && txns.length) allTxns = allTxns.concat(txns);
-  }
-  if (!allTxns.length && !allowExtraction) return null;
-  if (!allTxns.length) return null;
-
   const parse = (s) => { const m = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(String(s || '').trim()); return m ? { d: +m[1], mo: +m[2] - 1, y: +m[3] } : null; };
-
-  // Anchor the window to the newest (non-future) transaction month.
   const now = new Date();
   const nowKey = now.getFullYear() * 12 + now.getMonth();
-  let anchorKey = null;
-  allTxns.forEach(t => { const p = parse(t.date); if (!p || p.mo < 0 || p.mo > 11) return; const k = p.y * 12 + p.mo; if (k > nowKey) return; if (anchorKey === null || k > anchorKey) anchorKey = k; });
-  if (anchorKey === null) return null;
+
+  const loans = profiles.map(p => ({ id: String(p._id), bank: p.bank || '', emi: p.emi, emiStartDate: p.emiStartDate || '' }));
+
+  // Read each statement directly (chunked only for very long OCR text — Gemini 2.5 Flash has a
+  // large context, so a statement is usually 1-3 calls, not one call per transaction row).
+  const CHUNK = 120000;
+  const perLoanDates = {}; // id -> Set of "DD-MM-YYYY"
+  let latestKey = null;
+  let anyCall = false, anySuccess = false;
+  for (const doc of bankingDocs) {
+    const text = doc.extractedText || '';
+    for (let i = 0; i < text.length; i += CHUNK) {
+      const chunk = text.slice(i, i + CHUNK);
+      anyCall = true;
+      let r;
+      try {
+        r = await matchEmisInStatementText(loans, chunk);
+      } catch (e) {
+        console.error('EMI tracking: statement read failed for', doc.originalName, e.message);
+        continue;
+      }
+      if (!r) continue;
+      anySuccess = true;
+      const lp = parse(r.latestTxnDate);
+      if (lp && lp.mo >= 0 && lp.mo <= 11) { const k = lp.y * 12 + lp.mo; if (k <= nowKey && (latestKey === null || k > latestKey)) latestKey = k; }
+      for (const [id, dates] of Object.entries(r.matches || {})) {
+        const set = perLoanDates[id] || (perLoanDates[id] = new Set());
+        dates.forEach(d => set.add(d));
+      }
+    }
+  }
+  if (!anySuccess) return null; // every AI call failed — let the caller show an error/notice
+
+  // Anchor the 12-month window to the newest statement/transaction month we saw. Fall back to
+  // the newest matched EMI date, then to the current month.
+  if (latestKey === null) {
+    Object.values(perLoanDates).forEach(set => set.forEach(ds => { const p = parse(ds); if (p && p.mo >= 0 && p.mo <= 11) { const k = p.y * 12 + p.mo; if (k <= nowKey && (latestKey === null || k > latestKey)) latestKey = k; } }));
+  }
+  if (latestKey === null) latestKey = nowKey;
 
   const mod = (n, m) => ((n % m) + m) % m;
   const months = [];
-  for (let i = 0; i < 12; i++) { const k = anchorKey - i; months.push({ month: mod(k, 12), year: Math.floor(k / 12), label: monthNames[mod(k, 12)] }); }
+  for (let i = 0; i < 12; i++) { const k = latestKey - i; months.push({ month: mod(k, 12), year: Math.floor(k / 12), label: monthNames[mod(k, 12)] }); }
   const anchor = months[0], oldest = months[11];
   const rangeLabel = `${monthNames[anchor.month]}'${String(anchor.year).slice(-2)} to ${monthNames[oldest.month]}'${String(oldest.year).slice(-2)}`;
 
-  // Match EMIs against debit transactions via AI.
-  const debits = allTxns.filter(t => t.type === 'D');
-  const loans = profiles.map(p => ({ id: String(p._id), bank: p.bank || '', emi: p.emi, emiStartDate: p.emiStartDate || '' }));
-  let matchMap = {};
-  try {
-    matchMap = await matchEmisWithAI(loans, debits);
-  } catch (e) {
-    console.error('EMI tracking: AI match failed:', e.message);
-  }
-
   const windowKeys = new Set(months.map(m => m.month + '-' + m.year));
   const resultProfiles = {};
+  let emiDatesFound = 0;
   for (const p of profiles) {
     const id = String(p._id);
-    const dates = matchMap[id] || [];
+    const set = perLoanDates[id] || new Set();
     const byMonth = {};
-    dates.forEach(ds => {
+    set.forEach(ds => {
       const pr = parse(ds);
       if (!pr) return;
       const key = pr.mo + '-' + pr.y;
       if (!windowKeys.has(key)) return;
-      if (!byMonth[key]) byMonth[key] = String(pr.d).padStart(2, '0'); // keep first day found per month
+      // Keep the earliest day seen for the month (collapses duplicate reads across chunks).
+      if (!byMonth[key] || pr.d < parseInt(byMonth[key], 10)) byMonth[key] = String(pr.d).padStart(2, '0');
     });
+    emiDatesFound += Object.keys(byMonth).length;
     resultProfiles[id] = { foundInStmt: Object.keys(byMonth).length > 0, dates: byMonth };
   }
 
   const matchedCount = Object.values(resultProfiles).filter(p => p.foundInStmt).length;
-  console.log(`✓ EMI tracking: ${allTxns.length} txns (${debits.length} debits), matched ${matchedCount}/${profiles.length} loans, window ${rangeLabel}`);
+  console.log(`✓ EMI tracking: ${bankingDocs.length} statement(s), matched ${matchedCount}/${profiles.length} loans, ${emiDatesFound} EMI dates, window ${rangeLabel}`);
 
   return {
     computedAt: new Date().toISOString(),
@@ -4364,10 +4363,10 @@ async function computeEmiTracking(proposal, debtProfiles, options = {}) {
     anchorYear: anchor.year,
     months,
     profiles: resultProfiles,
-    txnCount: allTxns.length,
-    debitCount: debits.length,
+    statementCount: bankingDocs.length,
+    emiDatesFound,
     matchedCount,
-    _docsMutated: docsMutated
+    _docsMutated: false
   };
 }
 
@@ -9007,31 +9006,46 @@ app.get('/stage3/:proposalId', async (req, res) => {
     console.error('Error fetching debt profiles for stage 3:', err);
   }
 
-  // EMI tracking is computed server-side (Gemini-matched) and cached on the proposal.
-  // Recompute only when the statement set or loan EMIs changed since the last render.
-  let emiTracking = proposal.emiTracking || null;
-  try {
-    const bankingDocs = (proposal.documents || []).filter(d => d.category === 'banking' && d.extractedText);
-    const trackProfiles = debtProfiles.filter(p => p.emi && p.emi > 0);
-    if (bankingDocs.length && trackProfiles.length) {
-      const sig = emiTrackingSignature(bankingDocs, trackProfiles);
-      if (!emiTracking || emiTracking.signature !== sig) {
-        // Generate tracking on first view (extract transactions if not cached yet, then match).
-        // Result is cached on the proposal via the signature, so later loads are fast.
-        const computed = await computeEmiTracking(proposal, debtProfiles);
-        if (computed) {
-          emiTracking = computed;
-          const persist = { emiTracking: computed };
-          if (computed._docsMutated) persist.documents = proposal.documents;
-          await updateProposal(req.params.proposalId, persist);
-        }
-      }
-    }
-  } catch (err) {
-    console.error('EMI tracking compute error (stage 3):', err.message);
-  }
+  // EMI tracking is computed by POST /stage3/:id/refresh-emi-tracking (the Refresh button) and
+  // cached on the proposal, since reading every statement with Gemini is too slow for a page
+  // load. Here we just render the cached result (or let the template prompt for a Refresh).
+  const emiTracking = proposal.emiTracking || null;
 
   res.render('stage3-cam', { proposal, debtProfiles, emiTracking });
+});
+
+// Recompute EMI tracking on demand (the "Refresh EMI Tracking" button). Reads each banking
+// statement's existing OCR text with Gemini — no re-OCR — and stores the matched grid.
+app.post('/stage3/:proposalId/refresh-emi-tracking', async (req, res) => {
+  try {
+    const proposalId = req.params.proposalId;
+    const proposal = await getProposalById(proposalId);
+    if (!proposal) return res.status(404).json({ success: false, error: 'Proposal not found' });
+
+    let debtProfiles = [];
+    try { debtProfiles = await DebtProfile.find({ proposalId }).sort({ sNo: 1 }); } catch (e) {}
+
+    const bankingDocs = (proposal.documents || []).filter(d => d.category === 'banking' && d.extractedText);
+    const trackProfiles = debtProfiles.filter(p => p.emi && p.emi > 0);
+    if (!bankingDocs.length) return res.json({ success: false, error: 'No bank statements with extracted text found. Process/upload bank statements in Stage 2 first.' });
+    if (!trackProfiles.length) return res.json({ success: false, error: 'No debt profiles with an EMI amount found.' });
+
+    const computed = await computeEmiTracking(proposal, debtProfiles);
+    if (!computed) return res.json({ success: false, error: 'Could not read any transactions from the statements (all AI reads failed). Please retry.' });
+
+    await updateProposal(proposalId, { emiTracking: computed });
+    res.json({
+      success: true,
+      rangeLabel: computed.rangeLabel,
+      statementCount: computed.statementCount,
+      matchedCount: computed.matchedCount,
+      profileCount: trackProfiles.length,
+      emiDatesFound: computed.emiDatesFound
+    });
+  } catch (error) {
+    console.error('Refresh EMI tracking error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 // Read-only diagnostic for EMI tracking: shows how documents are categorized, whether they
@@ -9061,11 +9075,22 @@ app.get('/stage3/:proposalId/emi-debug', async (req, res) => {
       emiTracking: proposal.emiTracking ? {
         rangeLabel: proposal.emiTracking.rangeLabel,
         monthCount: (proposal.emiTracking.months || []).length,
-        txnCount: proposal.emiTracking.txnCount,
-        debitCount: proposal.emiTracking.debitCount,
+        statementCount: proposal.emiTracking.statementCount,
+        emiDatesFound: proposal.emiTracking.emiDatesFound,
         matchedCount: proposal.emiTracking.matchedCount,
         computedAt: proposal.emiTracking.computedAt
-      } : null
+      } : null,
+      // Add ?run=1 to actually read the first statement with Gemini and return the raw result —
+      // confirms whether the AI read itself works for these documents.
+      sampleRun: req.query.run ? await (async () => {
+        try {
+          const doc = bankingDocs.find(d => d.extractedText);
+          if (!doc) return { error: 'no banking doc with extractedText' };
+          const loans = debtProfiles.filter(p => p.emi && p.emi > 0).map(p => ({ id: String(p._id), bank: p.bank || '', emi: p.emi, emiStartDate: p.emiStartDate || '' }));
+          const r = await matchEmisInStatementText(loans, (doc.extractedText || '').slice(0, 120000));
+          return { doc: doc.originalName, loanCount: loans.length, latestTxnDate: r.latestTxnDate, matchedLoans: Object.keys(r.matches).length, matches: r.matches };
+        } catch (e) { return { error: e.message }; }
+      })() : undefined
     });
   } catch (error) {
     res.status(500).json({ error: error.message });

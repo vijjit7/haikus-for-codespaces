@@ -4652,7 +4652,7 @@
                     </div>
                     <% } else if (emiTrackingData) { %>
                     <div style="margin-bottom: 10px; font-size: 0.8em; color: #666;">
-                        Read <strong><%= emiTrackingData.txnCount || 0 %></strong> transactions (<%= emiTrackingData.debitCount || 0 %> debits) from <%= emiBankingCount %> statement(s); matched <strong><%= emiTrackingData.matchedCount || 0 %></strong> of <%= debtProfilesList.length %> loans.
+                        Read <%= emiTrackingData.statementCount || emiBankingCount %> statement(s); matched <strong><%= emiTrackingData.matchedCount || 0 %></strong> of <%= debtProfilesList.length %> loans (<%= emiTrackingData.emiDatesFound || 0 %> EMI payments found).
                     </div>
                     <% } %>
                     
@@ -5730,23 +5730,24 @@
     <script>
         const proposalId = '<%= proposal.id %>';
 
-        // Refresh EMI tracking by reprocessing bank statements
+        // Refresh EMI tracking: Gemini re-reads each statement's OCR text and matches EMI dates.
+        // This can take a little while (one read per statement), so disable the button meanwhile.
         async function refreshEmiTracking() {
             const btn = event.target;
             const originalText = btn.innerHTML;
-            
-            btn.innerHTML = '⏳ Processing...';
+
+            btn.innerHTML = '⏳ Reading statements…';
             btn.disabled = true;
-            
+
             try {
-                const response = await fetch(`/stage2/${proposalId}/reprocess-banking`, {
+                const response = await fetch(`/stage3/${proposalId}/refresh-emi-tracking`, {
                     method: 'POST'
                 });
-                
+
                 const result = await response.json();
-                
+
                 if (result.success) {
-                    alert(`EMI tracking refreshed! Processed ${result.processedCount} bank statement(s).`);
+                    alert(`EMI tracking refreshed (${result.rangeLabel}).\nRead ${result.statementCount} statement(s); matched ${result.matchedCount} of ${result.profileCount} loans, ${result.emiDatesFound} EMI payments found.`);
                     location.reload();
                 } else {
                     alert('Error: ' + (result.error || 'Failed to refresh EMI tracking'));
