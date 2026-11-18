@@ -1972,274 +1972,14 @@
                                             return num < 0 ? '-' + result : result;
                                         };
                                         
-                                        // Generate amount search variants
-                                        const camGetAmountVariants = (amount, tolerance = 2) => {
-                                            const variants = [];
-                                            for (let t = -tolerance; t <= tolerance; t++) {
-                                                const amt = Math.round(amount + t);
-                                                variants.push(String(amt), amt + '.00', camFormatIndian(amt), camFormatIndian(amt) + '.00');
-                                            }
-                                            return [...new Set(variants)];
-                                        };
-                                        
-                                        // Clean bank text
-                                        const camCleanBankText = (text) => {
-                                            return text.replace(/(\d)\s*[\n\r]\s*(\.\d)/g, '$1$2').replace(/[ \t]+/g, ' ');
-                                        };
-                                        
-                                        // Lender alias map for CAM memo EMI tracking
-                                        const camLenderAliases = {
-                                            'fullerton': ['ficcl', 'ficl', 'fullerton india', 'smfg india', 'smfg'],
-                                            'abfl': ['aditya birla', 'birla finance', 'birla', 'abfl', 'aditya birla finance'],
-                                            'hdb': ['hdbfs', 'hdb financial', 'hdb fin'],
-                                            'sundaram': ['sundaram finance', 'sundaram bnp', 'sundaram home', 'shfl'],
-                                            'hiranandani': ['hfl', 'hiranandani financial', 'hiranandani fin'],
-                                            'piramal': ['pchfl', 'piramal capital', 'piramal housing', 'piramal fin', 'piramal enterprise'],
-                                            'orix': ['orix leasing', 'orix india', 'orix fin'],
-                                            'shriram': ['shriram', 'stfc', 'shriram transport', 'shriram finance', 'shriram city', 'shr ram'],
-                                            'shr ram': ['shriram', 'stfc', 'shriram transport', 'shriram finance', 'shriram city'],
-                                            'axis': ['axis bank', 'axis finance', 'axis leasing'],
-                                            'al': ['axis', 'axis leasing', 'axis finance', 'axis bank'],
-                                            'bajaj': ['bajaj finance', 'bajaj finserv', 'bfl', 'bajaj fin'],
-                                            'tata': ['tata capital', 'tata motors finance', 'tmf', 'tata fin'],
-                                            'mahindra': ['mahindra finance', 'mmfsl', 'mahindra & mahindra'],
-                                            'kotak': ['kotak mahindra', 'kotak bank', 'kotak prime'],
-                                            'hdfc': ['hdfc bank', 'hdfc ltd', 'hdfc home', 'hdfc credila'],
-                                            'icici': ['icici bank', 'icici home', 'icici prudential'],
-                                            'iifl': ['iifl finance', 'iifl home', 'india infoline'],
-                                            'muthoot': ['muthoot finance', 'muthoot fincorp', 'muthoot capital'],
-                                            'manappuram': ['manappuram finance', 'manappuram gold'],
-                                            'chola': ['cholamandalam', 'chola finance', 'cifcl', 'chola inv'],
-                                            'l&t': ['l&t finance', 'l&t housing', 'ltfh', 'l&t fin'],
-                                            'hero': ['hero fincorp', 'hero housing', 'hero fin'],
-                                            'fedbank': ['federal bank', 'fedbank financial', 'fedfina'],
-                                            'indostar': ['indostar capital', 'indostar'],
-                                            'can fin': ['can fin homes', 'canfin'],
-                                        };
-                                        const camGetExpandedBankTerms = (bankName) => {
-                                            const terms = [];
-                                            const bankLower = (bankName || '').toLowerCase().trim();
-                                            const parts = bankLower.split(/[\s\-\(\)\/]+/).filter(p => p.length >= 2);
-                                            terms.push(...parts);
-                                            if (bankLower.length >= 2) terms.push(bankLower);
-                                            for (const [key, aliases] of Object.entries(camLenderAliases)) {
-                                                if (bankLower.includes(key) || parts.some(p => p === key)) {
-                                                    terms.push(...aliases);
-                                                }
-                                            }
-                                            return [...new Set(terms)];
-                                        };
-
-                                        // Find EMI dates in bank statements (bidirectional context search)
-                                        const camFindEmiDates = (emiAmount, bankName, docs) => {
-                                            const emiDates = [];
-                                            if (!emiAmount || !docs) return emiDates;
-                                            const emiVariants = camGetAmountVariants(Math.round(emiAmount), 2);
-                                            const bankTerms = camGetExpandedBankTerms(bankName);
-                                            const emiKeywords = ['ach d-', 'ach-d', 'ach/', 'nach', 'ecs', 'ecs/', 'emi', 'loan', 'auto debit', 'auto-debit', 'instalment', 'installment', 'equated monthly', 'cms/', 'cmp', 'mandate', 'adibi', 'trf/', 'fin ltd', 'capital', 'finance', 'birla', 'clix', 'icici', 'unity', 'nbfc', 'hfc', 'si-', 'si/', 'si :', 'neft', 'rtgs', 'debit-', 'dr-'];
-                                            const camMonthMap = {jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11};
-                                            const roundedEmi = Math.round(emiAmount);
-                                            const wideTolerance = Math.round(roundedEmi * 0.015);
-                                            const camNormYear = (y) => { if (y < 100) y += 2000; return y; };
-                                            // Masked loan-account fragments (e.g. "XX15309") seen right before a
-                                            // matched EMI amount. Used to recover EMIs in rate-reset months where the
-                                            // debited figure differs from the stored EMI.
-                                            const accountTokenCounts = {};
-                                            const collectAccountTokens = (ctx) => { const tks = ctx.slice(-60).match(/[x*•]{2,}\d{3,}/gi); if (tks) tks.forEach(tk => { const k = tk.toLowerCase(); accountTokenCounts[k] = (accountTokenCounts[k] || 0) + 1; }); };
-
-                                            // Helper: extract dates from context text (supports 2 and 4 digit years)
-                                            const extractDates = (ctxText) => {
-                                                const allDates = [];
-                                                let m;
-                                                // dd/mm/yyyy or dd/mm/yy
-                                                const regNum = /(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/g;
-                                                while ((m = regNum.exec(ctxText)) !== null) {
-                                                    const d = parseInt(m[1]), mo = parseInt(m[2]) - 1, y = camNormYear(parseInt(m[3]));
-                                                    if (d >= 1 && d <= 31 && mo >= 0 && mo <= 11 && y >= 2024 && y <= 2026) {
-                                                        allDates.push({day: d, month: mo, year: y, pos: m.index});
-                                                    }
-                                                }
-                                                // dd/Mon/yyyy or dd-Mon-yy
-                                                const regNamed = /(\d{1,2})[\/\-\.\s](\w{3})[\/\-\.\s](\d{2,4})/gi;
-                                                while ((m = regNamed.exec(ctxText)) !== null) {
-                                                    const mi = camMonthMap[m[2].toLowerCase()];
-                                                    if (mi !== undefined && !allDates.some(d => Math.abs(d.pos - m.index) < 5)) {
-                                                        const d = parseInt(m[1]), y = camNormYear(parseInt(m[3]));
-                                                        if (d >= 1 && d <= 31 && y >= 2024 && y <= 2026) {
-                                                            allDates.push({day: d, month: mi, year: y, pos: m.index});
-                                                        }
-                                                    }
-                                                }
-                                                // dd Mon yyyy or dd Mon yy (space separated)
-                                                const regSpaced = /(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+(\d{2,4})/gi;
-                                                while ((m = regSpaced.exec(ctxText)) !== null) {
-                                                    const mi = camMonthMap[m[2].toLowerCase()];
-                                                    if (mi !== undefined && !allDates.some(d => Math.abs(d.pos - m.index) < 5)) {
-                                                        const d = parseInt(m[1]), y = camNormYear(parseInt(m[3]));
-                                                        if (d >= 1 && d <= 31 && y >= 2024 && y <= 2026) {
-                                                            allDates.push({day: d, month: mi, year: y, pos: m.index});
-                                                        }
-                                                    }
-                                                }
-                                                return allDates.sort((a, b) => a.pos - b.pos);
-                                            };
-
-                                            docs.forEach(doc => {
-                                                if (!doc.extractedText) return;
-                                                const text = camCleanBankText(doc.extractedText).toLowerCase();
-
-                                                // Find all amount positions and deduplicate
-                                                const positions = [];
-                                                emiVariants.forEach(variant => {
-                                                    const vl = variant.toLowerCase();
-                                                    let idx = text.indexOf(vl);
-                                                    while (idx !== -1) {
-                                                        if (!positions.some(p => Math.abs(p.pos - idx) < 5)) {
-                                                            positions.push({pos: idx, len: vl.length});
-                                                        }
-                                                        idx = text.indexOf(vl, idx + 1);
-                                                    }
-                                                });
-
-                                                // Pass 1: Bidirectional context (300 chars each way)
-                                                positions.forEach(({pos, len}) => {
-                                                    const ctxBefore = text.substring(Math.max(0, pos - 300), pos);
-                                                    const ctxAfter = text.substring(pos + len, Math.min(text.length, pos + len + 300));
-                                                    const fullCtx = ctxBefore + ctxAfter;
-                                                    const hasKw = emiKeywords.some(kw => fullCtx.includes(kw));
-                                                    const hasBank = bankTerms.length > 0 && bankTerms.some(term => fullCtx.includes(term));
-                                                    if (hasKw || hasBank) {
-                                                        collectAccountTokens(ctxBefore);
-                                                        const datesBefore = extractDates(ctxBefore);
-                                                        const datesAfter = extractDates(ctxAfter);
-                                                        let dt = datesBefore.length > 0 ? datesBefore[datesBefore.length - 1] : (datesAfter.length > 0 ? datesAfter[0] : null);
-                                                        if (dt && !emiDates.some(d => d.day === dt.day && d.month === dt.month && d.year === dt.year)) {
-                                                            emiDates.push({day: dt.day, month: dt.month, year: dt.year});
-                                                        }
-                                                    }
-                                                });
-
-                                                // Pass 2: Wider numeric scan for rate revisions (1.5% tolerance)
-                                                if (roundedEmi > 50000) {
-                                                    const numRegex = /(\d[\d,]*\d)\.(\d{2})\b/g;
-                                                    let numMatch;
-                                                    while ((numMatch = numRegex.exec(text)) !== null) {
-                                                        const numVal = parseInt(numMatch[1].replace(/,/g, ''));
-                                                        const diff = Math.abs(numVal - roundedEmi);
-                                                        if (diff > 2 && diff <= wideTolerance) {
-                                                            const ctxBefore = text.substring(Math.max(0, numMatch.index - 300), numMatch.index);
-                                                            const ctxAfter = text.substring(numMatch.index + numMatch[0].length, Math.min(text.length, numMatch.index + numMatch[0].length + 300));
-                                                            const fullCtx = ctxBefore + ctxAfter;
-                                                            const hasKw = emiKeywords.some(kw => fullCtx.includes(kw)) ||
-                                                                          (bankTerms.length > 0 && bankTerms.some(term => fullCtx.includes(term)));
-                                                            if (hasKw) {
-                                                                collectAccountTokens(ctxBefore);
-                                                                const datesBefore = extractDates(ctxBefore);
-                                                                const datesAfter = extractDates(ctxAfter);
-                                                                let dt = datesBefore.length > 0 ? datesBefore[datesBefore.length - 1] : (datesAfter.length > 0 ? datesAfter[0] : null);
-                                                                if (dt && !emiDates.some(d => d.day === dt.day && d.month === dt.month && d.year === dt.year)) {
-                                                                    emiDates.push({day: dt.day, month: dt.month, year: dt.year});
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            });
-
-                                            // Pass 3: Account-fragment recovery. Floating-rate loans change the EMI
-                                            // on resets, so the exact figure only matches some months. Discover the
-                                            // loan's masked account fragment from the months that DID match, then
-                                            // record every month that fragment appears on an EMI line - regardless
-                                            // of the debited amount.
-                                            let accountTag = null, accountTagHits = 0;
-                                            for (const [tk, c] of Object.entries(accountTokenCounts)) {
-                                                if (tk.replace(/[^0-9]/g, '').length >= 4 && c > accountTagHits) { accountTagHits = c; accountTag = tk; }
-                                            }
-                                            if (accountTag && accountTagHits >= 2) {
-                                                docs.forEach(doc => {
-                                                    if (!doc.extractedText) return;
-                                                    const text = camCleanBankText(doc.extractedText).toLowerCase();
-                                                    let idx = text.indexOf(accountTag);
-                                                    while (idx !== -1) {
-                                                        const ctxB = text.substring(Math.max(0, idx - 90), idx);
-                                                        const ctxA = text.substring(idx, Math.min(text.length, idx + 40));
-                                                        if (emiKeywords.some(kw => (ctxB + ctxA).includes(kw))) {
-                                                            const dB = extractDates(ctxB), dA = extractDates(ctxA);
-                                                            const dt = dB.length > 0 ? dB[dB.length - 1] : (dA.length > 0 ? dA[0] : null);
-                                                            if (dt && !emiDates.some(d => d.day === dt.day && d.month === dt.month && d.year === dt.year)) {
-                                                                emiDates.push({day: dt.day, month: dt.month, year: dt.year});
-                                                            }
-                                                        }
-                                                        idx = text.indexOf(accountTag, idx + 1);
-                                                    }
-                                                });
-                                            } else if (emiDates.length >= 3 && bankTerms.length > 0) {
-                                                // Fallback: no account fragment exposed. The loan pays on a consistent
-                                                // day each month, so capture lender + EMI lines on that day whose amount
-                                                // is in a wide band around the stored EMI (covers reset changes).
-                                                const dayCounts = {};
-                                                emiDates.forEach(d => { dayCounts[d.day] = (dayCounts[d.day] || 0) + 1; });
-                                                const usualDay = Object.keys(dayCounts).map(Number).sort((a, b) => dayCounts[b] - dayCounts[a])[0];
-                                                if (dayCounts[usualDay] >= 3) {
-                                                    const lo = roundedEmi * 0.6, hi = roundedEmi * 1.7;
-                                                    docs.forEach(doc => {
-                                                        if (!doc.extractedText) return;
-                                                        const text = camCleanBankText(doc.extractedText).toLowerCase();
-                                                        const amtRe = /(\d[\d,]*)\.(\d{2})\b/g;
-                                                        let m;
-                                                        while ((m = amtRe.exec(text)) !== null) {
-                                                            const val = parseInt(m[1].replace(/,/g, ''));
-                                                            if (val < lo || val > hi) continue;
-                                                            const ctxB = text.substring(Math.max(0, m.index - 300), m.index);
-                                                            const ctx = ctxB + text.substring(m.index, Math.min(text.length, m.index + 40));
-                                                            if (!bankTerms.some(t => ctx.includes(t)) || !emiKeywords.some(k => ctx.includes(k))) continue;
-                                                            const dB = extractDates(ctxB);
-                                                            const dt = dB.length > 0 ? dB[dB.length - 1] : null;
-                                                            if (dt && dt.day === usualDay && !emiDates.some(d => d.day === dt.day && d.month === dt.month && d.year === dt.year)) {
-                                                                emiDates.push({day: dt.day, month: dt.month, year: dt.year});
-                                                            }
-                                                        }
-                                                    });
-                                                }
-                                            }
-                                            return emiDates;
-                                        };
-                                        
-                                        // Last 12 months (reverse chronological), anchored to the most recent
-                                        // month present in the banking statements so EMI tracking always
-                                        // reflects the actual statement period rather than a fixed window.
+                                        // EMI tracking window + matches come from the server-computed proposal.emiTracking
+                                        // (Gemini-matched transactions) — the same data the interactive EMI Tracking table
+                                        // renders. No regex/string matching here.
+                                        const camEmiTrackingData = (typeof emiTracking !== 'undefined' && emiTracking) ? emiTracking : (proposal.emiTracking || null);
                                         const camMonthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                                        const camFindLatestStatementMonth = (docs) => {
-                                            const map = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
-                                            const normY = (y) => y < 100 ? y + 2000 : y;
-                                            const now = new Date();
-                                            const nowKey = now.getFullYear() * 12 + now.getMonth();
-                                            // Count DISTINCT transaction days per month. A real statement month has
-                                            // many distinct days; a repeated print/footer or mandate date resolves to
-                                            // only one or two, so it won't be mistaken for the latest statement month.
-                                            const days = {};
-                                            const tally = (d, mo, y) => { if (d < 1 || d > 31 || mo < 0 || mo > 11 || y < 2023) return; const k = y * 12 + mo; if (k > nowKey) return; (days[k] || (days[k] = new Set())).add(d); };
-                                            (docs || []).forEach(doc => {
-                                                const t = (doc.extractedText || '').toLowerCase();
-                                                let m;
-                                                const reNum = /(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/g;
-                                                while ((m = reNum.exec(t)) !== null) tally(parseInt(m[1]), parseInt(m[2]) - 1, normY(parseInt(m[3])));
-                                                const reNamed = /(\d{1,2})[\/\-\.\s](jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*[\/\-\.\s](\d{2,4})/gi;
-                                                while ((m = reNamed.exec(t)) !== null) { const mo = map[m[2].toLowerCase()]; if (mo !== undefined) tally(parseInt(m[1]), mo, normY(parseInt(m[3]))); }
-                                            });
-                                            const keys = Object.keys(days).map(Number).sort((a, b) => b - a);
-                                            const solid = keys.find(k => days[k].size >= 5);
-                                            const chosen = solid !== undefined ? solid : (keys.length ? keys[0] : null);
-                                            return chosen === null ? null : new Date(Math.floor(chosen / 12), chosen % 12, 1);
-                                        };
-                                        const camEmiAnchor = camFindLatestStatementMonth(camBankingDocs) || new Date();
-                                        const camMonths = [];
-                                        for (let ci = 0; ci < 12; ci++) {
-                                            const cd = new Date(camEmiAnchor.getFullYear(), camEmiAnchor.getMonth() - ci, 1);
-                                            camMonths.push({ month: cd.getMonth(), year: cd.getFullYear(), label: camMonthNames[cd.getMonth()] });
-                                        }
-                                        const camEmiOldest = new Date(camEmiAnchor.getFullYear(), camEmiAnchor.getMonth() - 11, 1);
-                                        const camEmiRangeLabel = camMonthNames[camEmiAnchor.getMonth()] + "'" + String(camEmiAnchor.getFullYear()).slice(-2) + ' to ' + camMonthNames[camEmiOldest.getMonth()] + "'" + String(camEmiOldest.getFullYear()).slice(-2);
+                                        const camMonths = (camEmiTrackingData && Array.isArray(camEmiTrackingData.months)) ? camEmiTrackingData.months : [];
+                                        const camEmiRangeLabel = camEmiTrackingData ? (camEmiTrackingData.rangeLabel || '') : '';
+                                        const camEmiProfiles = (camEmiTrackingData && camEmiTrackingData.profiles) ? camEmiTrackingData.profiles : {};
                                         %>
                                         
                                         <% if (camDebtProfiles.length > 0) { %>
@@ -2314,26 +2054,21 @@
                                                 <tbody>
                                                     <%
                                                     camDebtProfiles.forEach(function(profile, idx) {
-                                                        const emiDates = camFindEmiDates(profile.emi, profile.bank, camBankingDocs);
-                                                        const emiByMonth = {};
-                                                        camMonths.forEach(m => { emiByMonth[m.month + '-' + m.year] = []; });
-                                                        emiDates.forEach(ed => {
-                                                            const key = ed.month + '-' + ed.year;
-                                                            if (emiByMonth[key]) emiByMonth[key].push(ed.day);
-                                                        });
+                                                        const camTrackInfo = camEmiProfiles[String(profile._id)] || { dates: {} };
+                                                        const emiByMonth = camTrackInfo.dates || {};
                                                     %>
                                                         <tr>
                                                             <td style="padding:3px;text-align:center;"><%= idx + 1 %></td>
                                                             <td style="padding:3px;font-size:0.85em;"><%= profile.bank ? profile.bank.substring(0, 20) : '' %></td>
                                                             <td style="padding:3px;text-align:right;font-weight:bold;"><%= profile.emi ? '₹' + camFormatIndian(Math.round(profile.emi)) : '' %></td>
-                                                            <% camMonths.forEach(function(m) { 
+                                                            <% camMonths.forEach(function(m) {
                                                                 const key = m.month + '-' + m.year;
-                                                                const daysFound = emiByMonth[key] || [];
-                                                                const hasEmi = daysFound.length > 0;
+                                                                const dayVal = emiByMonth[key];
+                                                                const hasEmi = !!dayVal;
                                                             %>
                                                                 <td style="padding:2px;text-align:center;background:<%= hasEmi ? '#e8f5e9' : '#ffebee' %>;font-size:0.85em;">
                                                                     <% if (hasEmi) { %>
-                                                                        <span style="color:#2e7d32;font-weight:bold;"><%= String(daysFound[0]).padStart(2, '0') %>/<%= String(m.month + 1).padStart(2, '0') %></span>
+                                                                        <span style="color:#2e7d32;font-weight:bold;"><%= String(dayVal).padStart(2, '0') %>/<%= String(m.month + 1).padStart(2, '0') %></span>
                                                                     <% } else { %>
                                                                         <span style="color:#999;">-</span>
                                                                     <% } %>
