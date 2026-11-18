@@ -4236,12 +4236,15 @@ ${loanLines}
 
 TASK: Work through EVERY loan id one by one. For each, scan the WHOLE statement for the monthly debits that repay that loan, and return the date of each.
 
-How to identify a loan's EMI debit — the AMOUNT is the primary signal:
-- A debit whose amount matches the loan's EMI (allow up to ~20% difference, since floating-rate loans reset) AND that recurs on roughly the SAME DAY each month is that loan's EMI. ATTRIBUTE IT EVEN IF the narration does NOT spell out the lender's name — ECS / NACH / ACH / SI / auto-debit / UPI mandate entries very often show only a mandate or reference number, not the lender.
-- The lender name in the narration is a helpful confirmation when present. Recognise common aliases/abbreviations, e.g. "ICICI"→"ICICI BANK", "Kotak"→"KOTAK MAHINDRA / KOTAK PRIME", "Mahindra Finance"→"MMFSL / M&M FIN / MAHINDRA & MAHINDRA FIN / MAHINDRA FINANCIAL", "Aditya Birla"→"ABFL / BIRLA FINANCE / ADITYA BIRLA FIN".
-- Two different loans can have the same lender but different EMI amounts — keep them separate by amount.
+How to identify a loan's EMI debit — the AMOUNT is the decisive signal:
+- PRIMARY RULE: a debit whose amount EQUALS the loan's EMI amount (match to the whole rupee; ignore paise and small rounding) is that loan's EMI. The amount is the key — match on it FIRST.
+- The payment DAY can vary by a few days from month to month (weekends, holidays, retries). Do NOT require the same day each month. Match purely by amount; a given loan is normally debited about once per calendar month, so take at most one debit of that amount per month (the clearest one).
+- ATTRIBUTE THE DEBIT EVEN IF the narration does NOT name the lender — ECS / NACH / ACH / SI / auto-debit / UPI-mandate entries very often show only a mandate or reference number. The matching amount alone is enough.
+- The lender name, when present, is a helpful confirmation. Recognise aliases/abbreviations, e.g. "ICICI"→"ICICI BANK", "Kotak"→"KOTAK MAHINDRA / KOTAK PRIME", "Mahindra Finance"→"MMFSL / M&M FIN / MAHINDRA & MAHINDRA FIN", "Aditya Birla"→"ABFL / BIRLA FINANCE / ADITYA BIRLA FIN".
+- Secondary (only if no exact-amount debit exists in a month): a floating-rate loan may reset, so a debit within ~15% of the EMI that keeps recurring monthly can be the same loan.
+- Two different loans can share a lender but differ in EMI amount — keep them separate strictly by amount.
 
-A loan is normally debited ONCE per month, on a consistent day. Use only dates that actually appear in this statement; never invent a date. Ignore credits, small charges, and one-off debits that don't recur. Also report the latest transaction date you can see in this statement as "latestTxnDate".
+Use only dates that actually appear in this statement; never invent a date. Ignore credits and one-off debits that don't recur monthly. Also report the latest transaction date you can see in this statement as "latestTxnDate".
 
 Return an entry for EVERY loan id (use an empty "dates" array if you found none in this statement).
 
