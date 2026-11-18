@@ -4220,9 +4220,9 @@ async function extractBankTxnsFromText(fullText) {
 // Read ONE bank-statement text chunk and ask Gemini directly which dates each loan's EMI
 // cleared. This works straight off the OCR text — no separate transaction-extraction pass —
 // so it is far fewer calls than enumerating every row. Returns
-// { latestTxnDate: "DD-MM-YYYY"|null, matches: { "<loanId>": ["DD-MM-YYYY", ...] } }.
+// { firstTxnDate, latestTxnDate: "DD-MM-YYYY"|null, matches: { "<loanId>": ["DD-MM-YYYY", ...] } }.
 async function matchEmisInStatementText(loans, statementText) {
-  const empty = { latestTxnDate: null, matches: {} };
+  const empty = { firstTxnDate: null, latestTxnDate: null, matches: {} };
   if (!loans || !loans.length || !statementText || !statementText.trim()) return empty;
 
   const loanLines = loans
@@ -4244,7 +4244,7 @@ How to identify a loan's EMI debit — the AMOUNT is the decisive signal:
 - Secondary (only if no exact-amount debit exists in a month): a floating-rate loan may reset, so a debit within ~15% of the EMI that keeps recurring monthly can be the same loan.
 - Two different loans can share a lender but differ in EMI amount — keep them separate strictly by amount.
 
-Use only dates that actually appear in this statement; never invent a date. Ignore credits and one-off debits that don't recur monthly. Also report the latest transaction date you can see in this statement as "latestTxnDate".
+Use only dates that actually appear in this statement; never invent a date. Ignore credits and one-off debits that don't recur monthly. Also report the EARLIEST and LATEST transaction dates you can see in this statement as "firstTxnDate" and "latestTxnDate" — these define the period this statement actually covers.
 
 Return an entry for EVERY loan id (use an empty "dates" array if you found none in this statement).
 
@@ -4253,6 +4253,7 @@ ${statementText}
 
 Respond ONLY with valid JSON:
 {
+  "firstTxnDate": "DD-MM-YYYY",
   "latestTxnDate": "DD-MM-YYYY",
   "matches": [
     { "id": "<loan id>", "dates": ["DD-MM-YYYY", "DD-MM-YYYY"] }
@@ -4270,8 +4271,8 @@ Respond ONLY with valid JSON:
       }
     }
   }
-  const ltd = /^\d{1,2}-\d{1,2}-\d{4}$/.test(String(res.data.latestTxnDate || '').trim()) ? String(res.data.latestTxnDate).trim() : null;
-  return { latestTxnDate: ltd, matches: map };
+  const okDate = (s) => /^\d{1,2}-\d{1,2}-\d{4}$/.test(String(s || '').trim()) ? String(s).trim() : null;
+  return { firstTxnDate: okDate(res.data.firstTxnDate), latestTxnDate: okDate(res.data.latestTxnDate), matches: map };
 }
 
 // Signature of the inputs that affect EMI tracking (statement set + loan EMIs). Used to skip
@@ -4304,8 +4305,10 @@ async function computeEmiTracking(proposal, debtProfiles) {
   // large context, so a statement is usually 1-3 calls, not one call per transaction row).
   const CHUNK = 120000;
   const perLoanDates = {}; // id -> Set of "DD-MM-YYYY"
+  const coverageRanges = []; // [startMonthKey, endMonthKey] spans actually covered by statements
   let latestKey = null;
   let anyCall = false, anySuccess = false;
+  const toKey = (p) => (p && p.mo >= 0 && p.mo <= 11) ? (p.y * 12 + p.mo) : null;
   for (const doc of bankingDocs) {
     const text = doc.extractedText || '';
     for (let i = 0; i < text.length; i += CHUNK) {
@@ -4320,8 +4323,15 @@ async function computeEmiTracking(proposal, debtProfiles) {
       }
       if (!r) continue;
       anySuccess = true;
-      const lp = parse(r.latestTxnDate);
-      if (lp && lp.mo >= 0 && lp.mo <= 11) { const k = lp.y * 12 + lp.mo; if (k <= nowKey && (latestKey === null || k > latestKey)) latestKey = k; }
+      const fk = toKey(parse(r.firstTxnDate));
+      const lk = toKey(parse(r.latestTxnDate));
+      if (lk !== null && lk <= nowKey && (latestKey === null || lk > latestKey)) latestKey = lk;
+      // Record the period this statement covers (clamped to non-future months).
+      if (fk !== null || lk !== null) {
+        const start = Math.min(...[fk, lk].filter(x => x !== null));
+        const end = Math.min(nowKey, Math.max(...[fk, lk].filter(x => x !== null)));
+        if (start <= end) coverageRanges.push([start, end]);
+      }
       for (const [id, dates] of Object.entries(r.matches || {})) {
         const set = perLoanDates[id] || (perLoanDates[id] = new Set());
         dates.forEach(d => set.add(d));
@@ -4344,6 +4354,17 @@ async function computeEmiTracking(proposal, debtProfiles) {
   const rangeLabel = `${monthNames[anchor.month]}'${String(anchor.year).slice(-2)} to ${monthNames[oldest.month]}'${String(oldest.year).slice(-2)}`;
 
   const windowKeys = new Set(months.map(m => m.month + '-' + m.year));
+
+  // Which window months are actually covered by a provided statement. Months with no coverage
+  // render as "BSNA" (Bank Statement Not Available) instead of "-". If we couldn't determine any
+  // statement period, leave coveredMonths null so the view doesn't wrongly mark everything BSNA.
+  let coveredMonths = null;
+  if (coverageRanges.length) {
+    coveredMonths = months
+      .filter(m => { const k = m.year * 12 + m.month; return coverageRanges.some(([s, e]) => k >= s && k <= e); })
+      .map(m => m.month + '-' + m.year);
+  }
+
   const resultProfiles = {};
   let emiDatesFound = 0;
   profiles.forEach((p, i) => {
@@ -4372,6 +4393,7 @@ async function computeEmiTracking(proposal, debtProfiles) {
     anchorYear: anchor.year,
     months,
     profiles: resultProfiles,
+    coveredMonths,
     statementCount: bankingDocs.length,
     emiDatesFound,
     matchedCount,
