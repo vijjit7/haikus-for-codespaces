@@ -9034,6 +9034,44 @@ app.get('/stage3/:proposalId', async (req, res) => {
   res.render('stage3-cam', { proposal, debtProfiles, emiTracking });
 });
 
+// Read-only diagnostic for EMI tracking: shows how documents are categorized, whether they
+// carry OCR text, whether transactions were extracted, and the current tracking summary.
+app.get('/stage3/:proposalId/emi-debug', async (req, res) => {
+  try {
+    const proposal = await getProposalById(req.params.proposalId);
+    if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+    let debtProfiles = [];
+    try { debtProfiles = await DebtProfile.find({ proposalId: req.params.proposalId }); } catch (e) {}
+    const docs = proposal.documents || [];
+    const bankingDocs = docs.filter(d => d.category === 'banking');
+    res.json({
+      proposalId: req.params.proposalId,
+      debtProfileCount: debtProfiles.length,
+      profilesWithEmi: debtProfiles.filter(p => p.emi && p.emi > 0).length,
+      allDocCategories: docs.reduce((acc, d) => { acc[d.category || 'undefined'] = (acc[d.category || 'undefined'] || 0) + 1; return acc; }, {}),
+      bankingDocCount: bankingDocs.length,
+      bankingDocs: bankingDocs.map(d => ({
+        name: d.originalName,
+        isPdf: (d.originalName || '').toLowerCase().endsWith('.pdf'),
+        hasExtractedText: !!d.extractedText,
+        extractedTextLen: (d.extractedText || '').length,
+        hasBankTxns: Array.isArray(d.bankTxns),
+        bankTxnCount: Array.isArray(d.bankTxns) ? d.bankTxns.length : null
+      })),
+      emiTracking: proposal.emiTracking ? {
+        rangeLabel: proposal.emiTracking.rangeLabel,
+        monthCount: (proposal.emiTracking.months || []).length,
+        txnCount: proposal.emiTracking.txnCount,
+        debitCount: proposal.emiTracking.debitCount,
+        matchedCount: proposal.emiTracking.matchedCount,
+        computedAt: proposal.emiTracking.computedAt
+      } : null
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Stage 3: Download entire proposal as ZIP with categorized folders
 app.get('/stage3/:proposalId/download-zip', async (req, res) => {
   try {
