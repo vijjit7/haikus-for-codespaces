@@ -4217,55 +4217,81 @@ async function extractBankTxnsFromText(fullText) {
   return allTxns;
 }
 
-// Compute per-month credit/debit totals for a statement by reading its OCR text directly with
-// Gemini (one call per large chunk, summed per month). Far fewer calls than enumerating every
-// transaction row, so it is fast and reliable. Returns the same shape as aggregateBankMonthly:
-// { months: [{year, month, credits, creditCount, debits, debitCount}], totalCredits, totalDebits, txnCount }.
-async function extractMonthlyTotalsFromText(fullText) {
-  if (!fullText || !fullText.trim()) return null;
-  const CHUNK = 120000;
-  const acc = {}; // "year-month" -> totals
-  let any = false;
-  for (let i = 0; i < fullText.length; i += CHUNK) {
-    const chunk = fullText.slice(i, i + CHUNK);
-    const prompt = `You are reading a bank statement (OCR text). Total the transactions per calendar month.
-
-Rules:
-- A CREDIT (deposit/inflow) increases the running balance; a DEBIT (withdrawal/outflow) decreases it. Statements usually have separate debit and credit columns plus a running balance — use them to decide direction.
-- Ignore opening-balance / brought-forward / closing-balance lines and any non-transaction rows.
-- Amounts use Indian digit grouping (e.g. 2,66,65,638.00) — output plain numbers without commas.
-- Be exhaustive: include every month that has at least one transaction.
-
-BANK STATEMENT TEXT:
-${chunk}
-
-Respond ONLY with valid JSON (month is 1-12):
-{
-  "months": [
-    { "month": 7, "year": 2025, "credits": 0, "debits": 0, "creditCount": 0, "debitCount": 0 }
-  ]
-}`;
-    let res;
-    try { res = await extractWithDocumentAI(prompt, 'emi-match', []); } catch (e) { continue; }
-    if (!res || !res.success || !res.data || !Array.isArray(res.data.months)) continue;
-    any = true;
-    res.data.months.forEach(mo => {
-      const m = parseInt(mo.month, 10), y = parseInt(mo.year, 10);
-      if (!(m >= 1 && m <= 12 && y >= 2000 && y <= 2100)) return;
-      const k = y + '-' + m;
-      if (!acc[k]) acc[k] = { year: y, month: m, credits: 0, creditCount: 0, debits: 0, debitCount: 0 };
-      acc[k].credits += Math.abs(parseFloat(mo.credits) || 0);
-      acc[k].debits += Math.abs(parseFloat(mo.debits) || 0);
-      acc[k].creditCount += parseInt(mo.creditCount, 10) || 0;
-      acc[k].debitCount += parseInt(mo.debitCount, 10) || 0;
-    });
+// Raw text completion via OpenRouter (Gemini 2.5 Flash). Unlike extractWithDocumentAI this does
+// not force/parse JSON — used when we want compact line output. Retries on rate limits.
+async function callGeminiText(prompt, maxTokens = 8000, timeoutMs = 120000) {
+  let delay = 8000;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const response = await axios.post(
+        OPENROUTER_API_URL,
+        { model: 'google/gemini-2.5-flash', messages: [{ role: 'user', content: prompt }], temperature: 0, max_tokens: maxTokens },
+        { headers: { 'Authorization': `Bearer ${OPENROUTER_API_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'http://localhost:3000', 'X-Title': 'Customer Profiling App' }, timeout: timeoutMs }
+      );
+      return response.data.choices[0].message.content || '';
+    } catch (error) {
+      if (error.response && error.response.status === 429 && attempt < 3) { await new Promise(r => setTimeout(r, delay)); delay *= 2; continue; }
+      throw error;
+    }
   }
-  if (!any) return null;
-  const months = Object.values(acc).sort((a, b) => (a.year * 12 + a.month) - (b.year * 12 + b.month));
-  const totalCredits = months.reduce((s, m) => s + m.credits, 0);
-  const totalDebits = months.reduce((s, m) => s + m.debits, 0);
-  const txnCount = months.reduce((s, m) => s + m.creditCount + m.debitCount, 0);
-  return { months, totalCredits, totalDebits, txnCount };
+  return '';
+}
+
+// Extract every transaction from a statement as compact pipe lines (DD-MM-YYYY|C/D|amount|balance).
+// Compact output is token-cheap, so chunks can be large (fewer calls) and the array can't truncate
+// into unparseable JSON. The direction (C/D) comes from the model reading the debit/credit columns
+// and running balance. Returns a txn array compatible with aggregateBankMonthly.
+async function extractBankTxnsCompact(fullText) {
+  if (!fullText || !fullText.trim()) return [];
+  const CHUNK = 45000;
+  const OVERLAP_LINES = 3;
+  const lines = fullText.split('\n');
+  const chunks = [];
+  let cur = [], curLen = 0;
+  for (const ln of lines) {
+    if (curLen + ln.length + 1 > CHUNK && cur.length > 0) { chunks.push(cur.join('\n')); cur = cur.slice(-OVERLAP_LINES); curLen = cur.join('\n').length; }
+    cur.push(ln); curLen += ln.length + 1;
+  }
+  if (cur.length) chunks.push(cur.join('\n'));
+
+  const seen = new Set();
+  const txns = [];
+  const lineRe = /(\d{1,2}-\d{1,2}-\d{4})\s*\|\s*([CDcd])\s*\|\s*([\d.,]+)\s*\|\s*([\d.,]+)/;
+  for (const ch of chunks) {
+    const prompt = `Extract EVERY transaction row from this bank statement chunk. Output ONE line per transaction, in EXACTLY this pipe format and nothing else:
+DD-MM-YYYY|T|AMOUNT|BALANCE
+- T = C for a credit/deposit (money IN — running balance increases) or D for a debit/withdrawal (money OUT — running balance decreases). Use the debit/credit columns and the running balance to decide.
+- AMOUNT = the transaction amount as a plain number (no commas, no currency symbol). BALANCE = the running balance after the transaction as a plain number.
+- Skip opening-balance / brought-forward / closing-balance lines and any non-transaction rows.
+- Output ONLY the transaction lines. No header, no totals, no commentary, no code fences.
+
+BANK STATEMENT CHUNK:
+${ch}`;
+    let content;
+    try { content = await callGeminiText(prompt, 16000, 120000); } catch (e) { console.error('compact txn read failed:', e.message); continue; }
+    for (const raw of String(content).split('\n')) {
+      const m = lineRe.exec(raw);
+      if (!m) continue;
+      const date = m[1];
+      const type = m[2].toUpperCase();
+      const amount = parseFloat(m[3].replace(/,/g, '')) || 0;
+      const balance = m[4].replace(/,/g, '');
+      if (amount <= 0) continue;
+      const key = `${date}|${type}|${amount}|${balance}`; // dedup overlapped rows
+      if (seen.has(key)) continue;
+      seen.add(key);
+      txns.push({ date, type, amount, balance: parseFloat(balance) || 0 });
+    }
+  }
+  return txns;
+}
+
+// Compute exact per-month credit/debit totals: enumerate transactions (compact), then sum in code.
+// Returns the aggregateBankMonthly shape, or null if no transactions could be read.
+async function extractMonthlyTotalsFromText(fullText) {
+  const txns = await extractBankTxnsCompact(fullText);
+  if (!txns.length) return null;
+  return aggregateBankMonthly(txns);
 }
 
 // Read ONE bank-statement text chunk and ask Gemini directly which dates each loan's EMI
