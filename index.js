@@ -4261,12 +4261,16 @@ async function extractBankTxnsCompact(fullText) {
 
   const seen = new Set();
   const txns = [];
-  const lineRe = /(\d{1,2}-\d{1,2}-\d{4})\s*\|\s*([CDcd])\s*\|\s*([\d.,]+)\s*\|\s*([\d.,]+)/;
+  // 5 fields: date | T | amount | balance magnitude | balance nature (C=credit/positive,
+  // D=debit/overdraft). The 5th field is REQUIRED for OD/CC accounts whose balance is negative.
+  const lineRe = /(\d{1,2}-\d{1,2}-\d{4})\s*\|\s*([CDcd])\s*\|\s*([\d.,]+)\s*\|\s*([\d.,]+)\s*\|\s*([CDcd])/;
   for (const ch of chunks) {
     const prompt = `Extract EVERY transaction row from this bank statement chunk. Output ONE line per transaction, in EXACTLY this pipe format and nothing else:
-DD-MM-YYYY|T|AMOUNT|BALANCE
+DD-MM-YYYY|T|AMOUNT|BALANCE|B
 - A statement has BOTH debits and credits. T = C for a credit/deposit (money IN) or D for a debit/withdrawal (money OUT). Many rows are credits — do not mark everything as debit.
-- AMOUNT = the transaction amount as a plain number (no commas, no currency symbol). BALANCE = the running balance shown on that row as a plain number (keep it exactly, including paise).
+- AMOUNT = the transaction amount as a plain number (no commas, no currency symbol).
+- BALANCE = the running balance magnitude on that row as a plain number (no sign, no commas, keep paise).
+- B = the nature of that running balance: D if it is a debit / overdraft balance (shown as "Dr", "DR" or negative — common for OD/CC/overdraft accounts), or C if it is a normal credit / positive balance. This is REQUIRED so overdraft balances are handled correctly.
 - Skip opening-balance / brought-forward / closing-balance lines and any non-transaction rows.
 - Output ONLY the transaction lines. No header, no totals, no commentary, no code fences.
 
@@ -4280,8 +4284,9 @@ ${ch}`;
       const date = m[1];
       const type = m[2].toUpperCase();
       const amount = parseFloat(m[3].replace(/,/g, '')) || 0;
-      const balance = parseFloat(m[4].replace(/,/g, ''));
-      if (amount <= 0 || !isFinite(balance)) continue;
+      const mag = parseFloat(m[4].replace(/,/g, ''));
+      if (amount <= 0 || !isFinite(mag)) continue;
+      const balance = (m[5].toUpperCase() === 'D') ? -mag : mag; // sign the overdraft balance
       const key = `${date}|${amount}|${balance}`; // dedup overlapped rows (type-independent)
       if (seen.has(key)) continue;
       seen.add(key);
@@ -4289,9 +4294,10 @@ ${ch}`;
     }
   }
 
-  // Correct debit/credit from the running-balance movement — far more reliable than the model's
-  // guess on flattened OCR. A credit raises the balance, a debit lowers it. Statements may be
-  // printed oldest-first or newest-first, so pick the correct neighbouring row by date order.
+  // Correct debit/credit from the SIGNED running-balance movement — far more reliable than the
+  // model's guess on flattened OCR, and correct for overdraft accounts (balance is negative). A
+  // credit raises the signed balance, a debit lowers it. Statements may be printed oldest-first or
+  // newest-first, so pick the correct neighbouring row by date order.
   if (txns.length >= 3) {
     const dnum = (s) => { const m = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(s); return m ? (+m[3]) * 372 + (+m[2]) * 31 + (+m[1]) : 0; };
     const newestFirst = dnum(txns[0].date) > dnum(txns[txns.length - 1].date);
