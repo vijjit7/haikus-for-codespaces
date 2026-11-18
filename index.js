@@ -4305,12 +4305,13 @@ async function computeEmiTracking(proposal, debtProfiles) {
   // large context, so a statement is usually 1-3 calls, not one call per transaction row).
   const CHUNK = 120000;
   const perLoanDates = {}; // id -> Set of "DD-MM-YYYY"
-  const coverageRanges = []; // [startMonthKey, endMonthKey] spans actually covered by statements
+  const docInfos = []; // per statement: { start, end } month-key span + Set of loan ids seen in it
   let latestKey = null;
   let anyCall = false, anySuccess = false;
   const toKey = (p) => (p && p.mo >= 0 && p.mo <= 11) ? (p.y * 12 + p.mo) : null;
   for (const doc of bankingDocs) {
     const text = doc.extractedText || '';
+    const info = { start: null, end: null, loans: new Set() };
     for (let i = 0; i < text.length; i += CHUNK) {
       const chunk = text.slice(i, i + CHUNK);
       anyCall = true;
@@ -4326,19 +4327,21 @@ async function computeEmiTracking(proposal, debtProfiles) {
       const fk = toKey(parse(r.firstTxnDate));
       const lk = toKey(parse(r.latestTxnDate));
       if (lk !== null && lk <= nowKey && (latestKey === null || lk > latestKey)) latestKey = lk;
-      // Record the period this statement covers (clamped to non-future months).
-      if (fk !== null || lk !== null) {
-        const start = Math.min(...[fk, lk].filter(x => x !== null));
-        const end = Math.min(nowKey, Math.max(...[fk, lk].filter(x => x !== null)));
-        if (start <= end) coverageRanges.push([start, end]);
-      }
+      // Widen this statement's covered span (clamped to non-future months).
+      [fk, lk].forEach(k => { if (k === null) return; const kk = Math.min(k, nowKey); if (info.start === null || kk < info.start) info.start = kk; if (info.end === null || kk > info.end) info.end = kk; });
       for (const [id, dates] of Object.entries(r.matches || {})) {
         const set = perLoanDates[id] || (perLoanDates[id] = new Set());
         dates.forEach(d => set.add(d));
+        info.loans.add(String(id));
       }
     }
+    docInfos.push(info);
   }
   if (!anySuccess) return null; // every AI call failed — let the caller show an error/notice
+
+  // All statement spans together (portfolio coverage) — used as a fallback for loans we can't
+  // tie to any specific statement.
+  const coverageRanges = docInfos.filter(di => di.start !== null).map(di => [di.start, di.end]);
 
   // Anchor the 12-month window to the newest statement/transaction month we saw. Fall back to
   // the newest matched EMI date, then to the current month.
@@ -4368,7 +4371,8 @@ async function computeEmiTracking(proposal, debtProfiles) {
   const resultProfiles = {};
   let emiDatesFound = 0;
   profiles.forEach((p, i) => {
-    const set = perLoanDates[String(i)] || new Set(); // matched by loan position, see above
+    const id = String(i);
+    const set = perLoanDates[id] || new Set(); // matched by loan position, see above
     const byMonth = {};
     set.forEach(ds => {
       const pr = parse(ds);
@@ -4379,7 +4383,18 @@ async function computeEmiTracking(proposal, debtProfiles) {
       if (!byMonth[key] || pr.d < parseInt(byMonth[key], 10)) byMonth[key] = String(pr.d).padStart(2, '0');
     });
     emiDatesFound += Object.keys(byMonth).length;
-    resultProfiles[String(p._id)] = { foundInStmt: Object.keys(byMonth).length > 0, dates: byMonth };
+
+    // Per-loan coverage: the periods of the statement(s) where THIS loan's EMI was found.
+    // Months outside those periods are BSNA for this loan. If the loan matched nowhere we can't
+    // tie it to an account, so leave coveredMonths null and the view falls back to portfolio
+    // coverage (avoids blanking a whole row to BSNA just because matching missed it).
+    const loanRanges = docInfos.filter(di => di.start !== null && di.loans.has(id)).map(di => [di.start, di.end]);
+    let loanCovered = null;
+    if (loanRanges.length) {
+      loanCovered = months.filter(m => { const k = m.year * 12 + m.month; return loanRanges.some(([s, e]) => k >= s && k <= e); }).map(m => m.month + '-' + m.year);
+    }
+
+    resultProfiles[String(p._id)] = { foundInStmt: Object.keys(byMonth).length > 0, dates: byMonth, coveredMonths: loanCovered };
   });
 
   const matchedCount = Object.values(resultProfiles).filter(p => p.foundInStmt).length;
