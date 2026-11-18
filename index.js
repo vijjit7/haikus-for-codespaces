@@ -4217,6 +4217,57 @@ async function extractBankTxnsFromText(fullText) {
   return allTxns;
 }
 
+// Compute per-month credit/debit totals for a statement by reading its OCR text directly with
+// Gemini (one call per large chunk, summed per month). Far fewer calls than enumerating every
+// transaction row, so it is fast and reliable. Returns the same shape as aggregateBankMonthly:
+// { months: [{year, month, credits, creditCount, debits, debitCount}], totalCredits, totalDebits, txnCount }.
+async function extractMonthlyTotalsFromText(fullText) {
+  if (!fullText || !fullText.trim()) return null;
+  const CHUNK = 120000;
+  const acc = {}; // "year-month" -> totals
+  let any = false;
+  for (let i = 0; i < fullText.length; i += CHUNK) {
+    const chunk = fullText.slice(i, i + CHUNK);
+    const prompt = `You are reading a bank statement (OCR text). Total the transactions per calendar month.
+
+Rules:
+- A CREDIT (deposit/inflow) increases the running balance; a DEBIT (withdrawal/outflow) decreases it. Statements usually have separate debit and credit columns plus a running balance — use them to decide direction.
+- Ignore opening-balance / brought-forward / closing-balance lines and any non-transaction rows.
+- Amounts use Indian digit grouping (e.g. 2,66,65,638.00) — output plain numbers without commas.
+- Be exhaustive: include every month that has at least one transaction.
+
+BANK STATEMENT TEXT:
+${chunk}
+
+Respond ONLY with valid JSON (month is 1-12):
+{
+  "months": [
+    { "month": 7, "year": 2025, "credits": 0, "debits": 0, "creditCount": 0, "debitCount": 0 }
+  ]
+}`;
+    let res;
+    try { res = await extractWithDocumentAI(prompt, 'emi-match', []); } catch (e) { continue; }
+    if (!res || !res.success || !res.data || !Array.isArray(res.data.months)) continue;
+    any = true;
+    res.data.months.forEach(mo => {
+      const m = parseInt(mo.month, 10), y = parseInt(mo.year, 10);
+      if (!(m >= 1 && m <= 12 && y >= 2000 && y <= 2100)) return;
+      const k = y + '-' + m;
+      if (!acc[k]) acc[k] = { year: y, month: m, credits: 0, creditCount: 0, debits: 0, debitCount: 0 };
+      acc[k].credits += Math.abs(parseFloat(mo.credits) || 0);
+      acc[k].debits += Math.abs(parseFloat(mo.debits) || 0);
+      acc[k].creditCount += parseInt(mo.creditCount, 10) || 0;
+      acc[k].debitCount += parseInt(mo.debitCount, 10) || 0;
+    });
+  }
+  if (!any) return null;
+  const months = Object.values(acc).sort((a, b) => (a.year * 12 + a.month) - (b.year * 12 + b.month));
+  const totalCredits = months.reduce((s, m) => s + m.credits, 0);
+  const totalDebits = months.reduce((s, m) => s + m.debits, 0);
+  const txnCount = months.reduce((s, m) => s + m.creditCount + m.debitCount, 0);
+  return { months, totalCredits, totalDebits, txnCount };
+}
+
 // Read ONE bank-statement text chunk and ask Gemini directly which dates each loan's EMI
 // cleared. This works straight off the OCR text — no separate transaction-extraction pass —
 // so it is far fewer calls than enumerating every row. Returns
@@ -8047,10 +8098,19 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
             proposal.documents[i].pages = pdfResult.numPages;
             proposal.documents[i].extractionMethod = pdfResult.method || 'pymupdf';
 
-            // NOTE: per-transaction extraction (bankMonthly) is intentionally NOT done here — it
-            // fires many chunked Gemini calls per statement and was making this button hang. This
-            // route now only extracts the statement summary (bank name / account / period). The
-            // per-month totals are computed separately by POST /stage2/:id/extract-bank-monthly.
+            // Monthly credit/debit totals via a direct per-statement read (one call per chunk) —
+            // fast, unlike the old per-transaction enumeration that made this button hang.
+            try {
+              const bm = await extractMonthlyTotalsFromText(fullText);
+              if (bm) {
+                proposal.documents[i].bankMonthly = bm;
+                console.log(`✓ Bank monthly via AI: credits ₹${Math.round(bm.totalCredits)}, debits ₹${Math.round(bm.totalDebits)}, ${bm.months.length} month(s)`);
+              } else {
+                console.log('⚠ Monthly totals read returned nothing for', doc.originalName);
+              }
+            } catch (bmErr) {
+              console.error('Bank monthly AI read error:', bmErr.message);
+            }
 
             extractionResults.push({
               fileName: doc.originalName,
@@ -8106,14 +8166,13 @@ app.post('/stage2/:proposalId/extract-bank-monthly', async (req, res) => {
       const doc = docs[i];
       if (doc.category !== 'banking' || !doc.extractedText) continue;
       try {
-        const txns = await extractBankTxnsFromText(doc.extractedText);
-        doc.bankTxns = txns || [];
-        if (txns && txns.length) {
-          doc.bankMonthly = aggregateBankMonthly(txns);
+        const bm = await extractMonthlyTotalsFromText(doc.extractedText);
+        if (bm) {
+          doc.bankMonthly = bm;
           processedCount++;
-          results.push({ fileName: doc.originalName, txnCount: txns.length });
+          results.push({ fileName: doc.originalName, months: bm.months.length, totalCredits: Math.round(bm.totalCredits), totalDebits: Math.round(bm.totalDebits) });
         } else {
-          results.push({ fileName: doc.originalName, txnCount: 0 });
+          results.push({ fileName: doc.originalName, months: 0 });
         }
       } catch (e) {
         results.push({ fileName: doc.originalName, error: e.message });
