@@ -8124,19 +8124,9 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
             proposal.documents[i].pages = pdfResult.numPages;
             proposal.documents[i].extractionMethod = pdfResult.method || 'pymupdf';
 
-            // Monthly credit/debit totals via a direct per-statement read (one call per chunk) —
-            // fast, unlike the old per-transaction enumeration that made this button hang.
-            try {
-              const bm = await extractMonthlyTotalsFromText(fullText);
-              if (bm) {
-                proposal.documents[i].bankMonthly = bm;
-                console.log(`✓ Bank monthly via AI: credits ₹${Math.round(bm.totalCredits)}, debits ₹${Math.round(bm.totalDebits)}, ${bm.months.length} month(s)`);
-              } else {
-                console.log('⚠ Monthly totals read returned nothing for', doc.originalName);
-              }
-            } catch (bmErr) {
-              console.error('Bank monthly AI read error:', bmErr.message);
-            }
+            // NOTE: monthly credit/debit totals (bankMonthly) are NOT computed here — enumerating
+            // ~1000+ transactions takes minutes and would hang this button. They are computed in
+            // the background after the response is sent (see below) and by POST extract-bank-monthly.
 
             extractionResults.push({
               fileName: doc.originalName,
@@ -8170,6 +8160,28 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
       message: `Extracted bank details from ${processedCount} statement(s)`,
       extractionResults
     });
+
+    // Background: compute exact monthly credit/debit totals (enumerate txns, sum in code). This
+    // runs AFTER the response so the summary button returns immediately; the totals appear on the
+    // next Stage 3 load. Fire-and-forget — not awaited by the request.
+    if (processedCount > 0) {
+      (async () => {
+        try {
+          const docs = proposal.documents || [];
+          let done = 0;
+          for (const doc of docs) {
+            if (doc.category !== 'banking' || !doc.extractedText) continue;
+            try {
+              const bm = await extractMonthlyTotalsFromText(doc.extractedText);
+              if (bm) { doc.bankMonthly = bm; done++; }
+            } catch (e) { console.error('Background monthly totals error for', doc.originalName, e.message); }
+          }
+          if (done > 0) { await updateProposal(proposalId, { documents: docs }); console.log(`✓ Background monthly totals computed for ${done} statement(s) of ${proposalId}`); }
+        } catch (e) {
+          console.error('Background monthly totals job failed:', e.message);
+        }
+      })();
+    }
   } catch (error) {
     console.error('Bank statement reprocess error:', error);
     res.status(500).json({ success: false, error: error.message });
