@@ -8490,6 +8490,38 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
   }
 });
 
+// Read-only diagnostic for bank-statement account-holder capture. For each banking doc it reports the
+// stored holder, whether the file still exists in GridFS (if not, Re-extract silently skips it and the
+// old value sticks), the first chunk of stored text, and what the CURRENT fallback logic would produce
+// from that text. Hit /stage2/<proposalId>/holder-debug on the deployed app to see the ground truth.
+app.get('/stage2/:proposalId/holder-debug', async (req, res) => {
+  try {
+    const proposal = await getProposalById(req.params.proposalId);
+    if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+    const banking = (proposal.documents || []).filter(d => d.category === 'banking');
+    const out = [];
+    for (const doc of banking) {
+      const text = doc.extractedText || '';
+      let inGridFS = false;
+      try { inGridFS = await existsInGridFS(doc.filename); } catch (e) {}
+      const fb = extractBankStatementDetailsFallback(text, doc.originalName || '');
+      out.push({
+        originalName: doc.originalName,
+        storedHolder: doc.extractedDetails ? doc.extractedDetails.accountHolder : null,
+        storedBank: doc.extractedDetails ? doc.extractedDetails.bankName : null,
+        extractionMethod: doc.extractionMethod || null,
+        fileInGridFS: inGridFS,            // false => Re-extract can't touch this doc
+        textLen: text.length,
+        headerSample: text.slice(0, 600),  // what extraction actually sees
+        fallbackWouldGive: fb.accountHolder // what the current fixed code would store on re-extract
+      });
+    }
+    res.json({ proposalId: req.params.proposalId, applicantName: proposal.applicantName || null, bankingDocCount: banking.length, docs: out });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Heavy, separate step: per-transaction extraction to build each statement's monthly
 // credit/debit totals (bankMonthly). Split out of reprocess-banking so the bank-statement
 // summary stays fast; call this only when the monthly-totals analysis is needed.
