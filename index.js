@@ -863,11 +863,6 @@ const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 // env; if the primary ever refuses or errors, callGeminiVision falls back to OCR_FALLBACK_MODEL.
 const OCR_PRIMARY_MODEL = process.env.OCR_PRIMARY_MODEL || 'google/gemini-2.5-flash';
 const OCR_FALLBACK_MODEL = process.env.OCR_FALLBACK_MODEL || 'google/gemini-2.5-flash';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-if (!GEMINI_API_KEY) {
-  console.warn('⚠️ GEMINI_API_KEY is not set — direct Gemini API calls will fail. Set it in .env');
-}
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent';
 
 // Middleware
 app.use(express.static('public'));
@@ -4295,23 +4290,29 @@ ${ch}`;
   }
 
   // Correct debit/credit from the SIGNED running-balance movement — far more reliable than the
-  // model's guess on flattened OCR, and correct for overdraft accounts (balance is negative). A
-  // credit raises the signed balance, a debit lowers it. Statements may be printed oldest-first or
-  // newest-first, so pick the correct neighbouring row by date order.
-  if (txns.length >= 3) {
-    const dnum = (s) => { const m = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(s); return m ? (+m[3]) * 372 + (+m[2]) * 31 + (+m[1]) : 0; };
-    const newestFirst = dnum(txns[0].date) > dnum(txns[txns.length - 1].date);
-    for (let i = 0; i < txns.length; i++) {
-      const j = newestFirst ? i + 1 : i - 1; // the chronologically-previous row
-      if (j < 0 || j >= txns.length) continue;
-      const delta = txns[i].balance - txns[j].balance;
-      // Only override when the balance step matches this row's amount (guards against OCR noise).
-      if (Math.abs(Math.abs(delta) - txns[i].amount) <= Math.max(1, txns[i].amount * 0.01)) {
-        txns[i].type = delta > 0 ? 'C' : 'D';
-      }
+  // model's guess on flattened OCR, and correct for overdraft accounts (balance is negative).
+  correctTxnDirectionByBalance(txns);
+
+  return txns;
+}
+
+// Correct each transaction's debit/credit (type) from the SIGNED running-balance movement — a
+// credit raises the signed balance, a debit lowers it. Far more reliable than a model/column guess,
+// and correct for overdraft accounts (balance is negative). Statements may be printed oldest- or
+// newest-first, so the chronologically-previous row is picked by date order. Mutates and returns txns.
+function correctTxnDirectionByBalance(txns) {
+  if (!Array.isArray(txns) || txns.length < 3) return txns;
+  const dnum = (s) => { const m = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(s); return m ? (+m[3]) * 372 + (+m[2]) * 31 + (+m[1]) : 0; };
+  const newestFirst = dnum(txns[0].date) > dnum(txns[txns.length - 1].date);
+  for (let i = 0; i < txns.length; i++) {
+    const j = newestFirst ? i + 1 : i - 1; // the chronologically-previous row
+    if (j < 0 || j >= txns.length) continue;
+    const delta = txns[i].balance - txns[j].balance;
+    // Only override when the balance step matches this row's amount (guards against noise).
+    if (Math.abs(Math.abs(delta) - txns[i].amount) <= Math.max(1, txns[i].amount * 0.01)) {
+      txns[i].type = delta > 0 ? 'C' : 'D';
     }
   }
-
   return txns;
 }
 
@@ -4321,6 +4322,238 @@ async function extractMonthlyTotalsFromText(fullText) {
   const txns = await extractBankTxnsCompact(fullText);
   if (!txns.length) return null;
   return aggregateBankMonthly(txns);
+}
+
+// ============================================
+// CODE-FIRST BANK-STATEMENT PARSING (no AI)
+// ============================================
+// For digital (text-layer) bank statements, pdfplumber returns the transaction grid as structured
+// tables. Parsing those rows in code gives us the exact transactions with ZERO AI tokens — we only
+// fall back to the Gemini path (extractMonthlyTotalsFromText) for scanned statements or layouts the
+// parser can't reconcile. See extract-bank-monthly.
+
+// Parse an Indian-format currency cell ("1,23,456.78", "12,345.00 Dr", "₹500") to a number.
+// Returns null for empty / non-numeric cells so callers can tell "no value" from "zero".
+function parseIndianAmount(s) {
+  if (s == null) return null;
+  let cleaned = String(s).replace(/\n/g, ' ').replace(/(inr|rs\.?|₹)/ig, '').replace(/\b(dr|cr)\b\.?/ig, '').replace(/[^0-9.,-]/g, '').trim();
+  if (!cleaned || !/[0-9]/.test(cleaned)) return null;
+  const neg = /^-/.test(cleaned);
+  cleaned = cleaned.replace(/-/g, '');
+  if (/\.\d{2}$/.test(cleaned)) {
+    cleaned = cleaned.replace(/,/g, ''); // trailing ".dd" is the decimal; commas are grouping
+  } else {
+    cleaned = cleaned.replace(/,/g, '');
+    if ((cleaned.match(/\./g) || []).length > 1) cleaned = cleaned.replace(/\./g, ''); // OCR dot-noise
+  }
+  const n = parseFloat(cleaned);
+  if (!isFinite(n)) return null;
+  return neg ? -n : n;
+}
+
+// Normalise a date cell to DD-MM-YYYY (what aggregateBankMonthly expects). Handles DD/MM/YYYY,
+// DD-MM-YYYY, DD.MM.YYYY and DD-MMM-YYYY (01-Jan-2024), 2- or 4-digit years. Returns null if the
+// cell isn't a date (header / narration / continuation rows).
+function normalizeBankDate(s) {
+  if (!s) return null;
+  const pad = (v) => String(v).padStart(2, '0');
+  const fixYear = (y) => (y.length === 2 ? (+y > 50 ? '19' : '20') + y : y);
+  const txt = String(s).replace(/\n/g, ' ').trim();
+  const months = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+  // DD-MMM-YYYY / DD MMM YY
+  let m = /^(\d{1,2})[-\s\/]([A-Za-z]{3,})[-\s\/](\d{2,4})\b/.exec(txt);
+  if (m) {
+    const mo = months[m[2].slice(0, 3).toLowerCase()];
+    if (!mo) return null;
+    const dd = +m[1];
+    if (dd < 1 || dd > 31) return null;
+    return `${pad(dd)}-${pad(mo)}-${fixYear(m[3])}`;
+  }
+  // DD/MM/YYYY etc. — take the first whitespace token (cells sometimes carry a trailing time)
+  m = /^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})\b/.exec(txt.split(' ')[0]);
+  if (m) {
+    const dd = +m[1], mm = +m[2];
+    if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+    return `${pad(dd)}-${pad(mm)}-${fixYear(m[3])}`;
+  }
+  return null;
+}
+
+// Identify the date / debit / credit / amount / balance columns from a candidate header row.
+// Returns null unless at least a date + balance + one money column are present.
+function mapBankColumns(cells) {
+  if (!Array.isArray(cells)) return null;
+  const norm = cells.map(c => String(c || '').toLowerCase().replace(/\s+/g, ' ').trim());
+  const find = (re) => { for (let i = 0; i < norm.length; i++) if (re.test(norm[i])) return i; return -1; };
+  const cols = {
+    date: find(/date/),
+    debit: find(/withdrawal|debit|dr\.?$|paid|withdraw/),
+    credit: find(/deposit|credit|cr\.?$|received/),
+    amount: find(/^amount$|transaction amount|txn amount/),
+    balance: find(/balance/),
+  };
+  const hasMoney = cols.debit >= 0 || cols.credit >= 0 || cols.amount >= 0;
+  if (cols.date < 0 || cols.balance < 0 || !hasMoney) return null;
+  return cols;
+}
+
+// Parse one data row into { date, type, amount, balance } (signed balance for overdraft accounts),
+// or null if the row isn't a transaction (no date, or no money movement).
+function parseBankRow(row, cols) {
+  if (!Array.isArray(row)) return null;
+  const cell = (i) => (i == null || i < 0 || i >= row.length) ? '' : String(row[i] || '');
+  const date = normalizeBankDate(cell(cols.date));
+  if (!date) return null;
+  const balRaw = cell(cols.balance);
+  const balMag = parseIndianAmount(balRaw);
+  if (balMag == null) return null;
+  const balance = /(^-|\bdr\b|dr\.?$)/i.test(balRaw.trim()) ? -Math.abs(balMag) : Math.abs(balMag);
+
+  let amount = null, type = null;
+  if (cols.debit >= 0 || cols.credit >= 0) {
+    const d = parseIndianAmount(cell(cols.debit));
+    const c = parseIndianAmount(cell(cols.credit));
+    if (d != null && d > 0) { amount = d; type = 'D'; }
+    else if (c != null && c > 0) { amount = c; type = 'C'; }
+    else return null; // no movement on this row (opening/closing balance line, etc.)
+  } else {
+    const a = parseIndianAmount(cell(cols.amount));
+    if (a == null || a === 0) return null;
+    amount = Math.abs(a);
+    type = a < 0 ? 'D' : 'C'; // provisional — corrected from the balance movement below
+  }
+  return { date, type, amount: Math.abs(amount), balance };
+}
+
+// Parse structured pdfplumber tables into a transaction list. De-dupes rows and corrects each
+// row's debit/credit direction from the running balance. Returns [] if no transaction grid found.
+function parseBankTxnsFromTables(tables) {
+  if (!Array.isArray(tables) || !tables.length) return [];
+  const seen = new Set();
+  const txns = [];
+  for (const tbl of tables) {
+    const rows = (tbl && tbl.rows) || [];
+    if (rows.length < 2) continue;
+    // The header is usually the first row, but a title/period row can precede it — scan a few.
+    let headerIdx = -1, cols = null;
+    for (let r = 0; r < Math.min(rows.length, 5); r++) {
+      const c = mapBankColumns(rows[r]);
+      if (c) { headerIdx = r; cols = c; break; }
+    }
+    if (!cols) continue;
+    for (let r = headerIdx + 1; r < rows.length; r++) {
+      const t = parseBankRow(rows[r], cols);
+      if (!t) continue;
+      const key = `${t.date}|${t.amount}|${t.balance}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      txns.push(t);
+    }
+  }
+  return correctTxnDirectionByBalance(txns);
+}
+
+// Validate a parsed transaction list by checking the running balance reconciles: for most rows the
+// signed balance step should equal ±amount. A clean digital statement reconciles almost perfectly;
+// a mis-parsed/merged table won't, so we reject it and let the AI path handle that statement.
+function bankTxnsReconcile(txns, minRows = 5, minFrac = 0.8) {
+  if (!Array.isArray(txns) || txns.length < minRows) return false;
+  const dnum = (s) => { const m = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(s); return m ? (+m[3]) * 372 + (+m[2]) * 31 + (+m[1]) : 0; };
+  const newestFirst = dnum(txns[0].date) > dnum(txns[txns.length - 1].date);
+  let ok = 0, checked = 0;
+  for (let i = 0; i < txns.length; i++) {
+    const j = newestFirst ? i + 1 : i - 1;
+    if (j < 0 || j >= txns.length) continue;
+    checked++;
+    const delta = txns[i].balance - txns[j].balance;
+    if (Math.abs(Math.abs(delta) - txns[i].amount) <= Math.max(1, txns[i].amount * 0.01)) ok++;
+  }
+  return checked > 0 && (ok / checked) >= minFrac;
+}
+
+// True for a bank-statement PDF whose text came from a real text layer (not OCR), so pdfplumber can
+// read its transaction grid as tables. Scanned statements (gemini/ocr methods) have no text layer —
+// attempting table extraction would needlessly trigger slow OCR, so they skip straight to the AI path.
+function isDigitalPdfDoc(doc) {
+  if (!doc || !(doc.originalName || doc.filename || '').toLowerCase().endsWith('.pdf')) return false;
+  return ['pymupdf', 'pdfplumber', 'pdf-parse'].includes(doc.extractionMethod);
+}
+
+// Code-first transaction read for one statement: pull the PDF from storage, extract its tables,
+// parse and reconcile them. Returns the reconciled { date, type, amount, balance } list on success,
+// or null to signal the caller to fall back to the AI path. Never throws out — callers also guard.
+async function parseBankTxnsFromPdf(doc) {
+  if (!isDigitalPdfDoc(doc) || !doc.filename) return null;
+  if (!(await existsInGridFS(doc.filename))) return null;
+  const buf = await readFromGridFS(doc.filename);
+  if (!buf) return null;
+  let txns = null;
+  await withTempFile(buf, doc.filename, async (filePath) => {
+    const pdfResult = await extractPDFWithTableDetection(filePath, true); // tables ON
+    const parsed = parseBankTxnsFromTables(pdfResult.tables || []);
+    if (bankTxnsReconcile(parsed)) txns = parsed;
+  });
+  return txns;
+}
+
+// Code-first monthly totals for one statement (zero AI). Returns the aggregateBankMonthly shape
+// (with a `.method` tag) on success, or null to signal the caller to fall back to the AI path.
+async function parseBankMonthlyFromPdf(doc) {
+  const txns = await parseBankTxnsFromPdf(doc);
+  if (!txns) return null;
+  const result = aggregateBankMonthly(txns);
+  result.method = 'table-parse';
+  return result;
+}
+
+// Match each loan's EMI against a reconciled transaction list, in code (zero AI). A debit whose
+// amount equals the loan's EMI (to the whole rupee) is that loan's repayment; take at most one such
+// debit per calendar month (the earliest). Mirrors matchEmisInStatementText's output shape so
+// computeEmiTracking can consume either source. Returns { firstTxnDate, latestTxnDate, matches }.
+function matchEmisInTxns(txns, loans) {
+  const empty = { firstTxnDate: null, latestTxnDate: null, matches: {} };
+  const dnum = (s) => { const m = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(s); return m ? (+m[3]) * 372 + (+m[2]) * 31 + (+m[1]) : 0; };
+  const dated = (txns || []).filter(t => /^\d{1,2}-\d{1,2}-\d{4}$/.test(t.date)).slice().sort((a, b) => dnum(a.date) - dnum(b.date));
+  if (!dated.length) return empty;
+  const monthKey = (d) => { const m = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(d); return m ? m[3] + '-' + m[2] : null; };
+  const matches = {};
+  for (const loan of loans) {
+    const emi = Math.round(loan.emi);
+    if (!(emi > 0)) continue;
+    const seenMonths = new Set();
+    const dates = [];
+    for (const t of dated) { // ascending by date, so the earliest debit in each month wins
+      if (t.type !== 'D') continue;
+      if (Math.abs(Math.round(t.amount) - emi) > 1) continue; // whole-rupee amount match
+      const mk = monthKey(t.date);
+      if (mk && seenMonths.has(mk)) continue; // at most one per calendar month
+      if (mk) seenMonths.add(mk);
+      dates.push(t.date);
+    }
+    if (dates.length) matches[String(loan.id)] = dates;
+  }
+  return { firstTxnDate: dated[0].date, latestTxnDate: dated[dated.length - 1].date, matches };
+}
+
+// From loans NOT exact-matched in this statement, pick the ones that look floating-rate: a recurring
+// debit NEAR the EMI amount (within 15%) across >=2 distinct months. These are escalated to the AI,
+// which can use narration/lender names to confirm a drifted instalment. Loans with no near-amount
+// debit at all are left out — the statement simply doesn't carry that loan (no wasted AI call).
+function floatingRateCandidateLoans(txns, loans, matchedIds) {
+  const debits = (txns || []).filter(t => t.type === 'D' && t.amount > 0);
+  const out = [];
+  for (const loan of loans) {
+    if (matchedIds.has(String(loan.id)) || !(loan.emi > 0)) continue;
+    const months = new Set();
+    for (const t of debits) {
+      if (Math.abs(t.amount - loan.emi) <= loan.emi * 0.15) {
+        const m = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(t.date);
+        if (m) months.add(m[3] + '-' + m[2]);
+      }
+    }
+    if (months.size >= 2) out.push(loan);
+  }
+  return out;
 }
 
 // Read ONE bank-statement text chunk and ask Gemini directly which dates each loan's EMI
@@ -4416,20 +4649,57 @@ async function computeEmiTracking(proposal, debtProfiles) {
   let anyCall = false, anySuccess = false;
   const toKey = (p) => (p && p.mo >= 0 && p.mo <= 11) ? (p.y * 12 + p.mo) : null;
   for (const doc of bankingDocs) {
-    const text = doc.extractedText || '';
     const info = { start: null, end: null, loans: new Set() };
-    for (let i = 0; i < text.length; i += CHUNK) {
-      const chunk = text.slice(i, i + CHUNK);
-      anyCall = true;
-      let r;
-      try {
-        r = await matchEmisInStatementText(loans, chunk);
-      } catch (e) {
-        console.error('EMI tracking: statement read failed for', doc.originalName, e.message);
-        continue;
+    // Collect one or more per-statement results. Code-first: parse the statement's table grid and
+    // match EMIs by amount in code (zero AI). Only on failure do we chunk the OCR text through Gemini.
+    const statementResults = [];
+    let codeTxns = null;
+    try {
+      codeTxns = await parseBankTxnsFromPdf(doc);
+    } catch (e) {
+      console.error('EMI tracking: table-parse failed for', doc.originalName, e.message);
+    }
+    if (codeTxns) {
+      anyCall = true; anySuccess = true;
+      const codeResult = matchEmisInTxns(codeTxns, loans);
+      statementResults.push(codeResult);
+      // Per-loan AI fallback for floating-rate EMIs: loans the code path couldn't exact-match but
+      // that have a recurring near-EMI debit here. Re-read ONLY those loans (small prompt) and merge
+      // their matches; the statement's date span is already set from the code result, so ignore the
+      // AI read's first/latest dates. This keeps AI calls rare and targeted at drifted instalments.
+      const matchedIds = new Set(Object.keys(codeResult.matches || {}));
+      const candidates = floatingRateCandidateLoans(codeTxns, loans, matchedIds);
+      if (candidates.length) {
+        const text = doc.extractedText || '';
+        for (let i = 0; i < text.length; i += CHUNK) {
+          let r;
+          try {
+            r = await matchEmisInStatementText(candidates, text.slice(i, i + CHUNK));
+          } catch (e) {
+            console.error('EMI tracking: floating-rate AI read failed for', doc.originalName, e.message);
+            continue;
+          }
+          if (r && r.matches) statementResults.push({ firstTxnDate: null, latestTxnDate: null, matches: r.matches });
+        }
       }
-      if (!r) continue;
-      anySuccess = true;
+    } else {
+      const text = doc.extractedText || '';
+      for (let i = 0; i < text.length; i += CHUNK) {
+        const chunk = text.slice(i, i + CHUNK);
+        anyCall = true;
+        let r;
+        try {
+          r = await matchEmisInStatementText(loans, chunk);
+        } catch (e) {
+          console.error('EMI tracking: statement read failed for', doc.originalName, e.message);
+          continue;
+        }
+        if (!r) continue;
+        anySuccess = true;
+        statementResults.push(r);
+      }
+    }
+    for (const r of statementResults) {
       const fk = toKey(parse(r.firstTxnDate));
       const lk = toKey(parse(r.latestTxnDate));
       if (lk !== null && lk <= nowKey && (latestKey === null || lk > latestKey)) latestKey = lk;
@@ -8074,12 +8344,15 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
               console.log('✓ Document AI extraction successful for:', doc.originalName);
               console.log('AI Extracted Data:', JSON.stringify(aiResult.data, null, 2));
 
-              // Validate AI-extracted account holder against actual text (prevent hallucination)
+              // Validate AI-extracted account holder against actual text (prevent hallucination).
+              // Compare with spaces/punctuation stripped: some banks' extracted text runs the name
+              // together (HDFC prints "M/S. PRAGATIENTERPRIZE"), so a correctly-spaced AI name like
+              // "PRAGATI ENTERPRIZE" would otherwise be wrongly rejected and lose its spacing.
               let aiAccountHolder = aiResult.data.accountHolder || 'N/A';
               if (aiAccountHolder && aiAccountHolder !== 'N/A') {
-                const headerText = fullText.substring(0, 1500).toUpperCase();
-                const holderUpper = aiAccountHolder.toUpperCase().trim();
-                if (!headerText.includes(holderUpper)) {
+                const squash = (s) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
+                const headerSquashed = squash(fullText.substring(0, 1500));
+                if (!headerSquashed.includes(squash(aiAccountHolder))) {
                   console.log(`⚠ AI account holder "${aiAccountHolder}" NOT found in header text, using fallback extraction`);
                   // Try fallback extraction for account holder
                   const fallbackDetails = extractBankStatementDetailsFallback(fullText, doc.originalName);
@@ -8095,7 +8368,7 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
 
               bankStatementDetails = {
                 bankName: aiResult.data.bankName || 'N/A',
-                accountHolder: aiAccountHolder,
+                accountHolder: cleanAccountHolderName(aiAccountHolder),
                 accountNumber: aiResult.data.accountNumber || 'N/A',
                 last4Digits: last4,
                 periodFrom: aiResult.data.periodFrom || 'N/A',
@@ -8233,13 +8506,22 @@ app.post('/stage2/:proposalId/extract-bank-monthly', async (req, res) => {
       const doc = docs[i];
       if (doc.category !== 'banking' || !doc.extractedText) continue;
       try {
-        const bm = await extractMonthlyTotalsFromText(doc.extractedText);
+        // Code-first: parse the statement's table rows deterministically (zero AI). Only digital
+        // (text-layer) PDFs qualify; scanned statements fall straight through to the AI path.
+        let bm = null, method = 'ai';
+        try {
+          const parsed = await parseBankMonthlyFromPdf(doc);
+          if (parsed) { bm = parsed; method = 'table-parse'; }
+        } catch (pe) {
+          console.error('table-parse monthly failed for', doc.originalName, pe.message);
+        }
+        if (!bm) bm = await extractMonthlyTotalsFromText(doc.extractedText); // AI fallback
         if (bm) {
           doc.bankMonthly = bm;
           processedCount++;
-          results.push({ fileName: doc.originalName, months: bm.months.length, totalCredits: Math.round(bm.totalCredits), totalDebits: Math.round(bm.totalDebits) });
+          results.push({ fileName: doc.originalName, method, months: bm.months.length, totalCredits: Math.round(bm.totalCredits), totalDebits: Math.round(bm.totalDebits) });
         } else {
-          results.push({ fileName: doc.originalName, months: 0 });
+          results.push({ fileName: doc.originalName, method, months: 0 });
         }
       } catch (e) {
         results.push({ fileName: doc.originalName, error: e.message });
@@ -8787,6 +9069,19 @@ app.post('/stage2/:proposalId/reprocess-personal-docs', async (req, res) => {
   }
 });
 
+// Strip a leading business/person salutation (M/S., Messrs, Mr., Mrs., Ms., Miss) from an extracted
+// account-holder name so it stores consistently — e.g. "M/S. PRAGATI ENTERPRIZE" becomes "PRAGATI
+// ENTERPRIZE". Idempotent and safe to call on already-clean names. NOTE: honorifics like Sri/Shri/
+// Smt are deliberately NOT stripped — they are frequently part of Indian business names.
+function cleanAccountHolderName(name) {
+  if (!name || name === 'N/A') return name;
+  const n = String(name)
+    .replace(/^\s*(?:M\/S\.?|MESSRS\.?|MR\.?|MRS\.?|MS\.?|MISS\.?)\s+/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return n || name; // if stripping left nothing (name was only a salutation), keep the original
+}
+
 // Fallback pattern matching for bank statement details
 function extractBankStatementDetailsFallback(text, filename = '') {
   // Normalize Unicode dashes/minus signs to regular hyphens (Cosmos Bank etc. use − U+2212)
@@ -9013,7 +9308,7 @@ function extractBankStatementDetailsFallback(text, filename = '') {
       holder = holder.replace(/\s+(Plot|Door|No|House|Flat|Building|Street|Road|Lane|Address|Branch).*$/i, '').trim();
       // Remove trailing period
       holder = holder.replace(/\.\s*$/, '').trim();
-      result.accountHolder = holder;
+      result.accountHolder = cleanAccountHolderName(holder);
       break;
     }
   }
