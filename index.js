@@ -864,6 +864,16 @@ const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OCR_PRIMARY_MODEL = process.env.OCR_PRIMARY_MODEL || 'google/gemini-2.5-flash';
 const OCR_FALLBACK_MODEL = process.env.OCR_FALLBACK_MODEL || 'google/gemini-2.5-flash';
 
+// ---- Local OCR config (hybrid pipeline for scanned PDFs with no text layer) ----
+// Scanned PDFs are OCR'd locally first (native Tesseract → tesseract.js WASM) before paying
+// for the AI (Gemini) tier. Native Tesseract at high DPI reads bordered tables (e.g. partnership
+// deed profit/loss ratios) as well as Gemini. tesseract.js is the portable fallback that needs no
+// system binary, so the pipeline still runs where Tesseract isn't installed (e.g. a bare host).
+const OCR_LOCAL_SCALE = parseFloat(process.env.OCR_LOCAL_SCALE || '3.0'); // render DPI multiplier
+const OCR_MAX_PAGES = parseInt(process.env.OCR_MAX_PAGES || '30', 10);
+const OCR_DISABLE_LOCAL = /^(1|true|yes)$/i.test(process.env.OCR_DISABLE_LOCAL || ''); // force AI-only
+const OCR_TESSERACT_PATH = process.env.OCR_TESSERACT_PATH || ''; // explicit binary override
+
 // Middleware
 app.use(express.static('public'));
 app.set('view engine', 'ejs');
@@ -4797,6 +4807,18 @@ async function extractWithDocumentAI(text, documentType, tables = []) {
     let prompt = '';
     
     if (documentType === 'partnership-deed') {
+      // The profit/loss sharing clause often sits deep in the deed (e.g. a 12-page scanned deed
+      // has it ~char 12,000), well past a flat first-N-chars cut — which is why ratios used to come
+      // back "Not specified" while names/date (from the opening pages) extracted fine. Build a
+      // focused window: the opening (partner names + date) PLUS the actual profit/loss section,
+      // wherever it is, so the AI always sees the ratio table while keeping tokens bounded.
+      const plIdx = text.search(/THE\s+PROFIT\s+AND\s+LOSS|PROFIT\s*&?\s*LOSS\s*:|profit\s+and\s+loss\s+(?:shar|aris|shall)|(?:profit|sharing)\s+ratio/i);
+      let deedText;
+      if (plIdx > 7000) {
+        deedText = text.substring(0, 7000) + '\n...\n' + text.substring(Math.max(0, plIdx - 200), plIdx + 2500);
+      } else {
+        deedText = text.substring(0, 12000); // short deed or clause already near the top
+      }
       prompt = `You are a document extraction AI. Extract the following information from this partnership deed document:
 
 1. Date of Execution: Find the date when the deed was executed/signed. Look for phrases like:
@@ -4822,7 +4844,7 @@ async function extractWithDocumentAI(text, documentType, tables = []) {
    - Percentages associated with partner names (e.g., "Partner A: 60%, Partner B: 40%")
 
 Document Text:
-${text.substring(0, 8000)}
+${deedText}
 
 ${tables.length > 0 ? `\n\nDetected Tables:\n${JSON.stringify(tables, null, 2)}` : ''}
 
@@ -5591,8 +5613,153 @@ Return the extracted text exactly as it appears in the document.`,
   }
 }
 
-// Extract text from ALL pages of a scanned PDF using Gemini (direct PDF; falls back to canvas render)
+// ---- Hybrid local OCR (native Tesseract → tesseract.js WASM) ----
+
+// Resolve the native tesseract binary once. Returns a path/command string, or null if absent.
+// Linux (Railway): `tesseract` on PATH (installed via Dockerfile/nixpacks). Windows: the UB
+// Mannheim default install path. Overridable with OCR_TESSERACT_PATH.
+let _tessBinCache; // undefined = unresolved, null = absent, string = usable command
+function resolveTesseractBinary() {
+  if (_tessBinCache !== undefined) return _tessBinCache;
+  const { execFileSync } = require('child_process');
+  const candidates = [
+    OCR_TESSERACT_PATH,
+    'tesseract', // Linux/Railway and any PATH install
+    process.platform === 'win32' ? 'C:\\Program Files\\Tesseract-OCR\\tesseract.exe' : '',
+    process.platform === 'win32' ? 'C:\\Program Files (x86)\\Tesseract-OCR\\tesseract.exe' : ''
+  ].filter(Boolean);
+  for (const c of candidates) {
+    try {
+      execFileSync(c, ['--version'], { stdio: 'ignore', timeout: 10000 });
+      _tessBinCache = c;
+      console.log(`✓ Native Tesseract available: ${c}`);
+      return c;
+    } catch (_) { /* try next */ }
+  }
+  _tessBinCache = null;
+  console.log('ℹ Native Tesseract not found — local OCR will use tesseract.js (WASM)');
+  return null;
+}
+
+// Render up to maxPages of a PDF to PNG buffers via pdfjs + canvas (same stack prod already uses).
+async function renderPdfPagesToPng(pdfPath, scale, maxPages) {
+  const data = new Uint8Array(fs.readFileSync(pdfPath));
+  const pdfDoc = await pdfjsLib.getDocument({ data }).promise;
+  const n = Math.min(pdfDoc.numPages, maxPages);
+  const pages = [];
+  for (let p = 1; p <= n; p++) {
+    const page = await pdfDoc.getPage(p);
+    const viewport = page.getViewport({ scale });
+    const canvas = createCanvas(viewport.width, viewport.height);
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    pages.push(canvas.toBuffer('image/png'));
+  }
+  return { pages, numPages: pdfDoc.numPages };
+}
+
+// OCR a single PNG buffer with native tesseract via stdin→stdout (no temp files). PSM 3 (auto)
+// reads bordered tables well at high DPI.
+function runNativeTesseract(binPath, pngBuffer, psm = 3) {
+  return new Promise((resolve, reject) => {
+    const proc = execFile(binPath, ['stdin', 'stdout', '--psm', String(psm), '-l', 'eng'],
+      { maxBuffer: 32 * 1024 * 1024, timeout: 60000 },
+      (err, stdout) => err ? reject(err) : resolve(stdout || ''));
+    proc.stdin.on('error', () => { /* ignore EPIPE if tesseract exits early */ });
+    proc.stdin.write(pngBuffer);
+    proc.stdin.end();
+  });
+}
+
+// Stage 1: native Tesseract over all pages.
+async function ocrPdfWithNativeTesseract(pdfPath) {
+  const bin = resolveTesseractBinary();
+  if (!bin) return { success: false, text: '', error: 'native tesseract not found' };
+  const { pages, numPages } = await renderPdfPagesToPng(pdfPath, OCR_LOCAL_SCALE, OCR_MAX_PAGES);
+  let all = '';
+  for (let i = 0; i < pages.length; i++) {
+    try {
+      const t = await runNativeTesseract(bin, pages[i], 3);
+      all += `\n\n===== PAGE ${i + 1} =====\n` + t;
+    } catch (e) {
+      console.warn(`⚠️ native tesseract failed on page ${i + 1}: ${e.message}`);
+    }
+  }
+  return { success: all.trim().length > 0, text: all, numPages, method: 'native-tesseract', charCount: all.length };
+}
+
+// Stage 2: tesseract.js (WASM) over all pages — portable, no system binary required.
+async function ocrPdfWithTesseractJs(pdfPath) {
+  let worker;
+  try {
+    const { createWorker } = require('tesseract.js');
+    const { pages, numPages } = await renderPdfPagesToPng(pdfPath, OCR_LOCAL_SCALE, OCR_MAX_PAGES);
+    worker = await createWorker('eng');
+    let all = '';
+    for (let i = 0; i < pages.length; i++) {
+      const { data: { text } } = await worker.recognize(pages[i]);
+      all += `\n\n===== PAGE ${i + 1} =====\n` + text;
+    }
+    return { success: all.trim().length > 0, text: all, numPages, method: 'tesseract-js-wasm', charCount: all.length };
+  } catch (e) {
+    return { success: false, text: '', error: e.message };
+  } finally {
+    if (worker) { try { await worker.terminate(); } catch (_) {} }
+  }
+}
+
+// Accept OCR output only if it has enough real text (ignoring the page markers) — otherwise the
+// stage was effectively blank/garbage and we should try the next engine.
+function ocrTextIsUsable(res, numPages) {
+  if (!res || !res.success || !res.text) return false;
+  const bodyLen = res.text.replace(/=====[^\n]*=====/g, '').trim().length;
+  const pages = numPages || res.numPages || 1;
+  return bodyLen >= Math.max(150, pages * 40);
+}
+
+// Hybrid OCR for scanned PDFs (no text layer):
+//   Stage 1: native Tesseract (local, best bordered-table fidelity at high DPI)
+//   Stage 2: tesseract.js WASM (local, portable — runs with no system binary)
+//   Stage 3: AI / Gemini (highest quality; cloud + paid) — last resort
+// AI stays available but is only reached when both local engines come up short, cutting token
+// spend on the common case. Set OCR_DISABLE_LOCAL=1 to force the old AI-only behaviour.
 async function extractAllPagesWithVisionOCR(pdfPath) {
+  if (OCR_DISABLE_LOCAL) {
+    console.log('→ OCR: local engines disabled (OCR_DISABLE_LOCAL), using AI...');
+    return await extractAllPagesWithGemini(pdfPath);
+  }
+  let numPages;
+  // Stage 1 — native Tesseract
+  try {
+    const nat = await ocrPdfWithNativeTesseract(pdfPath);
+    numPages = nat.numPages;
+    if (ocrTextIsUsable(nat, numPages)) {
+      console.log(`✓ OCR stage 1 (native Tesseract): ${nat.charCount} chars from ${numPages} pages`);
+      return nat;
+    }
+    console.warn(`⚠️ OCR stage 1 (native Tesseract) insufficient (${nat.error || nat.charCount + ' chars'}) — trying tesseract.js...`);
+  } catch (e) {
+    console.warn('⚠️ OCR stage 1 (native Tesseract) error:', e.message);
+  }
+  // Stage 2 — tesseract.js (WASM)
+  try {
+    const wasm = await ocrPdfWithTesseractJs(pdfPath);
+    numPages = numPages || wasm.numPages;
+    if (ocrTextIsUsable(wasm, numPages)) {
+      console.log(`✓ OCR stage 2 (tesseract.js WASM): ${wasm.charCount} chars from ${numPages} pages`);
+      return wasm;
+    }
+    console.warn(`⚠️ OCR stage 2 (tesseract.js) insufficient (${wasm.error || wasm.charCount + ' chars'}) — falling back to AI...`);
+  } catch (e) {
+    console.warn('⚠️ OCR stage 2 (tesseract.js) error:', e.message);
+  }
+  // Stage 3 — AI (Gemini)
+  console.log('→ OCR stage 3 (AI/Gemini)...');
+  return await extractAllPagesWithGemini(pdfPath);
+}
+
+// Stage 3 engine: extract text from ALL pages of a scanned PDF using Gemini (direct PDF; falls
+// back to canvas render). Kept as the final tier of the hybrid pipeline above.
+async function extractAllPagesWithGemini(pdfPath) {
   // Primary: send the whole PDF directly to Gemini — it reads all pages natively, no canvas.
   try {
     const dataBuffer = fs.readFileSync(pdfPath);

@@ -1,5 +1,5 @@
 [phases.setup]
-aptPkgs = ["build-essential", "libcairo2-dev", "libpango1.0-dev", "libjpeg-dev", "libgif-dev", "librsvg2-dev"]
+aptPkgs = ["build-essential", "libcairo2-dev", "libpango1.0-dev", "libjpeg-dev", "libgif-dev", "librsvg2-dev", "qpdf", "tesseract-ocr", "tesseract-ocr-eng"]
 
 [phases.install]
 cmds = ["npm install"]
