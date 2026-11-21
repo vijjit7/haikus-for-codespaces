@@ -938,6 +938,9 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 if (!OPENROUTER_API_KEY) {
   console.warn('⚠️ OPENROUTER_API_KEY is not set — document OCR/AI extraction will fail. Set it in .env');
 }
+// Dedicated key for bank-policy extraction (Opus) so its spend/limits are tracked separately from
+// OCR and other AI calls. Falls back to the shared key when not set.
+const OPENROUTER_POLICY_API_KEY = process.env.OPENROUTER_POLICY_API_KEY || OPENROUTER_API_KEY;
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 // Vision OCR models (served via OpenRouter). Gemini 2.5 Flash is the default: it is cheap and,
 // in testing on this app's KYC documents, the most reliable — it transcribes both PAN and
@@ -2106,13 +2109,18 @@ function regexExtractPolicy(text) {
   return regexExtractPolicies(text)[0];
 }
 
-// AI-based policy extraction (Phase 2 - for complex messages)
-async function aiExtractPolicy(text) {
+// AI-based policy extraction. Returns an ARRAY of policies — one object per product the message
+// describes — each classified into a product_category. This is the primary extractor for pasted
+// policies and document imports (regex is the fallback when this returns nothing). A single message
+// often lists several products (HL, LAP, Business Loan…) with per-product ROI/LTV, so the AI is asked
+// to split them into separate objects for better accuracy and to match the 5-product segregation.
+async function aiExtractPolicies(text) {
   try {
-    const prompt = `Extract bank loan policy details from this WhatsApp message. Return ONLY valid JSON with these fields (use null for missing):
+    const prompt = `Extract bank loan policy details from this message. The message may describe MULTIPLE products (e.g. Home Loan, LAP and Business Loan with different ROI/LTV). Return ONLY a valid JSON ARRAY with ONE object PER PRODUCT. Use null for missing fields. Each object:
 {
   "bank_name": "string",
   "department": "Prime/Affordable/Micro/SME/Corporate/Standard/Other",
+  "product_category": "one of EXACTLY: LAP, Affordable LAP, HL, Affordable HL, Business Loan, Other",
   "loan_type": "Home Loan/LAP/Business Loan/Balance Transfer/Personal Loan/Working Capital/Other",
   "product_type": "HL/LAP/LRD/BT_TopUp/Commercial_Purchase/Other",
   "loan_min_lakhs": number,
@@ -2137,7 +2145,10 @@ async function aiExtractPolicy(text) {
   "surrogate_types": ["Banking_Surrogate", "GST", "Gross_Turnover", "LIP", "Low_LTV", "ITR/CPM", "EBITDA_Margin", "Pure_Rental", "RTR", "Income_Multiplier", "Hybrid_Mortgage", "Subjective_Cash_Flow", "Gross_Professional_Receipts", "LRD", "Turnover_Linked"]
 }
 
-IMPORTANT: Extract loan_min_lakhs even when shown as "Minimum - 50 Lakhs" (separate line from maximum). Capture ALL property types mentioned including specialized ones (hospital, hostel, hotel, lodge, cinema, mall, etc.).
+RULES:
+- Emit one object per distinct product with that product's own ROI/LTV/amount. If only one product, return an array with one object.
+- product_category: map Home Loan→HL, LAP→LAP, Business/Term Loan→Business Loan; anything else→Other. Use the "Affordable" variant (Affordable HL / Affordable LAP) ONLY when the message explicitly says "affordable" or the department is Affordable — otherwise use the regular product.
+- Extract loan_min_lakhs even when shown as "Minimum - 50 Lakhs" (separate line from maximum). Capture ALL property types mentioned including specialized ones (hospital, hostel, hotel, lodge, cinema, mall, etc.).
 
 Message:
 ${text.substring(0, 2000)}`;
@@ -2145,40 +2156,64 @@ ${text.substring(0, 2000)}`;
     const response = await axios.post(
       OPENROUTER_API_URL,
       {
-        model: 'google/gemini-2.5-flash',
+        // Bank-policy extraction uses the newest Opus for accuracy. ("Opus 5.5" isn't a real model;
+        // Opus 4.8 is the latest Opus.) Routed via OpenRouter, so the id carries the `anthropic/`
+        // prefix. Opus 4.8 rejects sampling params (temperature/top_p/top_k) — none are sent.
+        model: 'anthropic/claude-opus-4-8',
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.1,
-        max_tokens: 800
+        max_tokens: 1500
       },
       {
         headers: {
-          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+          'Authorization': `Bearer ${OPENROUTER_POLICY_API_KEY}`,
           'Content-Type': 'application/json',
           'HTTP-Referer': 'http://localhost:3000',
           'X-Title': 'Customer Profiling App'
         },
-        timeout: 20000
+        timeout: 25000
       }
     );
 
     const content = response.data.choices[0].message.content;
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      // Clean nulls
+    // Prefer a JSON array; tolerate a single object (wrap it).
+    let parsed = null;
+    const arrMatch = content.match(/\[[\s\S]*\]/);
+    if (arrMatch) {
+      parsed = JSON.parse(arrMatch[0]);
+    } else {
+      const objMatch = content.match(/\{[\s\S]*\}/);
+      if (objMatch) parsed = [JSON.parse(objMatch[0])];
+    }
+    if (!Array.isArray(parsed)) parsed = parsed ? [parsed] : [];
+
+    const validCats = ['LAP', 'Affordable LAP', 'HL', 'Affordable HL', 'Business Loan', 'Other'];
+    const out = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue;
       const cleaned = {};
-      for (const [k, v] of Object.entries(parsed)) {
+      for (const [k, v] of Object.entries(item)) {
         if (v !== null && v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0)) {
           cleaned[k] = v;
         }
       }
-      return cleaned;
+      if (Object.keys(cleaned).length === 0) continue;
+      // Validate/repair the category; fall back to the rule-based classifier.
+      if (!validCats.includes(cleaned.product_category)) {
+        cleaned.product_category = classifyProductCategory(cleaned.loan_type || cleaned.product_type, text, cleaned.department);
+      }
+      out.push(cleaned);
     }
-    return {};
+    return out;
   } catch (err) {
     console.error('AI policy extraction error:', err.message);
-    return {};
+    return [];
   }
+}
+
+// Backward-compatible single-policy wrapper (used by the capped bulk-chat AI fallback).
+async function aiExtractPolicy(text) {
+  const arr = await aiExtractPolicies(text);
+  return arr[0] || {};
 }
 
 // SHA256 hash of file content
@@ -2389,8 +2424,18 @@ async function processLargeChat(importId, fileContent) {
       const msg = relevantMessages[i];
       const msgText = msg.message_content || '';
 
-      // Regex extraction (may return multiple policies for multi-product messages)
-      let policies = regexExtractPolicies(msgText);
+      // For pasted policies (raw-text mode) run the AI first for best accuracy — it splits the
+      // message into per-product rows itself. Regex is the fallback if the AI returns nothing.
+      // Bulk WhatsApp chat imports stay on regex-first (with the capped AI fallback below) to avoid
+      // a large token bill on hundreds of messages.
+      let policies;
+      if (isRawText && aiCallCount < AI_LIMIT) {
+        const aiPolicies = await aiExtractPolicies(msgText);
+        if (aiPolicies.length) { policies = aiPolicies; aiCallCount++; }
+        else policies = regexExtractPolicies(msgText);
+      } else {
+        policies = regexExtractPolicies(msgText);
+      }
 
       // For raw pasted text: accept policies without bank_name if they have useful fields
       policies = policies.map(policy => {
@@ -2469,7 +2514,7 @@ async function processLargeChat(importId, fileContent) {
           if (!aiPolicy.product_type && aiPolicy.loan_type) {
             aiPolicy.product_type = mapToProductType(aiPolicy.loan_type);
           }
-          aiPolicy.product_category = classifyProductCategory(aiPolicy.loan_type || aiPolicy.product_type, msgText, aiPolicy.department);
+          if (!aiPolicy.product_category) aiPolicy.product_category = classifyProductCategory(aiPolicy.loan_type || aiPolicy.product_type, msgText, aiPolicy.department);
           aiPolicy.policy_label = generatePolicyLabel(aiPolicy);
 
           // Use sender as banker if not extracted by AI
@@ -2726,8 +2771,16 @@ async function processDocumentImport(importId, filePath, fileType) {
     for (let i = 0; i < chunks.length; i++) {
       const chunkText = chunks[i];
 
-      // Regex extraction first
-      let policies = regexExtractPolicies(chunkText);
+      // Document imports: run the AI first for best accuracy (it splits per product); fall back to
+      // regex when the AI returns nothing or the per-document AI budget is exhausted.
+      let policies;
+      if (aiCallCount < AI_LIMIT) {
+        const aiPolicies = await aiExtractPolicies(chunkText);
+        if (aiPolicies.length) { policies = aiPolicies; aiCallCount++; }
+        else policies = regexExtractPolicies(chunkText);
+      } else {
+        policies = regexExtractPolicies(chunkText);
+      }
 
       // Accept policies without bank_name if they have useful fields (OCR text mode)
       policies = policies.map(policy => {
@@ -2798,7 +2851,7 @@ async function processDocumentImport(importId, filePath, fileType) {
           if (!aiPolicy.product_type && aiPolicy.loan_type) {
             aiPolicy.product_type = mapToProductType(aiPolicy.loan_type);
           }
-          aiPolicy.product_category = classifyProductCategory(aiPolicy.loan_type || aiPolicy.product_type, chunkText, aiPolicy.department);
+          if (!aiPolicy.product_category) aiPolicy.product_category = classifyProductCategory(aiPolicy.loan_type || aiPolicy.product_type, chunkText, aiPolicy.department);
           aiPolicy.policy_label = generatePolicyLabel(aiPolicy);
 
           extractedPolicies.push({
