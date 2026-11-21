@@ -6924,23 +6924,9 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
           fullText = rawData.map(row => row.join('\t')).join('\n');
           extractedText = fullText.substring(0, 500);
           console.log(`✓ Excel extracted ${rawData.length} rows from ${file.originalname}`);
-
-          // Auto-extract debt profile if category is debtProfile
-          if (fileDetail.category === 'debtProfile') {
-            try {
-              const data = findHeaderRowAndParseExcel(sheet);
-              if (data.length > 0) {
-                const mappedData = processDebtProfileData(data, proposalId);
-                if (mappedData.length > 0) {
-                  await DebtProfile.deleteMany({ proposalId: proposalId });
-                  await DebtProfile.insertMany(mappedData);
-                  console.log(`✓ Auto-extracted ${mappedData.length} debt profile entries`);
-                }
-              }
-            } catch (debtErr) {
-              console.error('Debt profile auto-extraction error:', debtErr.message);
-            }
-          }
+          // NOTE: debt-profile row extraction runs AFTER categorization (see below). It used to
+          // run here, but fileDetail.category isn't set yet at this point for a freshly uploaded
+          // sheet, so the extraction was silently skipped and the Debt Profile stayed empty.
         } catch (xlsErr) {
           console.error('Excel processing error:', xlsErr.message);
         }
@@ -6973,6 +6959,33 @@ async function processFilesInBackground(files, proposalId, fileDetails) {
           }
         } catch (aiCatErr) {
           console.error('AI categorization error:', aiCatErr.message);
+        }
+      }
+
+      // Extract debt-profile loan rows from an Excel sheet. Runs here — AFTER categorization —
+      // so a freshly uploaded loan sheet that the AI just tagged as debtProfile actually gets
+      // parsed into DebtProfile rows (which populate the Debt Profile table and clear the
+      // "All Existing Loan Details" pending item). Previously this was gated before categorization
+      // and never fired on first upload.
+      if (fileDetail.category === 'debtProfile' && (fileExt === '.xlsx' || fileExt === '.xls')) {
+        try {
+          const workbook = xlsx.read(file.buffer, { type: 'buffer' });
+          const sheet = workbook.Sheets[workbook.SheetNames[0]];
+          const data = findHeaderRowAndParseExcel(sheet);
+          if (data.length > 0) {
+            const mappedData = processDebtProfileData(data, proposalId);
+            if (mappedData.length > 0) {
+              await DebtProfile.deleteMany({ proposalId: proposalId });
+              await DebtProfile.insertMany(mappedData);
+              console.log(`✓ Auto-extracted ${mappedData.length} debt profile entries from ${file.originalname}`);
+            } else {
+              console.log(`⚠ Excel debt profile: no mappable rows in ${file.originalname}`);
+            }
+          } else {
+            console.log(`⚠ Excel debt profile: no header/data rows found in ${file.originalname}`);
+          }
+        } catch (debtErr) {
+          console.error('Debt profile auto-extraction error:', debtErr.message);
         }
       }
 
