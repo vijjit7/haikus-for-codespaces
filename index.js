@@ -9607,10 +9607,23 @@ function extractBankStatementDetailsFallback(text, filename = '') {
     /(?:^|\n)\s*([A-Z][A-Z\s]{4,50}?)\s*\n+\s*(?:VILLA|FLAT|HOUSE|PLOT|DOOR|H[\s-]*NO|NO\.\s*\d|\d+[\s,\/-]+\d+|#\d)/m
   ];
 
+  // High-priority anchor for HDFC-style statements: table-first text extraction pushes the page-1
+  // letterhead past the usual header window, so the real holder sits ~2000-2600 chars in, printed as
+  // "Statement of account M/S. PRAGATI ENTERPRIZE PLOT 34 H NO ...". Anchor on that block — the name
+  // lies between the salutation and the address. The required salutation + trailing address make a
+  // person named only in the transaction narration (no salutation, no address) impossible to match.
+  const letterheadHolderMatch = text.substring(0, 6000).match(
+    /(?:Statement\s+of\s+account|Page\s*No\s*\.?\s*:?\s*\d+)[\s\S]{0,40}?(?:M\/S\.?|MRS\.?|MR\.?|MS\.?|MISS\.?)\s*\.?\s*([A-Z][A-Za-z0-9&.\s]{2,50}?)\s+(?:PLOT|H[\s-]*NO|DOOR|FLAT|HOUSE|NO\.?\s*\d|SHOP|BLDG|BUILDING|STREET|ROAD|FLR)/i
+  );
+  if (letterheadHolderMatch && !looksLikeBankName(letterheadHolderMatch[1])) {
+    result.accountHolder = cleanAccountHolderName(letterheadHolderMatch[1].replace(/\.\s*$/, '').trim());
+  }
+
   // Only search in the header area (first 1500 chars) to avoid matching names in transactions
   const holderSearchText = text.substring(0, 1500);
 
   for (const pattern of holderPatterns) {
+    if (result.accountHolder !== 'N/A') break; // letterhead anchor already found the holder
     const match = holderSearchText.match(pattern);
     if (match) {
       // Clean up the account holder name - remove trailing common words
