@@ -51,6 +51,7 @@
         .type-HFC { background: #d6eaf8; color: #2980b9; }
 
         .product-badge { padding: 2px 6px; border-radius: 8px; font-size: 0.75em; font-weight: 500; background: #f0f0f0; color: #555; }
+        .cat-badge { padding: 2px 8px; border-radius: 10px; font-size: 0.78em; font-weight: 600; background: #eef2ff; color: #3949ab; white-space: nowrap; }
 
         .pagination { display: flex; gap: 8px; justify-content: center; margin-top: 20px; }
         .pagination a, .pagination span {
@@ -276,6 +277,12 @@
                     <option value="<%= lt %>" <%= filters.loanType === lt ? 'selected' : '' %>><%= lt %></option>
                 <% }); %>
             </select>
+            <select id="filterProductCategory" onchange="applyFilters()">
+                <option value="">All Products</option>
+                <% ['LAP','Affordable LAP','HL','Affordable HL','Business Loan','Other'].forEach(pc => { %>
+                    <option value="<%= pc %>" <%= filters.productCategory === pc ? 'selected' : '' %>><%= pc %></option>
+                <% }); %>
+            </select>
             <select id="filterProductType" onchange="applyFilters()">
                 <option value="">All Product Types</option>
                 <% ['HL','LAP','LRD','BT_TopUp','Commercial_Purchase','Other'].forEach(pt => { %>
@@ -302,6 +309,7 @@
                         <th>Type</th>
                         <th>Dept</th>
                         <th>Product</th>
+                        <th>Prod Type</th>
                         <th>Loan Type</th>
                         <th>Amount (L)</th>
                         <th>ROI (%)</th>
@@ -322,7 +330,7 @@
                 </thead>
                 <tbody>
                     <% if (policies.length === 0) { %>
-                        <tr><td colspan="22" style="text-align:center; color:#999; padding:30px;">No policies found. <a href="/admin/import-chat">Import a chat</a> to get started.</td></tr>
+                        <tr><td colspan="23" style="text-align:center; color:#999; padding:30px;">No policies found. <a href="/admin/import-chat">Import a chat</a> to get started.</td></tr>
                     <% } %>
                     <% policies.forEach(p => { %>
                         <tr id="row-<%= p._id %>" data-policy='<%- JSON.stringify({
@@ -331,6 +339,7 @@
                             department: p.department || "Other",
                             loan_type: p.loan_type || "",
                             product_type: p.product_type || "",
+                            product_category: p.product_category || "",
                             loan_min_lakhs: p.loan_min_lakhs != null ? p.loan_min_lakhs : "",
                             loan_max_lakhs: p.loan_max_lakhs != null ? p.loan_max_lakhs : "",
                             roi_min_pct: p.roi_min_pct != null ? p.roi_min_pct : "",
@@ -368,6 +377,7 @@
                                 <% } else { %>-<% } %>
                             </td>
                             <td><span class="dept-badge dept-<%= p.department %>"><%= p.department %></span></td>
+                            <td><% if (p.product_category) { %><span class="cat-badge"><%= p.product_category %></span><% } else { %>-<% } %></td>
                             <td><% if (p.product_type) { %><span class="product-badge"><%= p.product_type %></span><% } else { %>-<% } %></td>
                             <td><%= p.loan_type || '-' %></td>
                             <td class="amount">
@@ -435,7 +445,7 @@
                     <% if (i === currentPage) { %>
                         <span class="current"><%= i %></span>
                     <% } else { %>
-                        <a href="?page=<%= i %>&bank=<%= filters.bank %>&department=<%= filters.department %>&loanType=<%= filters.loanType %>&productType=<%= filters.productType %>"><%= i %></a>
+                        <a href="?page=<%= i %>&bank=<%= filters.bank %>&department=<%= filters.department %>&loanType=<%= filters.loanType %>&productType=<%= filters.productType %>&productCategory=<%= filters.productCategory %>"><%= i %></a>
                     <% } %>
                 <% } %>
             </div>
@@ -467,6 +477,18 @@
                 <div>
                     <label>Loan Type</label>
                     <input type="text" id="edit_loan_type">
+                </div>
+                <div>
+                    <label>Product (Category)</label>
+                    <select id="edit_product_category">
+                        <option value="">-</option>
+                        <option value="LAP">LAP</option>
+                        <option value="Affordable LAP">Affordable LAP</option>
+                        <option value="HL">HL</option>
+                        <option value="Affordable HL">Affordable HL</option>
+                        <option value="Business Loan">Business Loan</option>
+                        <option value="Other">Other</option>
+                    </select>
                 </div>
                 <div>
                     <label>Product Type</label>
@@ -624,6 +646,7 @@
             const dept = document.getElementById('filterDept').value;
             const loanType = document.getElementById('filterLoanType').value;
             const productType = document.getElementById('filterProductType').value;
+            const productCategory = document.getElementById('filterProductCategory').value;
             const search = document.getElementById('filterSearch').value.trim();
             const params = new URLSearchParams();
             if (search) params.set('search', search);
@@ -631,6 +654,7 @@
             if (dept) params.set('department', dept);
             if (loanType) params.set('loanType', loanType);
             if (productType) params.set('productType', productType);
+            if (productCategory) params.set('productCategory', productCategory);
             window.location.href = '/admin/policies?' + params.toString();
         }
 
@@ -706,7 +730,7 @@
 
         // Edit modal functions
         const editFields = [
-            'bank_name', 'department', 'loan_type', 'product_type',
+            'bank_name', 'department', 'loan_type', 'product_type', 'product_category',
             'loan_min_lakhs', 'loan_max_lakhs', 'roi_min_pct', 'roi_max_pct',
             'ltv_pct', 'ltv_min_pct', 'geo_limits_km', 'min_cibil',
             'max_tenure_years', 'processing_fee_pct', 'loan_nature', 'own_house_required', 'max_usl',

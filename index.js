@@ -1345,6 +1345,18 @@ function mapToProductType(loanType) {
   return 'Other';
 }
 
+// Classify a policy into one of the 5 segregated products (LAP, Affordable LAP, HL, Affordable HL,
+// Business Loan) or 'Other'. "Affordable" is decided by an explicit keyword or the Affordable
+// department (per product decision) — never inferred from ticket size.
+function classifyProductCategory(loanTypeOrProduct, text, department) {
+  const s = `${loanTypeOrProduct || ''}`.toLowerCase();
+  const affordable = department === 'Affordable' || /\baffordable\b/i.test(text || '');
+  if (/home\s*loan|housing|\bhl\b/.test(s)) return affordable ? 'Affordable HL' : 'HL';
+  if (/lap|loan\s*against\s*propert|mortgage/.test(s)) return affordable ? 'Affordable LAP' : 'LAP';
+  if (/business\s*loan|\bbl\b|term\s*loan/.test(s)) return 'Business Loan';
+  return 'Other';
+}
+
 // Generate human-readable policy label
 function generatePolicyLabel(policy) {
   const parts = [
@@ -2026,61 +2038,67 @@ function regexExtractPolicies(text) {
     }
   }
 
-  // --- Multi-product merge ---
-  // If message mentions multiple products (HL, LAP, BT), merge into one consolidated policy
-  const hasProductSpecificData = Object.keys(productRoiMap).length > 0 || Object.keys(productLtvMap).length > 0;
+  // --- Split into per-product-category rows ---
+  // Each bank can hold up to 5 product rows — LAP, Affordable LAP, HL, Affordable HL, Business Loan —
+  // plus an 'Other' bucket for anything else (LRD, BT, PL, WC, …). A pasted message is emitted as one
+  // row per base product it mentions, each carrying that product's own ROI/LTV. 'Affordable' vs
+  // regular is decided by an explicit "affordable" keyword or the Affordable department.
+  const isAffordable = result.department === 'Affordable' || /\baffordable\b/i.test(text);
 
-  if (detectedLoanTypes.length > 1 && hasProductSpecificData) {
-    // Combine loan types into single label
-    result.loan_type = detectedLoanTypes.join(' + ');
-    result.product_type = detectedLoanTypes.length > 1 ? 'Other' : mapToProductType(detectedLoanTypes[0]);
+  // Which base products did the message mention?
+  const baseProducts = [];
+  if (detectedLoanTypes.includes('Home Loan')) baseProducts.push('HL');
+  if (detectedLoanTypes.includes('LAP')) baseProducts.push('LAP');
+  if (detectedLoanTypes.includes('Business Loan')) baseProducts.push('Business Loan');
 
-    // Merge all product-specific ROI values into overall min/max
-    const allRoiVals = Object.values(productRoiMap).flat().filter(v => v > 0 && v < 50);
-    if (allRoiVals.length > 0) {
-      result.roi_min_pct = Math.min(...allRoiVals);
-      result.roi_max_pct = Math.max(...allRoiVals);
-    }
+  // Pick the min/max ROI for a product from its product-specific mentions (falls back to the policy's
+  // general ROI, left in place on the cloned row, when the product has no dedicated figure).
+  const roiFor = (keys) => {
+    const vals = keys.flatMap(k => productRoiMap[k] || []).filter(v => v > 0 && v < 50);
+    return vals.length ? { min: Math.min(...vals), max: Math.max(...vals) } : null;
+  };
+  const appendBtRemark = (p, key) => {
+    const b = productRoiMap[key];
+    if (b && b.length) p.other_remarks = [p.other_remarks, `BT+TopUp ROI ${Math.min(...b)}%-${Math.max(...b)}%`].filter(Boolean).join('; ');
+  };
 
-    // Merge all product-specific LTV values into overall min/max
-    const allLtvVals = Object.values(productLtvMap).filter(v => v > 0 && v <= 100);
-    if (allLtvVals.length > 0) {
-      result.ltv_min_pct = Math.min(...allLtvVals);
-      result.ltv_pct = Math.max(...allLtvVals);
-    }
-
-    // Build product-wise breakdown for remarks
-    const productDetails = [];
-    for (const loanType of detectedLoanTypes) {
-      const key = loanType === 'Home Loan' ? 'HL' : loanType === 'LAP' ? 'LAP' : loanType === 'Balance Transfer' ? 'BT' : loanType.replace(/\s+/g, '_').toUpperCase();
-      const parts = [];
-      const roiVals = productRoiMap[key] || productRoiMap[key + '_BT'];
-      if (roiVals && roiVals.length > 0) {
-        parts.push(`ROI ${Math.min(...roiVals)}%-${Math.max(...roiVals)}%`);
-      }
-      if (productLtvMap[key] !== undefined) {
-        parts.push(`LTV ${productLtvMap[key]}%`);
-      }
-      if (parts.length > 0) productDetails.push(`${key}: ${parts.join(', ')}`);
-    }
-    // Add BT details if present
-    const btRoiKeys = Object.keys(productRoiMap).filter(k => k.endsWith('_BT'));
-    for (const btKey of btRoiKeys) {
-      const vals = productRoiMap[btKey];
-      if (vals && vals.length > 0) {
-        productDetails.push(`${btKey}: ROI ${Math.min(...vals)}%-${Math.max(...vals)}%`);
-      }
-    }
-    if (productLtvMap['BT_TOPUP'] || productLtvMap['BT']) {
-      productDetails.push(`BT LTV: ${productLtvMap['BT_TOPUP'] || productLtvMap['BT']}%`);
-    }
-    if (productDetails.length > 0) {
-      const breakdown = productDetails.join('; ');
-      result.other_remarks = result.other_remarks ? result.other_remarks + '; ' + breakdown : breakdown;
-    }
+  // No recognised base product → one 'Other' row with whatever general fields were found.
+  if (baseProducts.length === 0) {
+    result.product_category = classifyProductCategory(result.loan_type || result.product_type, text, result.department);
+    return [result];
   }
 
-  return [result];
+  const policies = [];
+  for (const base of baseProducts) {
+    const p = { ...result };
+    if (base === 'HL') {
+      p.product_category = isAffordable ? 'Affordable HL' : 'HL';
+      p.loan_type = 'Home Loan';
+      p.product_type = 'HL';
+      const roi = roiFor(['HL', 'HOME_LOAN']);
+      if (roi) { p.roi_min_pct = roi.min; p.roi_max_pct = roi.max; }
+      if (productLtvMap['HL'] !== undefined) { p.ltv_pct = productLtvMap['HL']; p.ltv_min_pct = productLtvMap['HL']; }
+      appendBtRemark(p, 'HL_BT');
+    } else if (base === 'LAP') {
+      p.product_category = isAffordable ? 'Affordable LAP' : 'LAP';
+      p.loan_type = 'LAP';
+      p.product_type = 'LAP';
+      const roi = roiFor(['LAP']);
+      if (roi) { p.roi_min_pct = roi.min; p.roi_max_pct = roi.max; }
+      if (productLtvMap['LAP'] !== undefined) { p.ltv_pct = productLtvMap['LAP']; p.ltv_min_pct = productLtvMap['LAP']; }
+      appendBtRemark(p, 'LAP_BT');
+    } else { // Business Loan — typically unsecured, so LTV from other products doesn't apply
+      p.product_category = 'Business Loan';
+      p.loan_type = 'Business Loan';
+      p.product_type = 'Other';
+      p.ltv_pct = undefined;
+      p.ltv_min_pct = undefined;
+      const roi = roiFor(['BUSINESS_LOAN', 'BL']);
+      if (roi) { p.roi_min_pct = roi.min; p.roi_max_pct = roi.max; }
+    }
+    policies.push(p);
+  }
+  return policies;
 }
 
 // Backward-compatible wrapper (returns single policy for AI fallback path)
@@ -2175,6 +2193,7 @@ function generatePolicySignature(policy) {
     (policy.department || '').toLowerCase().trim(),
     (policy.loan_type || '').toLowerCase().trim(),
     (policy.product_type || '').toLowerCase().trim(),
+    (policy.product_category || '').toLowerCase().trim(),
     policy.loan_min_lakhs || 0,
     policy.loan_max_lakhs || 0,
     policy.roi_min_pct || 0,
@@ -2396,6 +2415,8 @@ async function processLargeChat(importId, fileContent) {
           }
           policy.message_id = msg._id;
           policy.policy_label = generatePolicyLabel(policy);
+          // Safety net: regexExtractPolicies sets product_category when splitting, but ensure every row has one.
+          if (!policy.product_category) policy.product_category = classifyProductCategory(policy.loan_type || policy.product_type, msgText, policy.department);
 
           // Use sender as banker if not extracted from text
           if (!policy.banker_name && msg.sender_name && msg.sender_name !== 'Pasted') {
@@ -2448,6 +2469,7 @@ async function processLargeChat(importId, fileContent) {
           if (!aiPolicy.product_type && aiPolicy.loan_type) {
             aiPolicy.product_type = mapToProductType(aiPolicy.loan_type);
           }
+          aiPolicy.product_category = classifyProductCategory(aiPolicy.loan_type || aiPolicy.product_type, msgText, aiPolicy.department);
           aiPolicy.policy_label = generatePolicyLabel(aiPolicy);
 
           // Use sender as banker if not extracted by AI
@@ -2776,6 +2798,7 @@ async function processDocumentImport(importId, filePath, fileType) {
           if (!aiPolicy.product_type && aiPolicy.loan_type) {
             aiPolicy.product_type = mapToProductType(aiPolicy.loan_type);
           }
+          aiPolicy.product_category = classifyProductCategory(aiPolicy.loan_type || aiPolicy.product_type, chunkText, aiPolicy.department);
           aiPolicy.policy_label = generatePolicyLabel(aiPolicy);
 
           extractedPolicies.push({
@@ -10797,6 +10820,7 @@ app.get('/admin/policies', async (req, res) => {
       department: req.query.department || '',
       loanType: req.query.loanType || '',
       productType: req.query.productType || '',
+      productCategory: req.query.productCategory || '',
       search: req.query.search || ''
     };
 
@@ -10805,6 +10829,7 @@ app.get('/admin/policies', async (req, res) => {
     if (filters.department) query.department = filters.department;
     if (filters.loanType) query.loan_type = filters.loanType;
     if (filters.productType) query.product_type = filters.productType;
+    if (filters.productCategory) query.product_category = filters.productCategory;
     if (filters.search) {
       const searchRegex = new RegExp(filters.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
       query.$or = [
@@ -10826,7 +10851,7 @@ app.get('/admin/policies', async (req, res) => {
     const totalPages = Math.ceil(totalCount / perPage);
     const policies = await BankPolicy.find(query)
       .populate('bank_id')
-      .sort({ bank_name: 1, department: 1 })
+      .sort({ bank_name: 1, product_category: 1, department: 1 })
       .skip((page - 1) * perPage)
       .limit(perPage)
       .lean();
@@ -10891,6 +10916,11 @@ app.post('/admin/policies/reextract', async (req, res) => {
           changes[field] = val;
         }
       }
+
+      // Backfill the product category for existing rows (classification only; does not re-split
+      // an old merged row into separate product rows — re-import the message for that).
+      const cat = classifyProductCategory(p.loan_type || p.product_type, text, p.department);
+      if (cat && cat !== p.product_category) changes.product_category = cat;
 
       if (Object.keys(changes).length > 0) {
         await BankPolicy.findByIdAndUpdate(p._id, { $set: changes });
@@ -10971,7 +11001,7 @@ app.post('/admin/policies/:id/delete', async (req, res) => {
 app.post('/admin/policies/:id/update', async (req, res) => {
   try {
     const allowedFields = [
-      'bank_name', 'department', 'loan_type', 'product_type',
+      'bank_name', 'department', 'loan_type', 'product_type', 'product_category',
       'loan_min_lakhs', 'loan_max_lakhs', 'roi_min_pct', 'roi_max_pct',
       'ltv_pct', 'ltv_min_pct', 'geo_limits_km', 'min_cibil',
       'max_tenure_years', 'processing_fee_pct', 'loan_nature',

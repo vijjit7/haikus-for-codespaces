@@ -10,6 +10,13 @@ const BankPolicySchema = new mongoose.Schema({
     enum: ['HL', 'LAP', 'LRD', 'BT_TopUp', 'Commercial_Purchase', 'Other', ''],
     default: ''
   },
+  // Product category: the 5 segregated products each bank can have one row for, plus 'Other'.
+  product_category: {
+    type: String,
+    enum: ['LAP', 'Affordable LAP', 'HL', 'Affordable HL', 'Business Loan', 'Other', ''],
+    default: '',
+    index: true
+  },
   loan_min_lakhs: Number,
   loan_max_lakhs: Number,
   roi_min_pct: Number,
