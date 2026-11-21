@@ -179,6 +179,59 @@ function calculateEmiEndDate(emiStartDate, tenure) {
   return endDate.toLocaleDateString('en-IN');
 }
 
+// Parse a date that may be an Excel serial number or a DD/MM/YYYY-ish string → Date (or null).
+function parseFlexibleDate(value) {
+  if (value === '' || value === null || value === undefined) return null;
+  if (typeof value === 'number') {
+    const d = new Date((value - 25569) * 86400 * 1000);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const str = String(value).trim();
+  const parts = str.split(/[\/\-.]/).map(p => p.trim());
+  if (parts.length === 3) {
+    // 4-digit-year-first (YYYY-MM-DD) vs Indian day-first (DD-MM-YYYY)
+    if (parts[0].length === 4) {
+      const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+      return isNaN(d.getTime()) ? null : d;
+    }
+    let [dd, mm, yy] = parts.map(p => parseInt(p, 10));
+    if (yy < 100) yy += 2000;
+    const d = new Date(yy, mm - 1, dd);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// Whole months between two dates (end - start), used to derive tenure from EMI start/end dates.
+function monthsBetweenDates(start, end) {
+  const s = parseFlexibleDate(start);
+  const e = parseFlexibleDate(end);
+  if (!s || !e) return 0;
+  let months = (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth());
+  if (e.getDate() >= s.getDate()) months += 0; // day-of-month reached → full month boundary
+  return Math.max(0, months);
+}
+
+// Solve the amortization formula EMI = P·r·(1+r)^n / ((1+r)^n − 1) for the annual ROI %.
+// EMI(r) is monotonically increasing in r, so binary-search the monthly rate. Returns 0 when
+// inputs are insufficient or the EMI doesn't exceed principal (no interest can be inferred).
+function calculateRoiFromEmi(principal, emi, months) {
+  principal = Number(principal);
+  emi = Number(emi);
+  months = parseInt(months, 10);
+  if (!principal || !emi || !months || months <= 0) return 0;
+  if (emi * months <= principal) return 0; // total repaid ≤ principal → ~0% / not inferable
+  const emiAt = (r) => principal * r * Math.pow(1 + r, months) / (Math.pow(1 + r, months) - 1);
+  let lo = 1e-9, hi = 1.0; // monthly rate search bounds: ~0% .. 100%/month
+  for (let i = 0; i < 200; i++) {
+    const mid = (lo + hi) / 2;
+    if (emiAt(mid) > emi) hi = mid; else lo = mid;
+  }
+  const annual = ((lo + hi) / 2) * 12 * 100;
+  return Math.round(annual * 100) / 100; // 2 decimals
+}
+
 // Helper function to get value from row with flexible column name matching
 function getRowValue(row, ...possibleNames) {
   // First try exact match
@@ -225,20 +278,37 @@ function processDebtProfileData(data, proposalId) {
     const tenure = getRowValue(row, 'Tenure', 'Loan Tenure', 'Tenure (Months)', 'Tenor', 'Tenor (months)', 'tenure', 'Total Tenure', 'Tenure in Months', 'Tenure(Months)');
     const sanctionDate = getRowValue(row, 'Sanction Date', 'Date of Sanction', 'sanction date', 'Sanction Dt', 'Date of Sanction/Disbursement');
 
-    const { monthsCompleted, percentCompleted } = calculateTenureProgress(emiStartDate, tenure);
     const emiEndDateValue = getRowValue(row, 'EMI End Date', 'EMI End', 'End Date', 'emi end date', 'Last EMI Date', 'Maturity Date', 'Maturity');
-    const emiEndDate = emiEndDateValue || calculateEmiEndDate(emiStartDate, tenure);
+
+    const loanAmountNum = Number(String(loanAmount || 0).replace(/[^0-9.-]/g, '')) || 0;
+    const emiNum = Number(String(getRowValue(row, 'EMI', 'Monthly EMI', 'emi', 'EMI Amount', 'EMI Amt', 'Monthly Instalment', 'Instalment', 'EMI (Rs)', 'EMI(Rs.)') || 0).replace(/[^0-9.-]/g, '')) || 0;
+
+    // Tenure: use the column if present, else derive it from EMI start/end dates.
+    let tenureMonths = parseInt(tenure, 10) || 0;
+    if (!tenureMonths && emiStartDate && emiEndDateValue) {
+      tenureMonths = monthsBetweenDates(emiStartDate, emiEndDateValue);
+    }
+
+    // ROI: use the column if present, else back-calculate it from loan amount, EMI and tenure
+    // (which itself may have been derived from the start/end dates above).
+    let roi = Number(String(getRowValue(row, 'ROI', 'Rate of Interest', 'Interest Rate', 'Rate', 'roi', 'ROI (%)', 'ROI(%)', 'Interest', 'Rate (%)') || 0).replace(/[^0-9.-]/g, '')) || 0;
+    if (!roi && loanAmountNum && emiNum && tenureMonths) {
+      roi = calculateRoiFromEmi(loanAmountNum, emiNum, tenureMonths);
+    }
+
+    const { monthsCompleted, percentCompleted } = calculateTenureProgress(emiStartDate, tenureMonths);
+    const emiEndDate = emiEndDateValue || calculateEmiEndDate(emiStartDate, tenureMonths);
 
     return {
       sNo: getRowValue(row, 'S.No', 'SNo', 'Sr.No', 'Sl.No', 's.no', 'sno', 'sl.no', 'Sr No', 'S No') || idx + 1,
       loanApplicant: getRowValue(row, 'Applicant', 'Loan Applicant', 'Borrower', 'Borrower Name', 'Name', 'applicant', 'Customer Name', 'Name of Borrower', 'Account Holder'),
       bank: bank,
       loanType: getRowValue(row, 'Loan Type', 'Type of Loan', 'Product', 'loan type', 'Nature of Loan', 'Facility', 'Facility Type', 'Type', 'Loan Category', 'Nature of Facility'),
-      loanAmount: Number(String(loanAmount || 0).replace(/[^0-9.-]/g, '')) || 0,
-      emi: Number(String(getRowValue(row, 'EMI', 'Monthly EMI', 'emi', 'EMI Amount', 'EMI Amt', 'Monthly Instalment', 'Instalment', 'EMI (Rs)', 'EMI(Rs.)') || 0).replace(/[^0-9.-]/g, '')) || 0,
-      roi: Number(String(getRowValue(row, 'ROI', 'Rate of Interest', 'Interest Rate', 'Rate', 'roi', 'ROI (%)', 'ROI(%)', 'Interest', 'Rate (%)') || 0).replace(/[^0-9.-]/g, '')) || 0,
+      loanAmount: loanAmountNum,
+      emi: emiNum,
+      roi: roi,
       sanctionDate: parseExcelDate(sanctionDate),
-      tenure: parseInt(tenure) || 0,
+      tenure: tenureMonths,
       emiStartDate: parseExcelDate(emiStartDate),
       emiEndDate: parseExcelDate(emiEndDate),
       monthsCompleted: monthsCompleted,
@@ -451,7 +521,20 @@ app.post('/stage2/:proposalId/extract-debt-profile', async (req, res) => {
 
           loans.forEach((loan, idx) => {
             const emiStartDate = loan.emiStartDate || '';
-            const tenure = parseInt(loan.tenure) || 0;
+            const emiEndDate = loan.emiEndDate || '';
+            const loanAmountNum = Number(String(loan.loanAmount || 0).replace(/[^0-9.-]/g, '')) || 0;
+            const emiNum = Number(String(loan.emi || 0).replace(/[^0-9.-]/g, '')) || 0;
+
+            // Tenure from the field, else derived from EMI start/end dates.
+            let tenure = parseInt(loan.tenure) || 0;
+            if (!tenure && emiStartDate && emiEndDate) {
+              tenure = monthsBetweenDates(emiStartDate, emiEndDate);
+            }
+            // ROI from the field, else back-calculated from amount, EMI and tenure.
+            let roi = Number(String(loan.roi || 0).replace(/[^0-9.-]/g, '')) || 0;
+            if (!roi && loanAmountNum && emiNum && tenure) {
+              roi = calculateRoiFromEmi(loanAmountNum, emiNum, tenure);
+            }
             const { monthsCompleted, percentCompleted } = calculateTenureProgress(emiStartDate, tenure);
 
             allDebtProfiles.push({
@@ -459,13 +542,13 @@ app.post('/stage2/:proposalId/extract-debt-profile', async (req, res) => {
               loanApplicant: loan.applicant || '',
               bank: loan.bank || '',
               loanType: loan.loanType || '',
-              loanAmount: Number(String(loan.loanAmount || 0).replace(/[^0-9.-]/g, '')) || 0,
-              emi: Number(String(loan.emi || 0).replace(/[^0-9.-]/g, '')) || 0,
-              roi: Number(String(loan.roi || 0).replace(/[^0-9.-]/g, '')) || 0,
+              loanAmount: loanAmountNum,
+              emi: emiNum,
+              roi: roi,
               sanctionDate: loan.sanctionDate || '',
               tenure: tenure,
               emiStartDate: emiStartDate,
-              emiEndDate: loan.emiEndDate || calculateEmiEndDate(emiStartDate, tenure),
+              emiEndDate: emiEndDate || calculateEmiEndDate(emiStartDate, tenure),
               monthsCompleted: monthsCompleted,
               percentTenureCompleted: percentCompleted,
               proposalId: proposalId
@@ -8532,8 +8615,12 @@ app.post('/stage2/:proposalId/reprocess-banking', async (req, res) => {
               if (aiAccountHolder && aiAccountHolder !== 'N/A') {
                 const squash = (s) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
                 const headerSquashed = squash(fullText.substring(0, 1500));
-                if (!headerSquashed.includes(squash(aiAccountHolder))) {
-                  console.log(`⚠ AI account holder "${aiAccountHolder}" NOT found in header text, using fallback extraction`);
+                // Reject the AI holder if it is a bank name lifted from transaction narration
+                // (e.g. "CANARA BANK"/"ANARA BANK" — note "ANARABANK" is a substring of the header's
+                // "CANARABANK", so the plain includes() check below would wrongly accept it), or if
+                // it simply does not appear in the statement header. Re-derive via pattern matching.
+                if (looksLikeBankName(aiAccountHolder) || !headerSquashed.includes(squash(aiAccountHolder))) {
+                  console.log(`⚠ AI account holder "${aiAccountHolder}" rejected (bank name or not in header), using fallback extraction`);
                   // Try fallback extraction for account holder
                   const fallbackDetails = extractBankStatementDetailsFallback(fullText, doc.originalName);
                   aiAccountHolder = fallbackDetails.accountHolder || 'N/A';
@@ -9281,12 +9368,24 @@ app.post('/stage2/:proposalId/reprocess-personal-docs', async (req, res) => {
   }
 });
 
+// An account holder on a bank statement is a person or business — never a bank. The AI extraction
+// (and header pattern matching) sometimes lifts a bank named in the transaction narration into the
+// holder field, e.g. "CANARA BANK" or the OCR slip "ANARA BANK". Detect that so it can be rejected
+// instead of displayed as the account holder.
+function looksLikeBankName(name) {
+  if (!name || name === 'N/A') return false;
+  const u = String(name).toUpperCase().trim();
+  if (/\bBANK\b/.test(u)) return true;                                           // "ANARA BANK", "HDFC BANK LIMITED", ...
+  return /^(?:HDFC|ICICI|SBI|PNB|IDBI|IDFC|RBL|IOB|KOTAK|AXIS|CANARA)$/.test(u); // bare bank abbreviation
+}
+
 // Strip a leading business/person salutation (M/S., Messrs, Mr., Mrs., Ms., Miss) from an extracted
 // account-holder name so it stores consistently — e.g. "M/S. PRAGATI ENTERPRIZE" becomes "PRAGATI
 // ENTERPRIZE". Idempotent and safe to call on already-clean names. NOTE: honorifics like Sri/Shri/
 // Smt are deliberately NOT stripped — they are frequently part of Indian business names.
 function cleanAccountHolderName(name) {
   if (!name || name === 'N/A') return name;
+  if (looksLikeBankName(name)) return 'N/A'; // a bank name is never a valid account holder
   const n = String(name)
     .replace(/^\s*(?:M\/S\.?|MESSRS\.?|MR\.?|MRS\.?|MS\.?|MISS\.?)\s+/i, '')
     .replace(/\s+/g, ' ')
@@ -9520,6 +9619,8 @@ function extractBankStatementDetailsFallback(text, filename = '') {
       holder = holder.replace(/\s+(Plot|Door|No|House|Flat|Building|Street|Road|Lane|Address|Branch).*$/i, '').trim();
       // Remove trailing period
       holder = holder.replace(/\.\s*$/, '').trim();
+      // A bank named in the narration is not the account holder — keep scanning later patterns.
+      if (looksLikeBankName(holder)) continue;
       result.accountHolder = cleanAccountHolderName(holder);
       break;
     }
